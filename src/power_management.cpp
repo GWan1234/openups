@@ -275,7 +275,7 @@ void PowerManagement::updateStatisticalData(System_Global_State& globalState) {
     checkOverTemperatureProtection(globalState);
     
     //充电维持逻辑（动态喂狗 + 终止条件检测）
-    if (globalState.power.charger_enabled) {
+    if (globalState.power.charger_enabled && globalState.bms.soc < config_.charge_soc_stop) {
         maintainCharging(globalState);
     }
 
@@ -555,7 +555,23 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         Serial.println(F("[ChargeRule] Temperature invalid, skipping charge evaluation"));
         return;
     }
-    
+
+    // ==================== SOC 强制停止区（优先级最高）====================
+    // 无论 RTC 状态、时间窗口如何，SOC 超过停止阈值必须停充
+    if (current_soc >= config_.charge_soc_stop) {
+        if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE ||
+            (charge_mgmt_state_ == CHARGE_STATE_IDLE && globalState.power.charger_enabled)) {
+            Serial.printf_P(PSTR("[ChargeRule] SOC stop threshold reached: %.1f%% >= %.1f%%, stopping charging\n"),
+                           current_soc, config_.charge_soc_stop);
+            if (stopCharging()) {
+                charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
+                last_stop_time_ = current_time;
+            }
+            // stopCharging 失败则保持当前状态，下次重试
+        }
+        return;
+    }
+
     // RTC 时间安全校验与应急充电逻辑
     bool rtc_valid = isTimeValid();
     bool time_window_ok = true;
@@ -624,21 +640,9 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         // 故障状态不自动恢复，需要系统复位或外部干预
         return;
     }
-    
-    // ==================== 1. 强制停止区 ====================
-    // SOC 超过停止阈值，无论当前状态如何，必须停止充电
-    if (current_soc >= config_.charge_soc_stop) {
-        if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
-            Serial.printf_P(PSTR("[ChargeRule] SOC stop threshold reached: %.1f%% >= %.1f%%, stopping charging\n"),
-                           current_soc, config_.charge_soc_stop);
-            stopCharging();
-            charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
-            last_stop_time_ = current_time;
-        }
-        return;
-    }
-    
-    // ==================== 2. 强制启动区 ====================
+
+
+    // ==================== 强制启动区 ====================
     // SOC 低于启动阈值且当前未充电时，检查条件并启动
     // 仅在 IDLE 状态下允许启动（ACTIVE 状态已在前面处理）
     if (current_soc <= config_.charge_soc_start && charge_mgmt_state_ == CHARGE_STATE_IDLE) {
@@ -862,6 +866,11 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
     if (charge_mgmt_state_ != CHARGE_STATE_ACTIVE || !ac_present_) {
         // 重置维持状态
         zero_current_detect_count_ = 0;
+        return;
+    }
+
+    // SOC 已超过停止阈值时，不执行喂狗，避免干扰停充
+    if (globalState.bms.soc >= config_.charge_soc_stop) {
         return;
     }
     

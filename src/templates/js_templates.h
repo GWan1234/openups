@@ -29,13 +29,22 @@ document.querySelectorAll('.pnl').forEach(function(p){p.classList.remove('active
 document.querySelectorAll('.side .si').forEach(function(s){s.classList.remove('active')});
 document.getElementById('p-'+n).classList.add('active');
 if(el)el.classList.add('active');
-if(n==='config'){var first=document.getElementById('p-cfg-system');if(first)first.classList.add('active');}
+if(n==='config'){
+var first=document.getElementById('p-cfg-system');if(first)first.classList.add('active');
+var tabs=document.querySelectorAll('#p-config .si');if(tabs.length){tabs.forEach(function(t){t.classList.remove('active')});tabs[0].classList.add('active')}
+var bar=$('cfgSaveBar');if(bar)bar.style.display='';
+var note=$('cfgSaveNote');if(note)note.style.display='';
+}
 }
 function showCfg(n,el){
 document.querySelectorAll('#p-config .pnl').forEach(function(p){p.classList.remove('active')});
 document.querySelectorAll('#p-config .si').forEach(function(s){s.classList.remove('active')});
 document.getElementById('p-cfg-'+n).classList.add('active');
 if(el)el.classList.add('active');
+var hide=n==='calibration'||n==='shipping';
+var bar=$('cfgSaveBar');if(bar)bar.style.display=hide?'none':'';
+var note=$('cfgSaveNote');if(note)note.style.display=hide?'none':'';
+if(n==='calibration')loadCalibration();
 }
 // === WebSocket ===
 function conn(){
@@ -285,6 +294,7 @@ var calPins=[
 ];
 var calData=null;
 function loadCalibration(){
+$('calStatus').textContent='';
 fetch('/api/calibration').then(function(r){return r.json()}).then(function(d){
 if(d.success){calData=d.calibration;renderCalibration()}
 }).catch(function(){$('calStatus').textContent='加载失败'});
@@ -295,7 +305,6 @@ calPins.forEach(function(p,i){
 var v=calData[i]||100;
 c.innerHTML+='<div style="border:1px solid #e8e8e8;border-radius:6px;padding:12px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+p.desc+'</div><div style="font-size:11px;color:#888;margin-bottom:8px">'+p.name+' (GPIO'+p.pin+')</div><div style="display:flex;align-items:center;gap:8px"><input type="range" min="50" max="255" value="'+v+'" id="cal_'+i+'" style="flex:1" oninput="document.getElementById(\'calv_'+i+'\').textContent=(this.value/100).toFixed(2)+\'x\'"><span id="calv_'+i+'" style="min-width:50px;font-weight:600;color:#1677ff">'+(v/100).toFixed(2)+'x</span></div></div>';
 });
-$('calStatus').textContent='';
 }
 function saveCalibration(){
 var vals=[];
@@ -305,12 +314,9 @@ if(v<50||v>255){alert('系数范围 50-255');return}
 vals.push(v);
 }
 fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calibration:vals})}).then(function(r){return r.json()}).then(function(d){
-if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent='保存成功！';loadCalibration()}
+if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent='保存成功！'}
 else{$('calStatus').style.color='#f5222d';$('calStatus').textContent='保存失败：'+(d.message||'未知')}}).catch(function(){$('calStatus').textContent='网络错误'});
 }
-// 在切换到校面板时加载数据
-var _origShow=show;
-show=function(n,el){_origShow(n,el);if(n==='calibration')loadCalibration()};
 
 // 检测配置模式 - 在 DOM 加载完成后执行
 if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto';}if(w){w.style.display='block';}if(f)f.style.display='none';if(t)t.style.display='none'})}

@@ -144,6 +144,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="si" onclick="showCfg('windows',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">充电窗口</div>
 <div class="si" onclick="showCfg('power',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">电源管理</div>
 <div class="si" onclick="showCfg('calibration',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">校准系数</div>
+<div class="si" onclick="showCfg('shipping',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">运输模式</div>
 </div>
 
 <div class="pnl active" id="p-cfg-system">
@@ -253,11 +254,6 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 
 <div class="pnl" id="p-cfg-calibration">
-<fieldset class="fs" style="border:2px solid #ff4d4f;border-radius:8px">
-<legend class="lg" style="color:#ff4d4f">运输以及存储模式</legend>
-<p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">此模式会让bq76920电池管理芯片进入运输模式，也就是睡眠模式，将不会响应任何指令，一旦进入此模式，需要点按对应的硬件开关才能启用电池，此模式推荐运输或者长时间不使用情况下再执行。</p>
-<button type="button" class="btn" style="background:#ff4d4f;border-color:#ff4d4f" onclick="enterShipMode()">进入此模式</button>
-</fieldset>
 <fieldset class="fs">
 <legend class="lg">ADC 校准系数</legend>
 <p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">校正系数范围：50-255（表示 0.50x - 2.55x），100 = 1.00x（无校正）。修改后点击"保存校准"立即生效。</p>
@@ -269,10 +265,18 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </fieldset>
 </div>
 
-<div class="fa">
+<div class="pnl" id="p-cfg-shipping">
+<fieldset class="fs" style="border:2px solid #ff4d4f;border-radius:8px">
+<legend class="lg" style="color:#ff4d4f">运输以及存储模式</legend>
+<p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">此模式会让bq76920电池管理芯片进入运输模式，也就是睡眠模式，将不会响应任何指令，一旦进入此模式，需要点按对应的硬件开关才能启用电池，此模式推荐运输或者长时间不使用情况下再执行。</p>
+<button type="button" class="btn" style="background:#ff4d4f;border-color:#ff4d4f" onclick="enterShipMode()">进入此模式</button>
+</fieldset>
+</div>
+
+<div class="fa" id="cfgSaveBar">
 <button type="button" class="btn" onclick="save()">保存配置</button>
 </div>
-<div class="nt"><strong>注意：</strong>事关安全，保护参数请谨慎设置。</div>
+<div class="nt" id="cfgSaveNote"><strong>注意：</strong>事关安全，保护参数请谨慎设置。</div>
 </div>
 
 <!-- ===== 面板：固件升级 (OTA) ===== -->
