@@ -1050,7 +1050,7 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
     }
     
     float temp = bq76920_.getTempCelsius();
-    if (temp > -100.0f && temp < 150.0f) {
+    if (temp > -98.0f && temp < 150.0f) {
         bmsState.temperature = temp;
     } else {
         read_success = false;

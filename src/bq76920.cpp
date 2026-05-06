@@ -473,10 +473,10 @@ void BQ76920::calibrateCurrentZero() {
 }
 int16_t BQ76920::getCurrent_mA() {
     uint16_t raw_word = 0;
-    
+
     // 1. [原子操作] 一次性读取 [CC_HI, CRC, CC_LO, CRC]
     if (!readRegisterWord(CURRENT_REG_HIGH, &raw_word)) {
-        return 0;
+        return -32768;
     }
 
     // 2. 转换为有符号 16 位原始值
@@ -889,18 +889,18 @@ bool BQ76920::isLoadPresent() {
  * @return true 成功
  */
 bool BQ76920::enterShipMode() {
-    uint8_t sys_ctrl1 = 0;
-    if (!readRegister(SYS_CTRL1_REG_ADDR, &sys_ctrl1)) return false;
+    // uint8_t sys_ctrl1 = 0;
+    // if (!readRegister(SYS_CTRL1_REG_ADDR, &sys_ctrl1)) return false;
     
-    // 确保 ADC 和 Temp 已关闭 (可选，视需求而定)
-    sys_ctrl1 &= ~(ADC_ENABLE_BIT | TEMP_SELECT_BIT);
+    // // 确保 ADC 和 Temp 已关闭 (可选，视需求而定)
+    // sys_ctrl1 &= ~(ADC_ENABLE_BIT | TEMP_SELECT_BIT);
     
     // 写入 SHIP 序列
-    // 第一步: 写 0x02 (Bit 1)
-    if (!writeRegister(SYS_CTRL1_REG_ADDR, 0x02)) return false;
+    // 第一步: 写 0x01 (Bit 1)
+    if (!writeRegister(SYS_CTRL1_REG_ADDR, 0x01)) return false;
     delay(1);
-    // 第二步: 写 0x04 (Bit 2)
-    if (!writeRegister(SYS_CTRL1_REG_ADDR, 0x04)) return false;
+    // 第二步: 写 0x02 (Bit 2)
+    if (!writeRegister(SYS_CTRL1_REG_ADDR, 0x02)) return false;
     
     return true;
 }
@@ -910,18 +910,6 @@ bool BQ76920::enterShipMode() {
 // 基于数据手册 Section 8.3.1.1.3
 // LSB = 8.44 uV, Sampling Interval = 250 ms
 // =============================================================================
-
-// 构造函数初始化列表中需确保新增变量被初始化
-// 请找到 BQ76920::BQ76920() 构造函数，修改如下：
-/*
-BQ76920::BQ76920() 
-    : i2c(nullptr)
-    , bq_gain(DEFAULT_GAIN_MV_PER_LSB)
-    , bq_offset(DEFAULT_OFFSET_MV)
-    , current_zero_drift(CURRENT_ZERO_DRIFT)
-    , actual_cell_count(0) {          // 确保 existing 变量也初始化
-}
-*/
 
 /**
  * @brief 检查库仑计就绪标志
