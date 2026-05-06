@@ -62,7 +62,8 @@ SystemManagement::SystemManagement(
     , regMismatchCountBQ76920(0)
     , bq24780sRegWarning(false)
     , bq76920RegWarning(false)
-    , emergency_discharge_disabled_(false) {
+    , emergency_discharge_disabled_(false)
+    , discharge_buzzer_active_(false) {
     
     // 初始化全局状态黑板
     memset(&globalState, 0, sizeof(System_Global_State));
@@ -117,6 +118,14 @@ bool SystemManagement::initialize() {
     
     // 订阅 BMS 运输模式请求事件
     EventBus::getInstance().subscribe(EVT_BMS_SHIPMODE_REQUEST, onBmsShipModeRequest);
+
+    // 订阅充电事件
+    EventBus::getInstance().subscribe(EVT_PM_CHARGE_STARTED, onChargeStarted);
+    EventBus::getInstance().subscribe(EVT_PM_CHARGE_COMPLETE, onChargeComplete);
+
+    // 订阅均衡事件
+    EventBus::getInstance().subscribe(EVT_BMS_BALANCING_STARTED, onBalancingStarted);
+    EventBus::getInstance().subscribe(EVT_BMS_BALANCING_STOPPED, onBalancingStopped);
 
     hardware->syncInitialState();
     
@@ -316,14 +325,56 @@ void SystemManagement::executeStateActions() {
 // =============================================================================
 
 void SystemManagement::onStateEnter(SystemState newState) {
-    Serial.printf_P(PSTR("FSM: Entering state: %s\n"), 
+    Serial.printf_P(PSTR("FSM: Entering state: %s\n"),
                    newState == SYS_STATE_INIT ? "INIT" :
                    newState == SYS_STATE_NORMAL ? "NORMAL" :
                    newState == SYS_STATE_WARNING ? "WARNING" : "CRITICAL");
-    
+
     // 进入新状态时重置恢复计数器
     if (newState != SYS_STATE_CRITICAL) {
         criticalRecoveryCounter_ = 0;
+    }
+
+    // 状态切换时输出提示信息到 Web 页面
+    if (newState == SYS_STATE_CRITICAL) {
+        if (!globalState.bms.is_connected) {
+            addTip("BMS模块掉线，进入危急状态");
+        } else if (!globalState.power.bq24780s_connected) {
+            addTip("电源芯片BQ24780S掉线，进入危急状态");
+        } else if (globalState.bms.fault_type != BMS_FAULT_NONE) {
+            addTip("BMS故障(%d)，进入危急状态", static_cast<int>(globalState.bms.fault_type));
+        } else {
+            addTip("系统进入危急状态");
+        }
+    } else if (newState == SYS_STATE_WARNING) {
+        if (globalState.power.fault_type != POWER_FAULT_NONE) {
+            addTip("电源故障(%d)，进入警告状态", static_cast<int>(globalState.power.fault_type));
+        } else if (globalState.over_current_protection) {
+            addTip("过流保护触发，进入警告状态");
+        } else if (globalState.over_temp_protection) {
+            addTip("过温保护触发，进入警告状态");
+        } else if (bq24780sRegWarning) {
+            addTip("BQ24780S寄存器配置不一致，进入警告状态");
+        } else if (bq76920RegWarning) {
+            addTip("BQ76920寄存器配置不一致，进入警告状态");
+        } else {
+            addTip("系统进入警告状态");
+        }
+    }
+
+    // 状态切换时设置蜂鸣器（不在循环中重复设置，避免打断状态机）
+    switch (newState) {
+        case SYS_STATE_NORMAL:
+            hardware->setBuzzer(BUZZER_MODE_OFF);
+            break;
+        case SYS_STATE_WARNING:
+            hardware->setBuzzer(BUZZER_MODE_WARNING_BEEP);
+            break;
+        case SYS_STATE_CRITICAL:
+            hardware->setBuzzer(BUZZER_MODE_ALARM);
+            break;
+        default:
+            break;
     }
 }
 
@@ -589,7 +640,7 @@ bool SystemManagement::checkWarningConditions() const {
 void SystemManagement::applyIndicatorNormal() {
     hardware->setRGBLED(RGB_MODE_BREATHING, {0, 255, 0});
     hardware->setLED(POWER_LED_PIN,LED_MODE_ON);
-    hardware->setBuzzer(BUZZER_MODE_OFF);
+    // 蜂鸣器由 onStateEnter/onStateExit 控制，不在循环中设置
 }
 
 /**
@@ -598,7 +649,7 @@ void SystemManagement::applyIndicatorNormal() {
 void SystemManagement::applyIndicatorWarning() {
     hardware->setRGBLED(RGB_MODE_BREATHING, {255, 165, 0});
     hardware->setLED(POWER_LED_PIN,LED_MODE_BLINK_SLOW);
-    hardware->setBuzzer(BUZZER_MODE_OFF);
+    // 蜂鸣器由 onStateEnter/onStateExit 控制，不在循环中设置
 }
 
 /**
@@ -607,7 +658,7 @@ void SystemManagement::applyIndicatorWarning() {
 void SystemManagement::applyIndicatorCritical() {
     hardware->setRGBLED(RGB_MODE_BREATHING, {255, 0, 0});
     hardware->setLED(POWER_LED_PIN,LED_MODE_BLINK_FAST);
-    hardware->setBuzzer(BUZZER_MODE_ALARM);
+    // 蜂鸣器由 onStateEnter/onStateExit 控制，不在循环中设置
 }
 
 /**
@@ -675,18 +726,28 @@ void SystemManagement::checkEmergencyShutdown() {
  */
 void SystemManagement::updateDischargeIndicator() {
     // 电流阈值防抖：仅在放电电流 > 10mA (即 current < -10) 时亮起
-    if (globalState.bms.current < DISCHARGE_CURRENT_THRESHOLD) {
+    bool is_discharging = globalState.bms.current < DISCHARGE_CURRENT_THRESHOLD;
+
+    if (is_discharging) {
         hardware->setLED(DISCHARGING_LED_PIN, LED_MODE_ON);
-        // AC 离线时，放电指示灯亮起的同时启动蜂鸣器间断长鸣
-        if (!globalState.power.ac_present) {
-            hardware->setBuzzer(BUZZER_MODE_CONTINUOUS);
-        }
     } else {
         hardware->setLED(DISCHARGING_LED_PIN, LED_MODE_OFF);
-        // 放电停止，关闭蜂鸣器（仅关闭由本函数启动的 CONTINUOUS 模式）
-        if (!globalState.power.ac_present) {
+    }
+
+    // 放电蜂鸣器：仅在 NORMAL 状态 + AC 离线时生效
+    // 由 onStateLoop 统一控制蜂鸣器，避免多处调用 setBuzzer 互相干扰
+    if (currentState == SYS_STATE_NORMAL && !globalState.power.ac_present) {
+        if (is_discharging && !discharge_buzzer_active_) {
+            hardware->setBuzzer(BUZZER_MODE_SLOW_BEEP);
+            discharge_buzzer_active_ = true;
+        } else if (!is_discharging && discharge_buzzer_active_) {
             hardware->setBuzzer(BUZZER_MODE_OFF);
+            discharge_buzzer_active_ = false;
         }
+    } else if (discharge_buzzer_active_) {
+        // 离开 NORMAL 状态或 AC 恢复，清除放电蜂鸣器
+        hardware->setBuzzer(BUZZER_MODE_OFF);
+        discharge_buzzer_active_ = false;
     }
 }
 
@@ -912,6 +973,7 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
     switch (fault_type) {
         case BMS_FAULT_OVER_TEMP:
             Serial.println(F("[SysMgr] OVER TEMP protection: Disabling both charge and discharge"));
+            addTip("BMS过温保护：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -919,17 +981,20 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             
         case BMS_FAULT_OVER_VOLTAGE:
             Serial.println(F("[SysMgr] OVER VOLTAGE protection: Disabling charge"));
+            addTip("BMS过压保护：关闭充电");
             bms->disableCharge();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_UNDER_VOLTAGE:
             Serial.println(F("[SysMgr] UNDER VOLTAGE protection: Disabling discharge"));
+            addTip("BMS欠压保护：关闭放电");
             bms->disableDischarge();
             break;
             
         case BMS_FAULT_OVER_CURRENT:
             Serial.println(F("[SysMgr] OVER CURRENT protection: Disabling both charge and discharge"));
+            addTip("BMS过流保护：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -937,31 +1002,33 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             
         case BMS_FAULT_SHORT_CIRCUIT:
             Serial.println(F("[SysMgr] SHORT CIRCUIT protection: Emergency shutdown!"));
+            addTip("BMS短路保护：紧急关机");
             bms->emergencyShutdown();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_CHIP_ERROR:
             Serial.println(F("[SysMgr] CHIP ERROR protection: Disabling both charge and discharge"));
+            addTip("BMS芯片错误");
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_PASSIVE_SHUTDOWN:
             Serial.println(F("[SysMgr] PASSIVE SHUTDOWN protection: Disabling both charge and discharge"));
+            addTip("BMS被动关机：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_NONE:
-            // 故障清除，不执行任何操作
-            // 故障恢复逻辑由 FSM 的状态检查函数处理
             Serial.println(F("[SysMgr] BMS fault cleared"));
             break;
             
         default:
             Serial.printf_P(PSTR("[SysMgr] Unknown BMS fault type: %d, taking safe action\n"), 
                            static_cast<int>(fault_type));
+            addTip("BMS未知故障(%d)", static_cast<int>(fault_type));
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -1015,12 +1082,7 @@ void SystemManagement::onDelayedStart() {
  * 调用处负责控制检查频率
  */
 void SystemManagement::checkBQ24780sRegisters() {
-    // 需要 PowerManagement 和配置管理器
-    if (!powerManagement || !configManager) {
-        return;
-    }
-
-    // 需要芯片连接
+    if (!powerManagement || !configManager) return;
     if (!globalState.power.bq24780s_connected) {
         regMismatchCountBQ24780s = 0;
         bq24780sRegWarning = false;
@@ -1028,37 +1090,25 @@ void SystemManagement::checkBQ24780sRegisters() {
     }
 
     Power_Config_t* config = configManager->getPowerConfig();
+    uint16_t* regs = globalState.power.bq24780s_registers;
     bool mismatch = false;
 
-    // BQ24780S 寄存器索引: [9]=DISCHARGE_CURRENT [10]=INPUT_CURRENT [5]=PROCHOT_OPTION1
-    uint16_t* regs = globalState.power.bq24780s_registers;
-
-    // 检查 DISCHARGE_CURRENT vs max_discharge_current
     int reg_discharge = Utils::parseBQ24780sDischargeCurrent(regs[9]);
-    if (reg_discharge > 0) {
-        float tolerance = config->max_discharge_current * 0.05f;
-        if (abs(reg_discharge - config->max_discharge_current) > tolerance) {
-            mismatch = true;
-        }
+    if (reg_discharge > 0 && abs(reg_discharge - (int)config->max_discharge_current) > config->max_discharge_current * 0.05f) {
+        mismatch = true;
+        if (bq24780sRegWarning || regMismatchCountBQ24780s >= 2)
+            addTip("BQ24780S放电电流不一致:寄存器=%dmA,配置=%dmA", reg_discharge, config->max_discharge_current);
     }
 
-    // 检查 INPUT_CURRENT vs over_current_threshold
     int reg_input = Utils::parseBQ24780sInputCurrent(regs[10]);
-    if (reg_input > 0) {
-        float tolerance = config->over_current_threshold * 0.05f;
-        if (abs(reg_input - config->over_current_threshold) > tolerance) {
-            mismatch = true;
-        }
+    if (reg_input > 0 && abs(reg_input - (int)config->over_current_threshold) > config->over_current_threshold * 0.05f) {
+        mismatch = true;
+        if (bq24780sRegWarning || regMismatchCountBQ24780s >= 2)
+            addTip("BQ24780S输入电流不一致:寄存器=%dmA,配置=%dmA", reg_input, config->over_current_threshold);
     }
 
     if (mismatch) {
-        regMismatchCountBQ24780s++;
-        if (regMismatchCountBQ24780s >= 3) {
-            if (!bq24780sRegWarning) {
-                Serial.println(F("[SysMgr] WARNING: BQ24780S register mismatch detected (chip error)"));
-                bq24780sRegWarning = true;
-            }
-        }
+        if (++regMismatchCountBQ24780s >= 3) bq24780sRegWarning = true;
     } else {
         regMismatchCountBQ24780s = 0;
         bq24780sRegWarning = false;
@@ -1071,12 +1121,7 @@ void SystemManagement::checkBQ24780sRegisters() {
  * 调用处负责控制检查频率
  */
 void SystemManagement::checkBQ76920Registers() {
-    // 需要 BMS 和配置管理器
-    if (!bms || !configManager) {
-        return;
-    }
-
-    // 需要 BMS 连接
+    if (!bms || !configManager) return;
     if (!globalState.bms.is_connected) {
         regMismatchCountBQ76920 = 0;
         bq76920RegWarning = false;
@@ -1084,57 +1129,39 @@ void SystemManagement::checkBQ76920Registers() {
     }
 
     BMS_Config_t* config = configManager->getBMSConfig();
+    uint8_t* regs = globalState.bms.bq76920_registers;
     bool mismatch = false;
 
-    // BQ76920 寄存器索引: [4]=PROTECT1 [5]=PROTECT2 [7]=OV_TRIP [8]=UV_TRIP
-    uint8_t* regs = globalState.bms.bq76920_registers;
-
-    // 检查 PROTECT1 (SCD) vs short_circuit_threshold
-    int reg_scd_ma = Utils::parseBQ76920Protect1(regs[4]);
-    if (reg_scd_ma > 0 && config->short_circuit_threshold > 0) {
-        float tolerance = config->short_circuit_threshold * 0.05f;
-        if (abs(reg_scd_ma - config->short_circuit_threshold) > tolerance) {
-            mismatch = true;
-        }
+    int reg_scd = Utils::parseBQ76920Protect1(regs[4]);
+    if (reg_scd > 0 && config->short_circuit_threshold > 0 && abs(reg_scd - (int)config->short_circuit_threshold) > config->short_circuit_threshold * 0.1f) {
+        mismatch = true;
+        if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
+            addTip("BQ76920短路阈值不一致:寄存器=%dmA,配置=%dmA", reg_scd, config->short_circuit_threshold);
     }
 
-    // 检查 PROTECT2 (OCD) vs max_discharge_current
-    int reg_ocd_ma = Utils::parseBQ76920Protect2(regs[5], regs[4]);
-    if (reg_ocd_ma > 0 && config->max_discharge_current > 0) {
-        float tolerance = config->max_discharge_current * 0.05f;
-        if (abs(reg_ocd_ma - config->max_discharge_current) > tolerance) {
-            mismatch = true;
-        }
+    int reg_ocd = Utils::parseBQ76920Protect2(regs[5], regs[4]);
+    if (reg_ocd > 0 && config->max_discharge_current > 0 && abs(reg_ocd - (int)config->max_discharge_current) > config->max_discharge_current * 0.1f) {
+        mismatch = true;
+        if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
+            addTip("BQ76920放电过流不一致:寄存器=%dmA,配置=%dmA", reg_ocd, config->max_discharge_current);
     }
 
-    // 检查 OV_TRIP vs cell_ov_threshold
-    uint8_t default_gain = 0x10;
-    uint8_t default_offset = 0x00;
-    float reg_ov = Utils::parseBQ76920OvTrip(regs[7], default_gain, default_offset);
-    if (reg_ov > 0 && config->cell_ov_threshold > 0) {
-        float tolerance = config->cell_ov_threshold * 0.01f;
-        if (abs(reg_ov - config->cell_ov_threshold) > tolerance) {
-            mismatch = true;
-        }
+    float reg_ov = Utils::parseBQ76920OvTrip(regs[7], regs[10], regs[11]);
+    if (reg_ov > 0 && config->cell_ov_threshold > 0 && fabs(reg_ov - config->cell_ov_threshold) > config->cell_ov_threshold * 0.02f) {
+        mismatch = true;
+        if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
+            addTip("BQ76920过压阈值不一致:寄存器=%dmV,配置=%dmV", (int)reg_ov, config->cell_ov_threshold);
     }
 
-    // 检查 UV_TRIP vs cell_uv_threshold
-    float reg_uv = Utils::parseBQ76920UvTrip(regs[8], default_gain, default_offset);
-    if (reg_uv > 0 && config->cell_uv_threshold > 0) {
-        float tolerance = config->cell_uv_threshold * 0.01f;
-        if (abs(reg_uv - config->cell_uv_threshold) > tolerance) {
-            mismatch = true;
-        }
+    float reg_uv = Utils::parseBQ76920UvTrip(regs[8], regs[10], regs[11]);
+    if (reg_uv > 0 && config->cell_uv_threshold > 0 && fabs(reg_uv - config->cell_uv_threshold) > config->cell_uv_threshold * 0.02f) {
+        mismatch = true;
+        if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
+            addTip("BQ76920欠压阈值不一致:寄存器=%dmV,配置=%dmV", (int)reg_uv, config->cell_uv_threshold);
     }
 
     if (mismatch) {
-        regMismatchCountBQ76920++;
-        if (regMismatchCountBQ76920 >= 3) {
-            if (!bq76920RegWarning) {
-                Serial.println(F("[SysMgr] WARNING: BQ76920 register mismatch detected (chip error)"));
-                bq76920RegWarning = true;
-            }
-        }
+        if (++regMismatchCountBQ76920 >= 3) bq76920RegWarning = true;
     } else {
         regMismatchCountBQ76920 = 0;
         bq76920RegWarning = false;
@@ -1182,6 +1209,40 @@ void SystemManagement::handleBmsShipModeRequest() {
     }
 }
 
+void SystemManagement::onChargeStarted(EventType type, void* param) {
+    if (!systemManager || !systemManager->systemInitialized) return;
+    uint32_t info = param ? *static_cast<uint32_t*>(param) : 0;
+    uint16_t current = info & 0xFFFF;
+    uint16_t voltage = (info >> 16) & 0xFFFF;
+    systemManager->addTip("正在充电，SOC:%.1f%%，充电电流：%dmA，充电电压：%dmV",
+                          systemManager->globalState.bms.soc, current, voltage);
+}
+
+void SystemManagement::onChargeComplete(EventType type, void* param) {
+    if (!systemManager || !systemManager->systemInitialized) return;
+    auto& st = systemManager->globalState;
+    systemManager->addTip("充电已停止，SOC:%.1f%%", st.bms.soc);
+}
+
+void SystemManagement::onBalancingStarted(EventType type, void* param) {
+    if (!systemManager || !systemManager->systemInitialized) return;
+    uint8_t mask = param ? *static_cast<uint8_t*>(param) : 0;
+    char cells[32] = {0};
+    int pos = 0;
+    for (int i = 0; i < 5; i++) {
+        if (mask & (1 << i)) {
+            if (pos > 0) cells[pos++] = ',';
+            pos += snprintf(cells + pos, sizeof(cells) - pos, "%d", i + 1);
+        }
+    }
+    systemManager->addTip("电池均衡启动，SOC:%.1f%%，均衡电芯：%s", systemManager->globalState.bms.soc, cells);
+}
+
+void SystemManagement::onBalancingStopped(EventType type, void* param) {
+    if (!systemManager || !systemManager->systemInitialized) return;
+    systemManager->addTip("电池均衡停止，SOC:%.1f%%", systemManager->globalState.bms.soc);
+}
+
 // =============================================================================
 // ADC Calibration 访问函数实现
 // =============================================================================
@@ -1203,4 +1264,45 @@ void SystemManagement::setADCCalibration(uint8_t pin, uint8_t coefficient) {
     if (hardware) {
         hardware->setADCCalibration(pin, coefficient);
     }
+}
+
+// =============================================================================
+// 持久化所有模块数据
+// =============================================================================
+
+void SystemManagement::saveAllData() {
+    Serial.println(F("[SysMgr] Saving all module data..."));
+    if (bms) {
+        bms->saveToStorage();
+    }
+    if (configManager) {
+        configManager->saveConfiguration();
+    }
+    Serial.println(F("[SysMgr] All module data saved"));
+}
+
+void SystemManagement::addTip(const char* fmt, ...) {
+    if (fmt == nullptr || fmt[0] == '\0') return;
+
+    char buf[SYSTEM_TIP_MAX_LEN];
+    time_t now = time(nullptr);
+    struct tm* t = localtime(&now);
+    int off = snprintf(buf, sizeof(buf), "[%d月%d日 %02d:%02d]",
+                       t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min);
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf + off, sizeof(buf) - off, fmt, args);
+    va_end(args);
+
+    uint8_t idx = globalState.tip_index;
+    globalState.tips[idx].timestamp = (uint32_t)now;
+    strlcpy(globalState.tips[idx].message, buf, SYSTEM_TIP_MAX_LEN);
+
+    globalState.tip_index = (idx + 1) % SYSTEM_TIPS_MAX;
+    if (globalState.tip_count < SYSTEM_TIPS_MAX) {
+        globalState.tip_count++;
+    }
+
+    Serial.printf_P(PSTR("[SysMgr] Tip: %s\n"), buf);
 }

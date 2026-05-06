@@ -18,11 +18,6 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </head>
 <body>
 <div class="topbar">
-<div class="traffic-lights">
-<span class="tl tl-close"></span>
-<span class="tl tl-minimize"></span>
-<span class="tl tl-maximize"></span>
-</div>
 <h1>UPS 控制中心</h1>
 <div class="topbar-info">
 <span class="ws-st" id="wsSt">连接中</span>
@@ -32,13 +27,13 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <span id="rssi">-- dBm</span>
 </div>
 </div>
+<div class="tip-bar" id="tipBar"></div>
 <div class="main-wrap">
 <div class="side">
 <div class="si active" onclick="show('status',this)">状态概览</div>
 <div class="si" onclick="show('bms',this)">BMS 状态</div>
 <div class="si" onclick="show('power',this)">电源状态</div>
 <div class="si" onclick="show('config',this)">系统配置</div>
-<div class="si" onclick="show('calibration',this)">配置校准系数</div>
 <div class="si" onclick="show('ota',this)">固件升级</div>
 </div>
 <div class="ct">
@@ -148,6 +143,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="si" onclick="showCfg('bms',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">BMS 配置</div>
 <div class="si" onclick="showCfg('windows',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">充电窗口</div>
 <div class="si" onclick="showCfg('power',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">电源管理</div>
+<div class="si" onclick="showCfg('calibration',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">校准系数</div>
 </div>
 
 <div class="pnl active" id="p-cfg-system">
@@ -180,11 +176,6 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="fg"><label>端口:</label><input type="number" id="mqtt_port" value="%MQTT_PORT%" min="1" max="65535" placeholder="1883"><span class="u">端口</span></div>
 <div class="fg"><label>用户名:</label><input type="text" id="mqtt_usr" value="%MQTT_USERNAME%" placeholder="可选"></div>
 <div class="fg"><label>密码:</label><input type="text" id="mqtt_pwd" value="%MQTT_PASSWORD%" placeholder="可选"></div>
-</fieldset>
-<fieldset class="fs" style="border:2px solid #ff4d4f;border-radius:8px">
-<legend class="lg" style="color:#ff4d4f">运输以及存储模式</legend>
-<p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">此模式会让bq76920电池管理芯片进入运输模式，也就是睡眠模式，将不会响应任何指令，一旦进入此模式，需要点按对应的硬件开关才能启用电池，此模式推荐运输或者长时间不使用情况下再执行。</p>
-<button type="button" class="btn" style="background:#ff4d4f;border-color:#ff4d4f" onclick="enterShipMode()">进入此模式</button>
 </fieldset>
 </div>
 
@@ -261,14 +252,12 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </fieldset>
 </div>
 
-<div class="fa">
-<button type="button" class="btn" onclick="save()">保存配置</button>
-</div>
-<div class="nt"><strong>注意：</strong>事关安全，保护参数请谨慎设置。</div>
-</div>
-
-<!-- ===== 面板：ADC 校准系数 ===== -->
-<div class="pnl" id="p-calibration">
+<div class="pnl" id="p-cfg-calibration">
+<fieldset class="fs" style="border:2px solid #ff4d4f;border-radius:8px">
+<legend class="lg" style="color:#ff4d4f">运输以及存储模式</legend>
+<p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">此模式会让bq76920电池管理芯片进入运输模式，也就是睡眠模式，将不会响应任何指令，一旦进入此模式，需要点按对应的硬件开关才能启用电池，此模式推荐运输或者长时间不使用情况下再执行。</p>
+<button type="button" class="btn" style="background:#ff4d4f;border-color:#ff4d4f" onclick="enterShipMode()">进入此模式</button>
+</fieldset>
 <fieldset class="fs">
 <legend class="lg">ADC 校准系数</legend>
 <p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">校正系数范围：50-255（表示 0.50x - 2.55x），100 = 1.00x（无校正）。修改后点击"保存校准"立即生效。</p>
@@ -278,6 +267,12 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <span id="calStatus" style="font-size:14px;color:#999"></span>
 </div>
 </fieldset>
+</div>
+
+<div class="fa">
+<button type="button" class="btn" onclick="save()">保存配置</button>
+</div>
+<div class="nt"><strong>注意：</strong>事关安全，保护参数请谨慎设置。</div>
 </div>
 
 <!-- ===== 面板：固件升级 (OTA) ===== -->
@@ -498,9 +493,8 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <button class="wz-btn wz-btn-next" id="wz-next" onclick="wzNext()">下一步</button>
 </div>
 </div>
-
-<div class="foot"><span id="updT">--</span></div>
 </div>
+<div class="foot"><span id="updT">--</span></div>
 </div>
 </div>
 <script id="dynamic-js"></script>

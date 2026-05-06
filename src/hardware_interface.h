@@ -77,7 +77,9 @@ typedef enum {
     BUZZER_MODE_BEEP_DOUBLE,
     BUZZER_MODE_BEEP_TRIPLE,
     BUZZER_MODE_CONTINUOUS,
-    BUZZER_MODE_ALARM
+    BUZZER_MODE_ALARM,
+    BUZZER_MODE_SLOW_BEEP,
+    BUZZER_MODE_WARNING_BEEP
 } Buzzer_Mode_t;
 
 // ADC calibration coefficient constants

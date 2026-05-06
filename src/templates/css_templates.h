@@ -74,6 +74,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text'
 .badge.r{background:rgba(255,59,48,0.12);color:#ff3b30}
 .badge.b{background:rgba(0,122,255,0.12);color:#007AFF}
 
+/* 系统提示条 */
+.tip-bar{display:none;padding:0;overflow:hidden;max-height:0;transition:max-height .3s ease,padding .3s ease}
+.tip-bar.has-tips{display:block;max-height:200px;padding:8px 20px;background:linear-gradient(135deg,#fffbe6 0%,#fff7cc 100%);border-bottom:1px solid #ffe58f}
+.tip-list{display:flex;flex-direction:column;gap:4px}
+.tip-item{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#614700;line-height:1.5;padding:4px 0}
+.tip-item::before{content:'\26A0';flex-shrink:0;font-size:13px;color:#d48806;margin-top:1px}
+.tip-time{color:#8c6e00;font-weight:600;white-space:nowrap}
+
 /* WebSocket 状态 */
 .ws-st{padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#fff}
 .ws-st.ok{background:#34c759}.ws-st.fail{background:#ff3b30}

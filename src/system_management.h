@@ -67,6 +67,12 @@ public:
     // ADC Calibration access (forwarding to hardware)
     const uint8_t* getADCCalibration();
     void setADCCalibration(uint8_t pin, uint8_t coefficient);
+    
+    // 持久化所有模块数据（OTA前调用）
+    void saveAllData();
+
+    // 系统提示信息管理 - 自动添加时间前缀 "[M月D日 HH:MM]"
+    void addTip(const char* fmt, ...);
 
 private:
     // =============================================================================
@@ -118,6 +124,7 @@ private:
     // 紧急关机放电控制
     // =============================================================================
     bool emergency_discharge_disabled_;   // 紧急关机已关闭放电标志（用于恢复判断）
+    bool discharge_buzzer_active_;        // 放电蜂鸣器是否正在播放
     
     // =============================================================================
     // 延迟启动相关
@@ -296,9 +303,17 @@ private:
     
     // BMS 运输模式请求事件回调
     static void onBmsShipModeRequest(EventType type, void* param);
-    
+
     // BMS 运输模式处理（成员函数）
     void handleBmsShipModeRequest();
+
+    // 充电事件回调
+    static void onChargeStarted(EventType type, void* param);
+    static void onChargeComplete(EventType type, void* param);
+
+    // 均衡事件回调
+    static void onBalancingStarted(EventType type, void* param);
+    static void onBalancingStopped(EventType type, void* param);
 
     // =============================================================================
     // 辅助方法

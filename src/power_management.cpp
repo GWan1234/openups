@@ -341,11 +341,12 @@ bool PowerManagement::setChargingCurrent(uint16_t current_mA) {
         hal_->setLED(CHARGING_LED_PIN, LED_MODE_ON);
     }
     
-    Serial.printf_P(PSTR("PowerManagement: Charging started - Voltage: %d mV, Current: %d mA\n"), 
+    Serial.printf_P(PSTR("PowerManagement: Charging started - Voltage: %d mV, Current: %d mA\n"),
                   config_.charge_voltage_limit, current_mA);
-    
-    // 发布充电启动事件
-    EventBus::getInstance().publish(EVT_PM_CHARGE_STARTED, nullptr);
+
+    // 发布充电启动事件，将电流和电压打包为 uint32 传递
+    uint32_t charge_info = (uint32_t)current_mA | ((uint32_t)config_.charge_voltage_limit << 16);
+    EventBus::getInstance().publish(EVT_PM_CHARGE_STARTED, &charge_info);
     
     return true;
 }
@@ -378,10 +379,10 @@ bool PowerManagement::stopCharging() {
     }
     
     Serial.println("PowerManagement: Charging stopped");
-    
+
     // 发布充电完成事件
     EventBus::getInstance().publish(EVT_PM_CHARGE_COMPLETE, nullptr);
-    
+
     return true;
 }
 
@@ -706,7 +707,12 @@ bool PowerManagement::isWithinTimeWindow(uint8_t current_day, uint8_t current_ho
     if (current_day > 6 || current_hour > 23) {
         return true;
     }
-    
+
+    // 未配置时间窗口，允许所有时间充电
+    if (config_.charging_window_count == 0) {
+        return true;
+    }
+
     // 遍历所有配置的时间窗口
     for (uint8_t i = 0; i < config_.charging_window_count; i++) {
         const ChargingTimeWindow_t& window = config_.charging_windows[i];

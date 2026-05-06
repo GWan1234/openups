@@ -155,6 +155,18 @@ typedef struct {
 } System_Info;
 
 // =============================================================================
+// 系统提示信息结构
+// =============================================================================
+
+#define SYSTEM_TIPS_MAX     5       // 最多保留 5 条提示
+#define SYSTEM_TIP_MAX_LEN  96      // 每条提示最大长度
+
+typedef struct {
+    uint32_t timestamp;                     // 时间戳 (Unix 秒)
+    char message[SYSTEM_TIP_MAX_LEN];       // 格式化消息，如 "[1月1日 18:26]BMS过压芯片配置不一致"
+} System_Tip;
+
+// =============================================================================
 // 主设备数据结构 - 系统全局"黑板"
 // =============================================================================
 
@@ -172,6 +184,11 @@ typedef struct {
     bool over_current_protection;   // 过流保护
     bool over_temp_protection;      // 过温保护
     bool short_circuit_protection;  // 短路保护
+
+    // 系统提示信息（各模块关键信息，FIFO 环形写入）
+    System_Tip tips[SYSTEM_TIPS_MAX];
+    uint8_t tip_count;              // 当前有效提示数 (0-SYSTEM_TIPS_MAX)
+    uint8_t tip_index;              // 下一条写入位置 (环形索引)
 } System_Global_State;
 
 // =============================================================================

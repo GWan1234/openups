@@ -148,12 +148,9 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     }
 
     // Configure Over-Current/Short-Circuit Protection (OCD/SCD)
-    if (!setOCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay)) {
-        Serial.println(F("BQ76920: Failed to configure over-current protection"));
-        return false;
-    }
-    if (!setSCDProtection(config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
-        Serial.println(F("BQ76920: Failed to configure short circuit protection"));
+    if (!setOCDSCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay,
+                             config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
+        Serial.println(F("BQ76920: Failed to configure over-current and short circuit protection"));
         return false;
     }
     
@@ -223,15 +220,10 @@ bool BQ76920::updateConfiguration(const BQ76920_InitConfig &config) {
         success = false;
     }
     
-    // 3. 更新过流保护配置
-    if (!setOCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay)) {
-        Serial.println(F("BQ76920: Failed to update over-current protection"));
-        success = false;
-    }
-    
-    // 4. 更新短路保护配置
-    if (!setSCDProtection(config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
-        Serial.println(F("BQ76920: Failed to update short circuit protection"));
+    // 3. 更新过流/短路保护配置 (联合设置，共享 RSNS 位)
+    if (!setOCDSCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay,
+                             config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
+        Serial.println(F("BQ76920: Failed to update over-current and short circuit protection"));
         success = false;
     }
     
@@ -715,66 +707,51 @@ bool BQ76920::setOVUVDelay(BMS_OVDelay_t ovDelay, BMS_UVDelay_t uvDelay) {
     return writeRegister(PROTECT3_REG_ADDR, protect3);
 }
 
-// [修复] 重写 OCD 设置逻辑，避免覆盖 SCD 的 RSNS 位
-bool BQ76920::setOCDProtection(float threshold_mV, BMS_OCDDelay_t delay) {
-    bool rsnsBit;
-    uint8_t threshIdx = findClosestOCDThreshold(threshold_mV, rsnsBit);
-    
-    uint8_t protect2 = ((delay & 0x07) << 4) | (threshIdx & 0x0F);
-    
-    // 读取当前 PROTECT1，只修改 RSNS 位，保留 SCD 的配置
-    uint8_t p1 = 0;
-    if (!readRegister(PROTECT1_REG_ADDR, &p1)) {
-        return false;
+bool BQ76920::setOCDSCDProtection(float ocd_threshold_mV, BMS_OCDDelay_t ocd_delay,
+                                   float scd_threshold_mV, BMS_SCDDelay_t scd_delay) {
+    bool ocd_rsns = false, scd_rsns = false;
+    uint8_t ocd_thresh_idx = findClosestOCDThreshold(ocd_threshold_mV, ocd_rsns);
+    uint8_t scd_thresh_idx = findClosestSCDThreshold(scd_threshold_mV, scd_rsns);
+
+    bool rsns = ocd_rsns || scd_rsns;
+
+    if (rsns && !ocd_rsns) {
+        float bestErr = 1000.0f;
+        uint8_t bestIdx = 0;
+        for (int i = 0; i <= 0xF; i++) {
+            float err = fabsf(BQ76920_OCD_THRESH_HIGH[i] - ocd_threshold_mV);
+            if (err < bestErr) {
+                bestErr = err;
+                bestIdx = i;
+            }
+        }
+        ocd_thresh_idx = bestIdx;
     }
-    
-    if (rsnsBit) p1 |= 0x80;
-    else p1 &= ~0x80;
-    
+
+    if (rsns && !scd_rsns) {
+        float bestErr = 1000.0f;
+        uint8_t bestIdx = 0;
+        for (int i = 0; i < 8; i++) {
+            float err = fabsf(BQ76920_SCD_THRESH_HIGH[i] - scd_threshold_mV);
+            if (err < bestErr) {
+                bestErr = err;
+                bestIdx = i;
+            }
+        }
+        scd_thresh_idx = bestIdx;
+    }
+
+    uint8_t p1 = 0;
+    if (rsns) p1 |= 0x80;
+    p1 |= ((scd_delay & 0x03) << 3);
+    p1 |= (scd_thresh_idx & 0x07);
+
+    uint8_t p2 = ((ocd_delay & 0x07) << 4) | (ocd_thresh_idx & 0x0F);
+
     if (!writeRegister(PROTECT1_REG_ADDR, p1)) {
         return false;
     }
-    
-    return writeRegister(PROTECT2_REG_ADDR, protect2);
-}
-
-// [修复] 重写 SCD 设置逻辑，避免覆盖 OCD 的 RSNS 位
-bool BQ76920::setSCDProtection(float threshold_mV, BMS_SCDDelay_t delay) {
-    bool rsnsBit;
-    uint8_t threshIdx = findClosestSCDThreshold(threshold_mV, rsnsBit);
-    
-    uint8_t p1 = 0;
-    if (!readRegister(PROTECT1_REG_ADDR, &p1)) {
-        return false;
-    }
-    
-    // 保留 Bit 7 (RSNS) 以外的位？不，我们需要更新 SCD 的 Delay 和 Thresh
-    // 但要小心不要破坏未来的扩展位。这里我们明确构造新的 P1 值
-    // 策略：先读取，清除 SCD 相关位 (Bit 4:0)，然后填入新值和当前的 RSNS 决策
-    
-    // 清除 SCD_DELAY (4:3) 和 SCD_THRESH (2:0)，保留 RSNS (7) 和其他保留位
-    p1 &= 0x80; 
-    
-    // 如果本次计算需要 RSNS=1，则置位，否则保持 0 (注意：如果 OCD 需要 RSNS=1，setOCDProtection 会再次置位)
-    // 这里的逻辑是：SCD 设置函数只负责"如果我自己需要高量程，我就置位"。
-    // 如果 OCD 也需要，它也会置位。如果 OCD 不需要但 SCD 需要，SCD 置位。
-    // 唯一的风险是：OCD 需要高量程，但 SCD 不需要且最后被调用，它会清除 RSNS。
-    // **因此，最佳实践是同时调用或提供一个联合设置函数**。
-    // 为了兼容性，这里我们采取保守策略：如果 SCD 需要高量程，则置位；如果不需，**不清除**，留给 OCD 决定？
-    // 不行，寄存器位是共享的。
-    // **修正策略**: 读取当前 RSNS 状态。如果 SCD 需要高量程，强制置 1。如果 SCD 不需要，**保持原状** (假设 OCD 可能已经设置了)。
-    // 这样如果 OCD 先运行设置了 1，SCD 后运行且不需要，不会清除它。
-    
-    uint8_t current_rsns = p1 & 0x80;
-    if (rsnsBit) {
-        p1 |= 0x80;
-    } 
-    // else: do nothing, keep current_rsns
-    
-    p1 |= ((delay & 0x03) << 3);
-    p1 |= (threshIdx & 0x07);
-    
-    return writeRegister(PROTECT1_REG_ADDR, p1);
+    return writeRegister(PROTECT2_REG_ADDR, p2);
 }
 
 static float getOCDThresholdFromIndex(uint8_t index, bool rsnsHigh) {

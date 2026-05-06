@@ -12,7 +12,10 @@ HardwareInterface::HardwareInterface(uint8_t led_brightness, uint8_t buzzer_volu
       flag_tbstat_changed_(false), flag_bms_alert_(false), flag_button_pressed_(false),
       button_state_(BTN_IDLE), last_acok_state_(false), last_prochot_state_(false),
       last_tbstat_state_(false), rgb_mode_(RGB_MODE_OFF), rgb_color_{0, 0, 0},
-      buzzer_mode_(BUZZER_MODE_BEEP_ONCE) {
+      buzzer_mode_(BUZZER_MODE_OFF),
+      buzzer_last_time_(0),
+      buzzer_beep_on_(false),
+      buzzer_state_(false) {
     
     led_brightness_ = Utils::applyGammaMapping(min(led_brightness, (uint8_t)100), 80);
     buzzer_volume_ = Utils::applyGammaMapping(min(buzzer_volume, (uint8_t)100), 150);
@@ -388,6 +391,11 @@ void HardwareInterface::setBuzzer(Buzzer_Mode_t mode) {
         return;
     }
 
+    // 模式未变时跳过重置，避免打断正在进行的周期性蜂鸣
+    if (buzzer_mode_ == mode) {
+        return;
+    }
+
     buzzer_last_time_ = 0;
     buzzer_beep_count_ = 0;
     buzzer_beep_on_ = false;
@@ -492,7 +500,7 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_last_time_ = current_time;
                 analogWrite(BUZZER_PIN, buzzer_volume_);
-            } else if (current_time - buzzer_last_time_ >= 200) {
+            } else if (current_time - buzzer_last_time_ >= 300) {
                 buzzer_mode_ = BUZZER_MODE_OFF;
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
@@ -508,16 +516,16 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 1;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
                 buzzer_last_time_ = current_time;
-            } else if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
+            } else if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 400) {
                 analogWrite(BUZZER_PIN, buzzer_volume_);
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 2;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_mode_ = BUZZER_MODE_OFF;
                 buzzer_beep_count_ = 0;
@@ -531,11 +539,11 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 1;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
                 buzzer_last_time_ = current_time;
-            } else if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
+            } else if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 400) {
                 buzzer_beep_count_++;
                 if (buzzer_beep_count_ > 3) {
                     analogWrite(BUZZER_PIN, 0);
@@ -555,9 +563,43 @@ void HardwareInterface::updateBuzzer() {
             break;
             
         case BUZZER_MODE_ALARM:
-            if (current_time - buzzer_last_time_ >= 200) {
-                buzzer_state_ = !buzzer_state_;
-                analogWrite(BUZZER_PIN, buzzer_state_ ? buzzer_volume_ : 0);
+            if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 1500) {
+                // 1.5秒静默后响500ms
+                analogWrite(BUZZER_PIN, buzzer_volume_);
+                buzzer_beep_on_ = true;
+                buzzer_last_time_ = current_time;
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 500) {
+                // 响500ms后关闭
+                analogWrite(BUZZER_PIN, 0);
+                buzzer_beep_on_ = false;
+                buzzer_last_time_ = current_time;
+            }
+            break;
+
+        case BUZZER_MODE_SLOW_BEEP:
+            if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 2000) {
+                // 2秒静默后响400ms
+                analogWrite(BUZZER_PIN, buzzer_volume_);
+                buzzer_beep_on_ = true;
+                buzzer_last_time_ = current_time;
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 400) {
+                // 响400ms后关闭
+                analogWrite(BUZZER_PIN, 0);
+                buzzer_beep_on_ = false;
+                buzzer_last_time_ = current_time;
+            }
+            break;
+
+        case BUZZER_MODE_WARNING_BEEP:
+            if (!buzzer_beep_on_ && current_time - buzzer_last_time_ >= 5000) {
+                // 5秒静默后响400ms
+                analogWrite(BUZZER_PIN, buzzer_volume_);
+                buzzer_beep_on_ = true;
+                buzzer_last_time_ = current_time;
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 400) {
+                // 响400ms后关闭
+                analogWrite(BUZZER_PIN, 0);
+                buzzer_beep_on_ = false;
                 buzzer_last_time_ = current_time;
             }
             break;

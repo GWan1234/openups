@@ -474,8 +474,8 @@ private:
     uint8_t findClosestSCDThreshold(float target_mV, bool &rsnsBit);
 
     // 过流/短路保护配置
-    bool setOCDProtection(float threshold_mV, BMS_OCDDelay_t delay);
-    bool setSCDProtection(float threshold_mV, BMS_SCDDelay_t delay);
+    bool setOCDSCDProtection(float ocd_threshold_mV, BMS_OCDDelay_t ocd_delay,
+                             float scd_threshold_mV, BMS_SCDDelay_t scd_delay);
 
 };
 

@@ -233,13 +233,26 @@ void WebServer::notifyClients() {
   if (ws.count() == 0) return;
   
   const System_Global_State& state = systemManager->getGlobalState();
-  StaticJsonDocument<2048> doc;
+  StaticJsonDocument<3072> doc;
   
   doc["status"] = "connected";
   doc["timestamp"] = millis();
   doc["overall_status"] = state.overall_status;
   doc["power_mode"] = state.power_mode;
   doc["emergency_shutdown"] = state.emergency_shutdown;
+
+  // Tips
+  if (state.tip_count > 0) {
+    JsonArray tips = doc.createNestedArray("tips");
+    uint8_t count = state.tip_count < SYSTEM_TIPS_MAX ? state.tip_count : SYSTEM_TIPS_MAX;
+    for (uint8_t i = 0; i < count; i++) {
+      uint8_t idx = (state.tip_index + SYSTEM_TIPS_MAX - count + i) % SYSTEM_TIPS_MAX;
+      if (state.tips[idx].message[0] != '\0') {
+        JsonObject t = tips.createNestedObject();
+        t["msg"] = state.tips[idx].message;
+      }
+    }
+  }
   
   // BMS data - 完整数据
   JsonObject bms = doc.createNestedObject("bms");
@@ -302,7 +315,7 @@ void WebServer::notifyClients() {
   system["environment_temperature"] = state.system.environment_temperature;
   system["firmware_version"] = state.system.firmware_version;
   
-  char jsonBuffer[2048];
+  char jsonBuffer[3072];
   serializeJson(doc, jsonBuffer);
   ws.textAll(jsonBuffer);
 }
@@ -1438,6 +1451,11 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
       return;
     }
     uint32_t safeSize = maxSketchSpace - 0x1000;
+
+    // OTA前持久化所有模块数据
+    if (systemManager) {
+      systemManager->saveAllData();
+    }
 
     if (!Update.begin(safeSize)) {
       Serial.print(F("OTA ERROR: Update.begin() 失败："));

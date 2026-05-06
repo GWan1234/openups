@@ -17,6 +17,17 @@
 #define PREFS_KEY_BAL_EVENTS    "bal_events"
 #define PREFS_KEY_LAST_FAULT_TIME "last_fault_time"
 #define PREFS_KEY_REMAINING_CAP "bms_rem_cap"
+#define PREFS_KEY_ACC_CHARGE    "bms_acc_ch"
+#define PREFS_KEY_ACC_DISCHARGE "bms_acc_dch"
+#define PREFS_KEY_CC_RAW_MAH    "bms_cc_raw"
+#define PREFS_KEY_SOH_LEARNING  "bms_soh_lr"
+#define PREFS_KEY_SOH_SOC_START "bms_soh_ss"
+#define PREFS_KEY_SOH_AH_START  "bms_soh_as"
+#define PREFS_KEY_SOH_LRN_TIME  "bms_soh_lt"
+#define PREFS_KEY_PARTIAL_CYCLES "bms_pcycle"
+#define PREFS_KEY_CHG_SOH_TRACK "bms_chg_tr"
+#define PREFS_KEY_CHG_SOH_SOC   "bms_chg_ss"
+#define PREFS_KEY_CHG_SOH_CC    "bms_chg_cc"
 
 // OCV-SOC lookup table (NCM)
 const uint16_t OCV_SOC_TABLE[21][2] = {
@@ -148,6 +159,14 @@ public:
     // SOH学习专用的原始库仑计累积(不受SOH缩放影响)
     float cc_accumulated_raw_mAh_;
     
+    // 充电阶段SOH学习
+    bool charge_soh_tracking_;
+    float charge_soc_start_;
+    float charge_cc_raw_start_;
+    
+    // 循环计数-分数累积
+    float partial_cycles_;
+    
     // 异步配置更新标记
     bool config_update_pending_;
     BMS_Config_t pending_config_;
@@ -174,6 +193,8 @@ public:
     void detectFullChargeCalibration(BMS_State& bmsState);
     void detectEmptyDischargeCalibration(BMS_State& bmsState);
     void updateSOHLearning(BMS_State& bmsState);
+    void detectChargeSOHLearning(BMS_State& bmsState);
+    void accumulatePartialCycle(float delta_mah);
     BQ76920_InitConfig generateChipConfig(const BMS_Config_t& config);
     
     // I2C隔离芯片电源控制

@@ -23,6 +23,8 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       last_full_charge_time_(0),
       last_empty_discharge_time_(0),
       cc_accumulated_raw_mAh_(0.0f),
+      charge_soh_tracking_(false), charge_soc_start_(0.0f), charge_cc_raw_start_(0.0f),
+      partial_cycles_(0.0f),
       config_update_pending_(false) {
     
     memset(&stats_, 0, sizeof(BMS_Statistics_t));
@@ -94,12 +96,8 @@ bool BMS::begin() {
     
     soc_initialized_ = false;
     
-    // Initialize SOH learning context
-    soh_learning_ctx_.is_learning = false;
-    soh_learning_ctx_.soc_start = 0.0f;
-    soh_learning_ctx_.ah_start = 0.0f;
-    soh_learning_ctx_.learning_start_time = 0;
-    cc_accumulated_raw_mAh_ = 0.0f;
+    // SOH学习上下文已在loadFromStorage()中恢复，此处不覆盖
+    // updateSOHLearning()内部的current_ok和delta_soc检查会自然处理过期状态
     
     full_charge_calibrated_ = false;
     empty_discharge_calibrated_ = false;
@@ -187,6 +185,8 @@ void BMS::update(System_Global_State& globalState) {
             updateFaultLogic(bmsState);
             updateSOC(bmsState);
             
+            // 充电SOH跟踪检测（必须在满充校准之前，避免锚定后重新开始跟踪）
+            detectChargeSOHLearning(bmsState);
             // 满充/放空校准检测（每秒检查）
             detectFullChargeCalibration(bmsState);
             detectEmptyDischargeCalibration(bmsState);
@@ -814,8 +814,8 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
         if (current_ok) {
             float delta_soc = abs(current_soc - soh_learning_ctx_.soc_start);
             
-            // SOC变化≥5%即可计算
-            if (delta_soc >= 5.0f) {
+            // SOC变化≥3%即可计算
+            if (delta_soc >= 3.0f) {
                 float delta_ah_raw = abs(cc_accumulated_raw_mAh_ - soh_learning_ctx_.ah_start);
                 
                 if (delta_soc > 0.1f && delta_ah_raw > 10.0f) {
@@ -831,6 +831,7 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
                     
                     stats_.soh = soh_new;
                     bmsState.soh = stats_.soh;
+                    saveToStorage();
                 }
                 
                 soh_learning_ctx_.is_learning = false;
@@ -859,6 +860,28 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
         float q_max = getTemperatureCompensatedCapacity(bmsState.temperature);
         if (q_max <= 0) q_max = (float)config_.nominal_capacity_mAh;
         
+        // 充电阶段SOH学习：在重置cc_accumulated_raw_mAh_之前计算
+        if (charge_soh_tracking_) {
+            float delta_ah_raw = cc_accumulated_raw_mAh_ - charge_cc_raw_start_;
+            float delta_soc = 100.0f - charge_soc_start_;
+            float q_nominal = (float)config_.nominal_capacity_mAh;
+            
+            if (delta_soc > 1.0f && delta_ah_raw > 10.0f) {
+                float q_actual = delta_ah_raw / (delta_soc / 100.0f);
+                float soh_calc = (q_actual / q_nominal) * 100.0f;
+                float soh_new = 0.85f * stats_.soh + 0.15f * soh_calc;
+                soh_new = constrain(soh_new, 40.0f, 100.0f);
+                
+                Serial.printf_P(PSTR("BMS: Charge SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
+                    "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
+                    delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
+                
+                stats_.soh = soh_new;
+                bmsState.soh = stats_.soh;
+            }
+            charge_soh_tracking_ = false;
+        }
+        
         float old_soc = bmsState.soc;
         current_remaining_capacity = q_max;
         last_stable_soc_ = 100.0f;
@@ -870,6 +893,8 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
         // 重置SOH学习上下文
         cc_accumulated_raw_mAh_ = 0.0f;
         soh_learning_ctx_.is_learning = false;
+        
+        saveToStorage();
         
         Serial.printf_P(PSTR("BMS: FULL CHARGE calibration: %.1f%% -> 100%% (cap=%.1fmAh)\n"),
             old_soc, q_max);
@@ -899,8 +924,31 @@ void BMS::detectEmptyDischargeCalibration(BMS_State& bmsState) {
         cc_accumulated_raw_mAh_ = 0.0f;
         soh_learning_ctx_.is_learning = false;
         
+        saveToStorage();
+        
         Serial.printf_P(PSTR("BMS: EMPTY calibration: %.1f%% -> 0%%\n"), old_soc);
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
+    }
+}
+
+void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
+    float cutoff_current = config_.nominal_capacity_mAh / 20.0f;
+    
+    if (bmsState.current > cutoff_current) {
+        // 正在充电
+        if (!charge_soh_tracking_) {
+            // 充电刚开始，记录起点
+            charge_soh_tracking_ = true;
+            charge_soc_start_ = bmsState.soc;
+            charge_cc_raw_start_ = cc_accumulated_raw_mAh_;
+            Serial.printf_P(PSTR("BMS: Charge SOH tracking started at SOC=%.1f%%\n"), charge_soc_start_);
+        }
+    } else if (bmsState.current <= 0) {
+        // 未在充电，取消跟踪（除非已到满充锚定，由detectFullChargeCalibration处理）
+        if (charge_soh_tracking_) {
+            charge_soh_tracking_ = false;
+            Serial.println(F("BMS: Charge SOH tracking cancelled (charging stopped)"));
+        }
     }
 }
 
@@ -1048,19 +1096,24 @@ bool BMS::processCoulombCounterData() {
     if (q_max <= 0) q_max = (float)config_.nominal_capacity_mAh;
     current_remaining_capacity = constrain(current_remaining_capacity, 0.0f, q_max);
     
-    // 循环计数
-    float q_nominal = (float)config_.nominal_capacity_mAh;
-    float half_throughput = (accumulated_charge_mAh + accumulated_discharge_mAh) / 2.0f;
-    
-    while (half_throughput >= q_nominal) {
-        stats_.total_cycles++;
-        accumulated_charge_mAh -= q_nominal;
-        accumulated_discharge_mAh -= q_nominal;
-        half_throughput = (accumulated_charge_mAh + accumulated_discharge_mAh) / 2.0f;
-        Serial.printf_P(PSTR("BMS: Cycle count incremented to %u\n"), stats_.total_cycles);
-    }
+    // 循环计数（累计法：每次CC更新累加分数循环）
+    accumulatePartialCycle(delta_mah);
     
     return true;
+}
+
+void BMS::accumulatePartialCycle(float delta_mah) {
+    float q_nominal = (float)config_.nominal_capacity_mAh;
+    // 每次CC更新：将吞吐量累加到分数循环（充放电各算一半）
+    partial_cycles_ += abs(delta_mah) / (2.0f * q_nominal);
+    
+    while (partial_cycles_ >= 1.0f) {
+        stats_.total_cycles++;
+        partial_cycles_ -= 1.0f;
+        Serial.printf_P(PSTR("BMS: Cycle count incremented to %u (partial=%.3f)\n"),
+            stats_.total_cycles, partial_cycles_);
+        saveToStorage();
+    }
 }
 
 BMS_Fault_t BMS::translateChipFault(uint8_t fault_register) {
@@ -1086,8 +1139,23 @@ bool BMS::saveToStorage() {
     // 保存剩余容量
     preferences_.putFloat(PREFS_KEY_REMAINING_CAP, current_remaining_capacity);
     
-    Serial.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh)\n"),
-        stats_.soh, current_remaining_capacity);
+    // 保存累积充放电电量和SOH学习上下文
+    preferences_.putFloat(PREFS_KEY_ACC_CHARGE, accumulated_charge_mAh);
+    preferences_.putFloat(PREFS_KEY_ACC_DISCHARGE, accumulated_discharge_mAh);
+    preferences_.putFloat(PREFS_KEY_CC_RAW_MAH, cc_accumulated_raw_mAh_);
+    preferences_.putUInt(PREFS_KEY_SOH_LEARNING, soh_learning_ctx_.is_learning ? 1 : 0);
+    preferences_.putFloat(PREFS_KEY_SOH_SOC_START, soh_learning_ctx_.soc_start);
+    preferences_.putFloat(PREFS_KEY_SOH_AH_START, soh_learning_ctx_.ah_start);
+    preferences_.putUInt(PREFS_KEY_SOH_LRN_TIME, (uint32_t)(soh_learning_ctx_.learning_start_time / 1000));
+    
+    // 保存循环计数分数累积和充电SOH学习状态
+    preferences_.putFloat(PREFS_KEY_PARTIAL_CYCLES, partial_cycles_);
+    preferences_.putUInt(PREFS_KEY_CHG_SOH_TRACK, charge_soh_tracking_ ? 1 : 0);
+    preferences_.putFloat(PREFS_KEY_CHG_SOH_SOC, charge_soc_start_);
+    preferences_.putFloat(PREFS_KEY_CHG_SOH_CC, charge_cc_raw_start_);
+    
+    Serial.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
+        stats_.soh, current_remaining_capacity, accumulated_charge_mAh, accumulated_discharge_mAh);
     return true;
 }
 
@@ -1100,6 +1168,21 @@ bool BMS::loadFromStorage() {
     
     // 恢复剩余容量
     current_remaining_capacity = preferences_.getFloat(PREFS_KEY_REMAINING_CAP, -1.0f);
+    
+    // 恢复累积充放电电量和SOH学习上下文
+    accumulated_charge_mAh = preferences_.getFloat(PREFS_KEY_ACC_CHARGE, 0.0f);
+    accumulated_discharge_mAh = preferences_.getFloat(PREFS_KEY_ACC_DISCHARGE, 0.0f);
+    cc_accumulated_raw_mAh_ = preferences_.getFloat(PREFS_KEY_CC_RAW_MAH, 0.0f);
+    soh_learning_ctx_.is_learning = preferences_.getUInt(PREFS_KEY_SOH_LEARNING, 0) != 0;
+    soh_learning_ctx_.soc_start = preferences_.getFloat(PREFS_KEY_SOH_SOC_START, 0.0f);
+    soh_learning_ctx_.ah_start = preferences_.getFloat(PREFS_KEY_SOH_AH_START, 0.0f);
+    soh_learning_ctx_.learning_start_time = (unsigned long)preferences_.getUInt(PREFS_KEY_SOH_LRN_TIME, 0) * 1000UL;
+    
+    // 恢复循环计数分数累积和充电SOH学习状态
+    partial_cycles_ = preferences_.getFloat(PREFS_KEY_PARTIAL_CYCLES, 0.0f);
+    charge_soh_tracking_ = preferences_.getUInt(PREFS_KEY_CHG_SOH_TRACK, 0) != 0;
+    charge_soc_start_ = preferences_.getFloat(PREFS_KEY_CHG_SOH_SOC, 0.0f);
+    charge_cc_raw_start_ = preferences_.getFloat(PREFS_KEY_CHG_SOH_CC, 0.0f);
     
     if (stats_.soh < 0 || stats_.soh > 100) stats_.soh = 100.0f;
     return true;

@@ -89,6 +89,9 @@ $('p_bv').textContent=(p.battery_voltage||0)+' mV';$('p_bi').textContent=(p.batt
 $('p_ce').innerHTML=p.charger_enabled?badge('g','是'):badge('b','否');$('p_hy').innerHTML=p.hybrid_mode?badge('g','是'):badge('b','否');
 $('p_ft').textContent=p.fault_type||0;$('p_ph').innerHTML=!p.prochot_status?badge('r','触发'):badge('g','正常');$('p_tb').innerHTML=!p.tbstat_status?badge('w','触发'):badge('g','正常');
 $('updT').textContent='更新：'+new Date().toLocaleTimeString();
+// Tips
+var tips=d.tips||[];var tb=$('tipBar');
+if(tips.length>0){var th='';for(var ti=0;ti<tips.length;ti++){var t=tips[ti];th+='<div class="tip-item"><span class="tip-time">'+(t.msg||'')+'</span></div>'}tb.innerHTML='<div class="tip-list">'+th+'</div>';tb.classList.add('has-tips')}else{tb.innerHTML='';tb.classList.remove('has-tips')}
 // Regs
 var r2=p.bq24780s_registers||[],r7=b.bq76920_registers||[];
 var a2=['0x12','0x3B','0x38','0x37','0x3C','0x3D','0x3A','0x14','0x15','0x39','0x3F'];
@@ -310,7 +313,7 @@ var _origShow=show;
 show=function(n,el){_origShow(n,el);if(n==='calibration')loadCalibration()};
 
 // 检测配置模式 - 在 DOM 加载完成后执行
-if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(m){m.style.display='none';}if(w){w.style.display='block';}if(f)f.style.display='none';if(t)t.style.display='none'})}
+if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto';}if(w){w.style.display='block';}if(f)f.style.display='none';if(t)t.style.display='none'})}
 
 conn();
 )rawliteral";
