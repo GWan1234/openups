@@ -101,10 +101,9 @@ public:
     bool isChargeEnabled() const;
 
     bool enterShipMode();
-    bool setBalancingEnabled(bool enable);
     bool isInitialized() const { return initialized_; }
     bool startBalancing(const BMS_State& bmsState);
-    bool stopBalancing();
+    bool stopBalancing(const BMS_State& bmsState);
     bool clearFault();
     bool emergencyShutdown();
     BMS_Fault_t translateChipFault(uint8_t fault_register);

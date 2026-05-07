@@ -1303,6 +1303,4 @@ void SystemManagement::addTip(const char* fmt, ...) {
     if (globalState.tip_count < SYSTEM_TIPS_MAX) {
         globalState.tip_count++;
     }
-
-    Serial.printf_P(PSTR("[SysMgr] Tip: %s\n"), buf);
 }

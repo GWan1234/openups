@@ -496,16 +496,14 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
     // 检查系统启动延迟（startup_time_ > 0 表示延迟中）
     if (startup_time_ > 0) {
         if (millis() - startup_time_ < STARTUP_DELAY_MS) {
-            // 启动延迟期间，不执行充电规则评估
             return;
         }
-        startup_time_ = 0;  // 延迟完成，置为 0
+        startup_time_ = 0;
         Serial.println(F("[ChargeRule] System startup delay completed"));
     }
-    
+
     // 仅在 AC 存在时评估充电规则
     if (!ac_present_) {
-        // AC 断开时，如果正在充电，停止并进入冷却
         if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
             Serial.println(F("[ChargeRule] AC disconnected, stopping charging"));
             stopCharging();
@@ -514,60 +512,73 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         }
         return;
     }
-    
-    // 获取当前时间
+
     unsigned long current_time = millis();
-    
-    // 检查 AC 电源稳定延迟（防止电源质量差时立即充电导致掉电）
-    // 注意：millis() 约 49.7 天溢出，使用安全的时间差计算
+
+    // 检查 AC 电源稳定延迟
     if (config_.ac_stable_delay_ms > 0 && ac_connect_time_ > 0) {
-        // 安全计算时间差：处理 millis() 溢出情况
         unsigned long ac_stable_elapsed;
         if (current_time >= ac_connect_time_) {
             ac_stable_elapsed = current_time - ac_connect_time_;
         } else {
-            // millis() 溢出情况：计算溢出后的实际经过时间
             ac_stable_elapsed = (0xFFFFFFFFUL - ac_connect_time_) + current_time + 1;
         }
-        
-        // 如果还没达到稳定延迟时间，等待
         if (ac_stable_elapsed < config_.ac_stable_delay_ms) {
             return;
         }
     }
-    
+
     // 检查 BMS 数据有效性
     if (!globalState.bms.is_connected) {
-        Serial.println(F("[ChargeRule] BMS not connected, skipping charge evaluation"));
-        return;
-    }
-    
-    // 检查 SOC 有效性
-    float current_soc = globalState.bms.soc;
-    if (current_soc < 0 || current_soc > 100) {
-        Serial.println(F("[ChargeRule] SOC invalid, skipping charge evaluation"));
-        return;
-    }
-    
-    // 检查温度有效性
-    float battery_temp = globalState.bms.temperature;
-    if (battery_temp < -50.0f || battery_temp > 100.0f) {
-        Serial.println(F("[ChargeRule] Temperature invalid, skipping charge evaluation"));
-        return;
-    }
-
-    // ==================== SOC 强制停止区（优先级最高）====================
-    // 无论 RTC 状态、时间窗口如何，SOC 超过停止阈值必须停充
-    if (current_soc >= config_.charge_soc_stop) {
-        if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE ||
-            (charge_mgmt_state_ == CHARGE_STATE_IDLE && globalState.power.charger_enabled)) {
-            Serial.printf_P(PSTR("[ChargeRule] SOC stop threshold reached: %.1f%% >= %.1f%%, stopping charging\n"),
-                           current_soc, config_.charge_soc_stop);
+        if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
+            Serial.println(F("[ChargeRule] BMS disconnected while charging, stopping"));
             if (stopCharging()) {
                 charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
                 last_stop_time_ = current_time;
             }
-            // stopCharging 失败则保持当前状态，下次重试
+        }
+        return;
+    }
+
+    // 检查 SOC 有效性
+    float current_soc = globalState.bms.soc;
+    if (current_soc < 0 || current_soc > 100) {
+        return;
+    }
+
+    // 检查温度有效性
+    float battery_temp = globalState.bms.temperature;
+    if (battery_temp < -50.0f || battery_temp > 100.0f) {
+        return;
+    }
+
+    // ==================== 状态机处理（优先于SOC检查，防止COOLDOWN被SOC卡死）====================
+    if (charge_mgmt_state_ == CHARGE_STATE_COOLDOWN) {
+        unsigned long elapsed = current_time - last_stop_time_;
+        if (elapsed < COOLDOWN_TIME_MS) {
+            return;
+        }
+        Serial.println(F("[ChargeRule] Cooldown completed, transitioning to IDLE"));
+        charge_mgmt_state_ = CHARGE_STATE_IDLE;
+    }
+
+    if (charge_mgmt_state_ == CHARGE_STATE_SUSPENDED_FAULT) {
+        return;
+    }
+
+    // ==================== SOC 强制停止区（优先级最高）====================
+    if (current_soc >= config_.charge_soc_stop) {
+        if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE ||
+            (charge_mgmt_state_ == CHARGE_STATE_IDLE && globalState.power.charger_enabled)) {
+            Serial.printf_P(PSTR("[CR] SOC STOP: %.1f%% >= %.1f%%, calling stopCharging()\n"),
+                           current_soc, config_.charge_soc_stop);
+            if (stopCharging()) {
+                charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
+                last_stop_time_ = current_time;
+                Serial.println(F("[CR] SOC STOP: success, entered COOLDOWN"));
+            } else {
+                Serial.println(F("[CR] SOC STOP: stopCharging() FAILED"));
+            }
         }
         return;
     }
@@ -575,13 +586,11 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
     // RTC 时间安全校验与应急充电逻辑
     bool rtc_valid = isTimeValid();
     bool time_window_ok = true;
-    
+
     if (config_.charging_window_count > 0 && !rtc_valid) {
-        // RTC 无效时的应急充电逻辑：30% - 50%
         if (current_soc < RTC_INVALID_SOC_START) {
             if (charge_mgmt_state_ == CHARGE_STATE_IDLE) {
                 Serial.println(F("[ChargeRule] RTC invalid & SOC low, emergency charging started"));
-                // 使用配置的最大充电电流的一半启动充电
                 uint16_t emergency_current = config_.max_charge_current / 2;
                 bool success = setChargingCurrent(emergency_current);
                 if (success) {
@@ -599,11 +608,9 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
             }
             return;
         } else {
-            // 在 30%-50% 之间，维持当前状态
             return;
         }
     } else if (config_.charging_window_count > 0) {
-        // RTC 有效时，正常检查时间窗口
         uint32_t timestamp = getTimestamp();
         time_t local_time = (time_t)timestamp;
         struct tm time_info;
@@ -611,7 +618,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         uint8_t current_day = time_info.tm_wday;
         uint8_t current_hour = time_info.tm_hour;
         time_window_ok = isWithinTimeWindow(current_day, current_hour);
-        
+
         if (!time_window_ok) {
             if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
                 stopCharging();
@@ -621,26 +628,6 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
             return;
         }
     }
-    
-    // ==================== 状态机处理 ====================
-    
-    // 【状态 1】COOLDOWN：冷却期，防止频繁启停震荡
-    if (charge_mgmt_state_ == CHARGE_STATE_COOLDOWN) {
-        if (current_time - last_stop_time_ < COOLDOWN_TIME_MS) {
-            // 冷却期未满，禁止启动
-            return;
-        }
-        // 冷却期满，转为 IDLE
-        Serial.println(F("[ChargeRule] Cooldown completed, transitioning to IDLE"));
-        charge_mgmt_state_ = CHARGE_STATE_IDLE;
-    }
-    
-    // 【状态 3】SUSPENDED_FAULT：因故障挂起，需要外部干预才能恢复
-    if (charge_mgmt_state_ == CHARGE_STATE_SUSPENDED_FAULT) {
-        // 故障状态不自动恢复，需要系统复位或外部干预
-        return;
-    }
-
 
     // ==================== 强制启动区 ====================
     // SOC 低于启动阈值且当前未充电时，检查条件并启动

@@ -314,12 +314,6 @@ void BMS::handleCommunicationLoss(BMS_State& bmsState) {
     }
 }
 
-bool BMS::setBalancingEnabled(bool enable) {
-    config_.balancing_enabled = enable;
-    if (!enable) return stopBalancing();
-    return true;
-}
-
 bool BMS::startBalancing(const BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) return false;
     
@@ -371,18 +365,23 @@ bool BMS::startBalancing(const BMS_State& bmsState) {
             stats_.balancing_events |= (current_total << 50);
         }
         
-        Serial.printf_P(PSTR("BMS: Balancing mask: 0x%02X\n"), balance_mask);
-        EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
+        if(!bmsState.balancing_active) {
+           EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
+        }
         return true;
     }
     return false;
 }
 
-bool BMS::stopBalancing() {
+bool BMS::stopBalancing(const BMS_State& bmsState) {
     if (!initialized_) return false;
     i2cPowerOn();
     if (bq76920_.setCellBalance(0)) {
-        EventBus::getInstance().publish(EVT_BMS_BALANCING_STOPPED, nullptr);
+        if (bmsState.balancing_active)
+        {
+            EventBus::getInstance().publish(EVT_BMS_BALANCING_STOPPED, nullptr);
+        }
+        
         return true;
     }
     return false;
@@ -390,7 +389,7 @@ bool BMS::stopBalancing() {
 
 void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) {
-        if (initialized_) stopBalancing();
+        if (initialized_) stopBalancing(bmsState);
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
         return;
@@ -399,7 +398,7 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     const int16_t BALANCING_MAX_CURRENT_MA = 50;
     bool is_current_suitable = (bmsState.current >= -5 && bmsState.current <= BALANCING_MAX_CURRENT_MA);
     if (!is_current_suitable) {
-        stopBalancing();
+        stopBalancing(bmsState);
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
         return;
@@ -413,7 +412,7 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
         }
     }
     if (!valid_reading) {
-        stopBalancing();
+        stopBalancing(bmsState);
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
         return;
@@ -421,7 +420,7 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
 
     uint16_t voltage_diff = bmsState.cell_voltage_max - bmsState.cell_voltage_min;
     if (voltage_diff < config_.balancing_voltage_diff) {
-        stopBalancing();
+        stopBalancing(bmsState);
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
         return;
@@ -443,7 +442,7 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     }
 
     if (bmsState.soc < min_balancing_soc) {
-        stopBalancing();
+        stopBalancing(bmsState);
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
         return;
@@ -769,8 +768,6 @@ void BMS::updateSOC(BMS_State& bmsState) {
             float delta_cap = (diff / 100.0f) * q_max * convergence_rate;
             current_remaining_capacity += delta_cap;
             current_remaining_capacity = constrain(current_remaining_capacity, 0.0f, q_max);
-            Serial.printf_P(PSTR("BMS: SOC convergence diff=%.1f%%, adj=%.2fmAh\n"), 
-                diff, delta_cap);
         }
         last_stable_soc_ = (current_remaining_capacity / q_max) * 100.0f;
     }

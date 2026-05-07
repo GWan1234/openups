@@ -8,20 +8,8 @@
 // =============================================================================
 const char SPA_PAGE_JS[] PROGMEM = R"rawliteral(
 var ws,rc=0;
-// === 保存初始 WiFi 配置用于变更检测 ===
-var initialWifiConfig = {ssid: '', pass: '', ipMode: 'dhcp', staticIp: '', staticGateway: '', staticSubnet: '', staticDns: ''};
-document.addEventListener('DOMContentLoaded', function(){
-    // 记录初始 WiFi 配置
-    initialWifiConfig = {
-        ssid: $('ws').value,
-        pass: $('wp').value,
-        ipMode: $('ipMode').value,
-        staticIp: $('sip').value,
-        staticGateway: $('sgw').value,
-        staticSubnet: $('ssn').value,
-        staticDns: $('sdns').value
-    };
-});
+var iwCfg={ssid:'',pass:'',ipMode:'dhcp',staticIp:'',staticGateway:'',staticSubnet:'',staticDns:''};
+document.addEventListener('DOMContentLoaded',function(){iwCfg={ssid:$('ws').value,pass:$('wp').value,ipMode:$('ipMode').value,staticIp:$('sip').value,staticGateway:$('sgw').value,staticSubnet:$('ssn').value,staticDns:$('sdns').value}});
 
 // === 面板切换 ===
 function show(n,el){
@@ -169,16 +157,7 @@ function toggleIP(){$('sIP').style.display=$('ipMode').value==='static'?'block':
 function gVal(id){return $(id).value}
 function gChk(id){return $(id).checked}
 
-// 检测 WiFi 配置是否变更
-function isWifiConfigChanged(){
-    return gVal('ws') !== initialWifiConfig.ssid ||
-           gVal('wp') !== initialWifiConfig.pass ||
-           $('ipMode').value !== initialWifiConfig.ipMode ||
-           gVal('sip') !== initialWifiConfig.staticIp ||
-           gVal('sgw') !== initialWifiConfig.staticGateway ||
-           gVal('ssn') !== initialWifiConfig.staticSubnet ||
-           gVal('sdns') !== initialWifiConfig.staticDns;
-}
+function isWifiCfgChg(){return gVal('ws')!==iwCfg.ssid||gVal('wp')!==iwCfg.pass||$('ipMode').value!==iwCfg.ipMode||gVal('sip')!==iwCfg.staticIp||gVal('sgw')!==iwCfg.staticGateway||gVal('ssn')!==iwCfg.staticSubnet||gVal('sdns')!==iwCfg.staticDns}
 
 function save(){
 var d={
@@ -186,20 +165,7 @@ system:{wifi_ssid:gVal('ws'),wifi_pass:gVal('wp'),use_static_ip:$('ipMode').valu
 bms:{cell_count:+gVal('bc'),nominal_capacity_mAh:+gVal('bn'),cell_ov_threshold:+gVal('bo'),cell_uv_threshold:+gVal('bu'),cell_ov_recover:+gVal('bor'),cell_uv_recover:+gVal('bur'),max_charge_current:+gVal('bmc'),max_discharge_current:+gVal('bmd'),short_circuit_threshold:+gVal('bsc'),temp_overheat_threshold:+gVal('both'),balancing_enabled:gChk('bbe'),balancing_voltage_diff:+gVal('bbd')},
 power:{max_charge_current:+gVal('pmc'),charge_voltage_limit:+gVal('pcv'),charge_soc_start:+gVal('pcs'),charge_soc_stop:+gVal('pcp'),max_discharge_current:+gVal('pmd'),discharge_soc_stop:+gVal('pds'),enable_hybrid_boost:gChk('phe'),over_current_threshold:+gVal('poc'),over_temp_threshold:+gVal('pot'),charge_temp_high_limit:+gVal('pth'),charge_temp_low_limit:+gVal('ptl'),charging_windows:cw,charging_window_count:cw.length}};
 
-// 检测 WiFi 配置是否变更
-var wifiChanged = isWifiConfigChanged();
-
-if(wifiChanged){
-    // WiFi 配置变更：立即提示，不等待响应
-    alert('网络变动，保存成功。设备即将重启...');
-    // 发送请求但不等待响应（因为网络会断开）
-    fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).catch(function(){});
-    // 延迟跳转，给服务器时间保存配置
-    setTimeout(function(){location.href='/'},2000);
-} else {
-    // 非 WiFi 配置变更：正常等待响应
-    fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(r){if(r.success){alert('保存成功'+(r.restart_required?'，设备即将重启':''));if(r.restart_required)setTimeout(function(){location.href='/'},2e3)}else{alert('保存失败：'+(r.message||'未知'))}}).catch(function(){alert('网络错误')});
-}
+if(isWifiCfgChg()){alert('网络变动，保存成功。设备即将重启...');fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).catch(function(){});setTimeout(function(){location.href='/'},2e3)}else{fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(r){if(r.success){alert('保存成功'+(r.restart_required?'，设备即将重启':''));if(r.restart_required)setTimeout(function(){location.href='/'},2e3)}else{alert('保存失败：'+(r.message||'未知'))}}).catch(function(){alert('网络错误')})}
 }
 // === OTA: 固件上传 ===
 var sel=null,area=$('upArea');
@@ -255,71 +221,16 @@ r.send(JSON.stringify(doc));
 function startRebootCountdown(){var c=5,el=$('wz-reboot-count');var t=setInterval(function(){c--;el.textContent=c;if(c<=0){clearInterval(t);el.textContent='重启中...';setTimeout(function(){location.href='/'},3e3)}},1e3)}
 
 // === 运输模式 ===
-function enterShipMode(){
-    if(!confirm('一旦进入此模式，需要点按对应的硬件开关才能启用电池\n\n确定要进入运输模式吗？'))return;
-    var xhr=new XMLHttpRequest();
-    xhr.open('POST','/bms/shipmode',true);
-    xhr.setRequestHeader('Content-Type','application/json');
-    xhr.timeout=5000;
-    xhr.onload=function(){
-        if(xhr.status===200){
-            try{
-                var j=JSON.parse(xhr.responseText);
-                if(j.success){
-                    alert('已进入运输模式！\n\nBMS 芯片已进入睡眠模式，需要点按硬件开关才能重新启用电池。');
-                }else{
-                    alert('操作失败：'+(j.message||'未知错误'));
-                }
-            }catch(e){
-                alert('已进入运输模式');
-            }
-        }else{
-            alert('请求失败：HTTP '+xhr.status);
-        }
-    };
-    xhr.onerror=function(){alert('网络错误，请检查连接')};
-    xhr.ontimeout=function(){alert('请求超时')};
-    xhr.send('');
-}
+function enterShipMode(){if(!confirm('一旦进入此模式，需要点按对应的硬件开关才能启用电池\n\n确定要进入运输模式吗？'))return;var x=new XMLHttpRequest();x.open('POST','/bms/shipmode',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){alert('已进入运输模式！\n\nBMS 芯片已进入睡眠模式，需要点按硬件开关才能重新启用电池。')}else{alert('操作失败：'+(j.message||'未知错误'))}}catch(e){alert('已进入运输模式')}}else{alert('请求失败：HTTP '+x.status)}};x.onerror=function(){alert('网络错误，请检查连接')};x.ontimeout=function(){alert('请求超时')};x.send('')}
 
 // === ADC 校准系数 ===
-var calPins=[
-{name:'BQ24780S_IADP',desc:'充电电流检测',pin:1},
-{name:'BQ24780S_IDCHG',desc:'放电电流检测',pin:2},
-{name:'BQ24780S_PMON',desc:'系统功率监测',pin:9},
-{name:'INPUT_VOLTAGE',desc:'输入电压',pin:4},
-{name:'BATTERY_VOLTAGE',desc:'电池电压',pin:5},
-{name:'BOARD_TEMP',desc:'主板温度 (NTC)',pin:7},
-{name:'ENVIRONMENT_TEMP',desc:'环境温度 (NTC)',pin:8}
-];
+var calPins=[{name:'BQ24780S_IADP',desc:'输入电流检测',pin:1},{name:'BQ24780S_IDCHG',desc:'放电电流检测',pin:2},{name:'BQ24780S_PMON',desc:'系统功率监测',pin:9},{name:'INPUT_VOLTAGE',desc:'输入电压',pin:4},{name:'BATTERY_VOLTAGE',desc:'电池电压',pin:5},{name:'BOARD_TEMP',desc:'主板温度 (NTC)',pin:7},{name:'ENVIRONMENT_TEMP',desc:'环境温度 (NTC)',pin:8}];
 var calData=null;
-function loadCalibration(){
-$('calStatus').textContent='';
-fetch('/api/calibration').then(function(r){return r.json()}).then(function(d){
-if(d.success){calData=d.calibration;renderCalibration()}
-}).catch(function(){$('calStatus').textContent='加载失败'});
-}
-function renderCalibration(){
-var c=$('calContainer');c.innerHTML='';
-calPins.forEach(function(p,i){
-var v=calData[i]||100;
-c.innerHTML+='<div style="border:1px solid #e8e8e8;border-radius:6px;padding:12px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+p.desc+'</div><div style="font-size:11px;color:#888;margin-bottom:8px">'+p.name+' (GPIO'+p.pin+')</div><div style="display:flex;align-items:center;gap:8px"><input type="range" min="50" max="255" value="'+v+'" id="cal_'+i+'" style="flex:1" oninput="document.getElementById(\'calv_'+i+'\').textContent=(this.value/100).toFixed(2)+\'x\'"><span id="calv_'+i+'" style="min-width:50px;font-weight:600;color:#1677ff">'+(v/100).toFixed(2)+'x</span></div></div>';
-});
-}
-function saveCalibration(){
-var vals=[];
-for(var i=0;i<calPins.length;i++){
-var v=+$('cal_'+i).value;
-if(v<50||v>255){alert('系数范围 50-255');return}
-vals.push(v);
-}
-fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calibration:vals})}).then(function(r){return r.json()}).then(function(d){
-if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent='保存成功！'}
-else{$('calStatus').style.color='#f5222d';$('calStatus').textContent='保存失败：'+(d.message||'未知')}}).catch(function(){$('calStatus').textContent='网络错误'});
-}
+function loadCalibration(){$('calStatus').textContent='';fetch('/api/calibration').then(function(r){return r.json()}).then(function(d){if(d.success){calData=d.calibration;renderCalibration()}}).catch(function(){$('calStatus').textContent='加载失败'})}
+function renderCalibration(){var c=$('calContainer');c.innerHTML='';calPins.forEach(function(p,i){var v=calData[i]||100;c.innerHTML+='<div style="border:1px solid #e8e8e8;border-radius:6px;padding:12px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+p.desc+'</div><div style="font-size:11px;color:#888;margin-bottom:8px">'+p.name+' (GPIO'+p.pin+')</div><div style="display:flex;align-items:center;gap:8px"><input type="range" min="50" max="255" value="'+v+'" id="cal_'+i+'" style="flex:1" oninput="document.getElementById(\'calv_'+i+'\').textContent=(this.value/100).toFixed(2)+\'x\'"><span id="calv_'+i+'" style="min-width:50px;font-weight:600;color:#1677ff">'+(v/100).toFixed(2)+'x</span></div></div>'})}
+function saveCalibration(){var vals=[];for(var i=0;i<calPins.length;i++){var v=+$('cal_'+i).value;if(v<50||v>255){alert('系数范围 50-255');return}vals.push(v)}fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calibration:vals})}).then(function(r){return r.json()}).then(function(d){if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent='保存成功！'}else{$('calStatus').style.color='#f5222d';$('calStatus').textContent='保存失败：'+(d.message||'未知')}}).catch(function(){$('calStatus').textContent='网络错误'})}
 
-// 检测配置模式 - 在 DOM 加载完成后执行
-if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto';}if(w){w.style.display='block';}if(f)f.style.display='none';if(t)t.style.display='none'})}
+if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto'}if(w)w.style.display='block';if(f)f.style.display='none';if(t)t.style.display='none'})}
 
 conn();
 )rawliteral";

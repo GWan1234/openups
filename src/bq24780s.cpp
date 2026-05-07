@@ -396,10 +396,8 @@ bool BQ24780S::setChargeCurrent(uint16_t current_mA) {
     
     // 直接写入硬件
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_CURRENT, reg_value);
-    
-    if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Set charge current to %u mA (reg: 0x%04X)\n"), current_mA, reg_value);
-    } else {
+
+    if (!result) {
         Serial.printf_P(PSTR("BQ24780S: Failed to set charge current to %u mA\n"), current_mA);
     }
     return result;
@@ -440,10 +438,8 @@ bool BQ24780S::setChargeVoltage(uint16_t voltage_mV) {
     
     // 直接写入硬件
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_VOLTAGE, reg_value);
-    
-    if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Set charge voltage to %u mV (reg: 0x%04X)\n"), voltage_mV, reg_value);
-    } else {
+
+    if (!result) {
         Serial.printf_P(PSTR("BQ24780S: Failed to set charge voltage to %u mV\n"), voltage_mV);
     }
     return result;
@@ -526,9 +522,7 @@ bool BQ24780S::setInputCurrentLimit(uint16_t current_mA) {
     // 直接写入硬件
     bool result = writeRegister(BQ24780SConst::Registers::INPUT_CURRENT, reg_value);
     
-    if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Set input current limit to %u mA (reg: 0x%04X)\n"), current_mA, reg_value);
-    } else {
+    if (!result) {
         Serial.printf_P(PSTR("BQ24780S: Failed to set input current limit to %u mA\n"), current_mA);
     }
     return result;
@@ -570,9 +564,7 @@ bool BQ24780S::setDischargeCurrentLimit(uint16_t current_mA) {
     // 直接写入硬件
     bool result = writeRegister(BQ24780SConst::Registers::DISCHARGE_CURRENT, reg_value);
     
-    if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Set discharge current limit to %u mA (reg: 0x%04X)\n"), current_mA, reg_value);
-    } else {
+    if (!result) {
         Serial.printf_P(PSTR("BQ24780S: Failed to set discharge current limit to %u mA\n"), current_mA);
     }
     return result;
