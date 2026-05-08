@@ -214,7 +214,12 @@ void BMS::update(System_Global_State& globalState) {
         last_day_update_ = current_time;
     }
     
-    i2cPowerOff();
+    //充电时候不关闭i2c电源，保证测量的稳定
+    if(bmsState.current  < 50) {
+        i2cPowerOff();
+    }
+
+    
 }
 
 bool BMS::disableDischarge() {
@@ -235,10 +240,6 @@ bool BMS::enableDischarge() {
     return true;
 }
 
-bool BMS::isDischargeEnabled() const {
-    return discharge_enabled_;
-}
-
 bool BMS::disableCharge() {
     if (!initialized_ || !available_) return false;
     i2cPowerOn();
@@ -255,10 +256,6 @@ bool BMS::enableCharge() {
     charge_enabled_ = true;
     Serial.println(F("BMS: CFET enabled"));
     return true;
-}
-
-bool BMS::isChargeEnabled() const {
-    return charge_enabled_;
 }
 
 bool BMS::enterShipMode() {
@@ -775,11 +772,11 @@ void BMS::updateSOC(BMS_State& bmsState) {
     else {
         last_stable_soc_ = constrain(soc_coulomb, 0.0f, 100.0f);
     }
-    
+
     float soc_delta = abs(bmsState.soc - last_stable_soc_);
     bmsState.soc = constrain(last_stable_soc_, 0.0f, 100.0f);
     bmsState.capacity_remaining = current_remaining_capacity;
-    
+
     if (soc_delta >= 1.0f) {
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
         Serial.printf_P(PSTR("BMS: SOC %.1f%% (delta=%.1f%%)\n"), bmsState.soc, soc_delta);
@@ -819,7 +816,7 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
                     float q_actual = delta_ah_raw / (delta_soc / 100.0f);
                     float soh_calc = (q_actual / q_nominal) * 100.0f;
                     
-                    float soh_new = 0.85f * stats_.soh + 0.15f * soh_calc;
+                    float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
                     soh_new = constrain(soh_new, 40.0f, 100.0f);
                     
                     Serial.printf_P(PSTR("BMS: SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
@@ -866,7 +863,7 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
             if (delta_soc > 1.0f && delta_ah_raw > 10.0f) {
                 float q_actual = delta_ah_raw / (delta_soc / 100.0f);
                 float soh_calc = (q_actual / q_nominal) * 100.0f;
-                float soh_new = 0.85f * stats_.soh + 0.15f * soh_calc;
+                float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
                 soh_new = constrain(soh_new, 40.0f, 100.0f);
                 
                 Serial.printf_P(PSTR("BMS: Charge SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
@@ -1100,10 +1097,12 @@ bool BMS::processCoulombCounterData() {
 }
 
 void BMS::accumulatePartialCycle(float delta_mah) {
+    // 仅统计充电电量作为循环计数（充电快、放电慢，充电更能反映实际使用）
+    if (delta_mah <= 0) return;
+
     float q_nominal = (float)config_.nominal_capacity_mAh;
-    // 每次CC更新：将吞吐量累加到分数循环（充放电各算一半）
-    partial_cycles_ += abs(delta_mah) / (2.0f * q_nominal);
-    
+    partial_cycles_ += delta_mah / q_nominal;
+
     while (partial_cycles_ >= 1.0f) {
         stats_.total_cycles++;
         partial_cycles_ -= 1.0f;

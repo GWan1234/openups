@@ -93,12 +93,10 @@ public:
     // DFET Control
     bool disableDischarge();
     bool enableDischarge();
-    bool isDischargeEnabled() const;
 
     // CFET Control
     bool disableCharge();
     bool enableCharge();
-    bool isChargeEnabled() const;
 
     bool enterShipMode();
     bool isInitialized() const { return initialized_; }
