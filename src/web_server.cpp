@@ -20,6 +20,7 @@
 static bool s_otaSuccess = false;
 
 static WebServer* g_webServerInstance = nullptr;
+extern bool g_is_new_board;
 
 // =============================================================================
 // Constructor and Destructor
@@ -105,6 +106,16 @@ void WebServer::setupHttpRoutes() {
   // BMS Ship Mode endpoint
   server.on("/bms/shipmode", HTTP_POST, [this](AsyncWebServerRequest* request) {
     this->handleBmsShipMode(request);
+  });
+
+  // BMS Reset Battery Data endpoint
+  server.on("/bms/reset-data", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    this->handleBmsResetData(request);
+  });
+
+  // Clear tips endpoint
+  server.on("/api/clear-tips", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    this->handleClearTips(request);
   });
   
   // ADC Calibration API - GET
@@ -269,6 +280,13 @@ void WebServer::notifyClients() {
   bms["balancing_active"] = state.bms.balancing_active;
   bms["balance_mask"] = state.bms.balance_mask;
   
+  // 均衡统计数据
+  bms["balancing_events_total"] = state.bms.balancing_events_total;
+  JsonArray cellBalCounts = bms.createNestedArray("cell_balancing_count");
+  for (int i = 0; i < 5; i++) {
+    cellBalCounts.add(state.bms.cell_balancing_count[i]);
+  }
+  
   // 单体电压数组
   JsonArray cells = bms.createNestedArray("cell_voltages");
   for (int i = 0; i < 5; i++) {
@@ -298,10 +316,11 @@ void WebServer::notifyClients() {
   power["bq24780s_connected"] = state.power.bq24780s_connected;
   power["prochot_status"] = state.power.prochot_status;
   power["tbstat_status"] = state.power.tbstat_status;
-  
-  // BQ24780S 寄存器数组
+  power["chip_variant"] = state.power.chip_variant;
+
+  // BQ24780S/BQ24800 寄存器数组 (12个：前11个通用 + [11]VsysMin仅BQ24800)
   JsonArray bq24780s_regs = power.createNestedArray("bq24780s_registers");
-  for (int i = 0; i < 11; i++) {
+  for (int i = 0; i < 12; i++) {
     bq24780s_regs.add(state.power.bq24780s_registers[i]);
   }
   
@@ -754,6 +773,10 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   REPLACE("%MQTT_USERNAME%", sysConfig->mqtt_username);
   REPLACE("%MQTT_PASSWORD%", sysConfig->mqtt_password);
 
+  // 小米传感器桥接配置
+  REPLACE("%XIAOMI_CHECKED%", sysConfig->xiaomi_sensor_enabled ? "checked" : "");
+  REPLACE("%XIAOMI_SECTION_DISPLAY%", g_is_new_board ? "block" : "none");
+
   // IP 模式配置 - 新增
   REPLACE("%IP_MODE_DHCP%", sysConfig->use_static_ip ? "" : " selected");
   REPLACE("%IP_MODE_STATIC%", sysConfig->use_static_ip ? " selected" : "");
@@ -796,6 +819,7 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   REPLACE_FMT("%POWER_MAX_DISCHARGE%", "%d", powerConfig->max_discharge_current);
   REPLACE_FMT("%POWER_DISCHARGE_SOC_STOP%", "%.0f", powerConfig->discharge_soc_stop);
   REPLACE("%POWER_HYBRID_CHECKED%", powerConfig->enable_hybrid_boost ? "checked" : "");
+  REPLACE_FMT("%POWER_VSYS_MIN%", "%d", powerConfig->vsys_min_mV);
   REPLACE_FMT("%POWER_OVER_CURRENT%", "%d", powerConfig->over_current_threshold);
   REPLACE_FMT("%POWER_OVER_TEMP%", "%.1f", powerConfig->over_temp_threshold);
   REPLACE_FMT("%POWER_CHARGE_TEMP_HIGH%", "%.1f", powerConfig->charge_temp_high_limit);
@@ -1050,6 +1074,12 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     }
     // =================================
 
+    // ========== 处理小米传感器桥接配置 ==========
+    if (sys.containsKey("xiaomi_sensor_enabled")) {
+      tempSysConfig.xiaomi_sensor_enabled = sys["xiaomi_sensor_enabled"];
+    }
+    // ===========================================
+
     // ========== 处理静态 IP 配置 - 新增 ==========
     if (sys.containsKey("use_static_ip")) {
       tempSysConfig.use_static_ip = sys["use_static_ip"];
@@ -1187,6 +1217,10 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
       float val = pwr["charge_temp_low_limit"];
       if (val >= -20.0f && val <= 10.0f) tempPowerConfig.charge_temp_low_limit = val;
     }
+    if (pwr.containsKey("vsys_min_mV")) {
+      uint16_t val = pwr["vsys_min_mV"];
+      if (val >= 5888 && val <= 16128) tempPowerConfig.vsys_min_mV = val; // 23*256 ~ 63*256
+    }
 
     // ========== 处理时间窗口配置 ==========
     if (pwr.containsKey("charging_windows") && pwr.containsKey("charging_window_count")) {
@@ -1304,6 +1338,33 @@ void WebServer::handleBmsShipMode(AsyncWebServerRequest* request) {
   // Then, publish event for SystemManager to handle
   Serial.println(F("[WebServer] Publishing EVT_BMS_SHIPMODE_REQUEST event"));
   EventBus::getInstance().publish(EVT_BMS_SHIPMODE_REQUEST, nullptr);
+}
+
+void WebServer::handleBmsResetData(AsyncWebServerRequest* request) {
+  if (!systemManager) {
+    request->send(503, "application/json", "{\"success\":false,\"message\":\"系统未就绪\"}");
+    return;
+  }
+  Serial.println(F("[WebServer] BMS Reset Battery Data request received"));
+
+  StaticJsonDocument<256> doc;
+  doc["success"] = true;
+  doc["message"] = "请求已接收，正在重置电池数据...";
+
+  String response;
+  serializeJson(doc, response);
+  request->send(200, "application/json", response);
+
+  Serial.println(F("[WebServer] Publishing EVT_BMS_RESET_BATTERY_DATA event"));
+  EventBus::getInstance().publish(EVT_BMS_RESET_BATTERY_DATA, nullptr);
+}
+
+void WebServer::handleClearTips(AsyncWebServerRequest* request) {
+  if (systemManager) {
+    systemManager->clearTips();
+    notifyClients();
+  }
+  request->send(200, "application/json", "{\"success\":true}");
 }
 
 // =============================================================================

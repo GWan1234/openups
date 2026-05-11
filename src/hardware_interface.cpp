@@ -6,8 +6,8 @@
 
 static HardwareInterface* g_hardware_instance = nullptr;
 
-HardwareInterface::HardwareInterface(uint8_t led_brightness, uint8_t buzzer_volume, bool buzzer_enabled)
-    : i2cInterface_(), system_status_(0), last_update_time_(0), last_led_update_time_(0),
+HardwareInterface::HardwareInterface(uint8_t led_brightness, uint8_t buzzer_volume, bool buzzer_enabled, bool init_rgb)
+    : init_rgb_(init_rgb), i2cInterface_(), system_status_(0), last_update_time_(0), last_led_update_time_(0),
       button_press_start_time_(0), flag_acok_changed_(false), flag_prochot_alert_(false),
       flag_tbstat_changed_(false), flag_bms_alert_(false), flag_button_pressed_(false),
       button_state_(BTN_IDLE), last_acok_state_(false), last_prochot_state_(false),
@@ -37,8 +37,8 @@ HardwareInterface::HardwareInterface(uint8_t led_brightness, uint8_t buzzer_volu
                    buzzer_enabled_ ? "yes" : "no");
 }
 
-HardwareInterface::HardwareInterface(const Configuration& config)
-    : HardwareInterface(config.led_brightness, config.buzzer_volume, config.buzzer_enabled) {}
+HardwareInterface::HardwareInterface(const Configuration& config, bool init_rgb)
+    : HardwareInterface(config.led_brightness, config.buzzer_volume, config.buzzer_enabled, init_rgb) {}
 
 bool HardwareInterface::begin() {
     Serial.println(F("HW: Initializing..."));
@@ -96,20 +96,26 @@ void HardwareInterface::initGPIOs() {
     pinMode(BQ24780S_TBSTAT_PIN, INPUT); 
     pinMode(BQ76920_ALERT_PIN, INPUT); 
     
-    // Output pins
+    // Output pins (RGB_LED_PIN 由 init_rgb_ 条件控制)
     const uint8_t output_pins[] = {
         BQ76920_I2CVCC_PIN, POWER_LED_PIN, CHARGING_LED_PIN, DISCHARGING_LED_PIN,
-        WIFI_FAIL_LED_PIN, WIFI_SUCCESS_LED_PIN, BUZZER_PIN, RGB_LED_PIN,
+        WIFI_FAIL_LED_PIN, WIFI_SUCCESS_LED_PIN, BUZZER_PIN,
         TEMP_POWER_PIN
     };
-    
+
     for (uint8_t pin : output_pins) {
         pinMode(pin, OUTPUT);
         digitalWrite(pin, LOW);
     }
 
-    FastLED.addLeds<WS2812, RGB_LED_PIN, GRB>(leds_, 1);
-    FastLED.setBrightness(led_brightness_); 
+    if (init_rgb_) {
+        pinMode(RGB_LED_PIN, OUTPUT);
+        digitalWrite(RGB_LED_PIN, LOW);
+        FastLED.addLeds<WS2812, RGB_LED_PIN, GRB>(leds_, 1);
+        FastLED.setBrightness(led_brightness_);
+    } else {
+        Serial.println(F("HW: RGB LED skipped (slave I2C mode)"));
+    } 
     
     analogSetAttenuation(ADC_11db); 
     analogReadResolution(12);
@@ -353,7 +359,9 @@ void HardwareInterface::setLED(uint8_t pin, LED_Mode_t mode) {
 void HardwareInterface::setLEDBrightness(uint8_t brightness) {
     brightness = min(brightness, (uint8_t)100);
     led_brightness_ = Utils::applyGammaMapping(brightness, 80);
-    FastLED.setBrightness(led_brightness_);
+    if (init_rgb_) {
+        FastLED.setBrightness(led_brightness_);
+    }
     Serial.printf_P(PSTR("[HW] LED Brightness: %u%% -> %u\n"), brightness, led_brightness_);
 }
 
@@ -376,6 +384,7 @@ void HardwareInterface::setBuzzerEnabled(bool enabled) {
 }
 
 void HardwareInterface::setRGBLED(RGB_Mode_t mode, RGB_Color_t color) {
+    if (!init_rgb_) return;
     rgb_mode_ = mode;
     rgb_color_ = color;
 }
@@ -419,6 +428,7 @@ void HardwareInterface::updateLEDs() {
 }
 
 void HardwareInterface::updateRGBLED() {
+    if (!init_rgb_) return;
     static uint8_t breath_step = 0;
     static unsigned long last_blink_time = 0;
     static bool blink_state = false;

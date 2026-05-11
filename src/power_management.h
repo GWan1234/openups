@@ -78,7 +78,10 @@ typedef struct {
     // 时间窗口充电配置
     ChargingTimeWindow_t charging_windows[5];  // 最多支持 5 个时间窗口
     uint8_t charging_window_count;             // 实际使用的时间窗口数量
-    
+
+    // BQ24800 专用配置
+    uint16_t vsys_min_mV;                      // 最小系统电压 (mV)，仅 BQ24800 生效
+
 } Power_Config_t;
 
 // =============================================================================

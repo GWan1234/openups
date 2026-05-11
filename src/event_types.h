@@ -46,7 +46,8 @@ enum EventType {
     
     // --- BMS 控制事件 ---
     EVT_BMS_SHIPMODE_REQUEST,       // BMS 进入运输模式请求 (payload: nullptr)
-    
+    EVT_BMS_RESET_BATTERY_DATA,    // BMS 重置电池数据请求 (payload: nullptr)
+
     EVT_MAX_TYPES                 // 用于数组边界检查
 };
 

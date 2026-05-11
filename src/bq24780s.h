@@ -11,6 +11,12 @@ class HardwareInterface;
 namespace BQ24780SConst {
     // ==================== 设备基本信息 ====================
    constexpr uint8_t ADDRESS = 0x09;  ///< I2C 地址
+
+    // ==================== 芯片型号检测 ====================
+    enum class ChipVariant : uint8_t {
+        BQ24780S = 0,  ///< BQ24780S (DeviceID = 0x30)
+        BQ24800 = 1    ///< BQ24800  (DeviceID = 0x38)
+    };
     
     // ==================== 电流检测参数 ====================
     namespace Current {
@@ -47,6 +53,7 @@ namespace BQ24780SConst {
     namespace Voltage {
        constexpr float CHARGE_VOLTAGE_STEP = 16.0f;  ///< 充电电压步进值 (mV)
        constexpr uint16_t CHARGE_VOLTAGE_MAX = 12600; ///< 最大充电电压 (mV) - 基于 11 位设置的理论值为 32752，但为了安全，手动限制为 12.6v
+       constexpr uint16_t VSYS_MIN_STEP = 256;        ///< 最小系统电压步进值 (mV) - BQ24800专用
     }
     
     // ==================== 功率监测参数 ====================
@@ -79,6 +86,13 @@ namespace BQ24780SConst {
        constexpr uint8_t CHARGE_VOLTAGE = 0x15;      ///< 11-bit Charge Voltage Setting
        constexpr uint8_t DISCHARGE_CURRENT = 0x39;   ///< 6-bit Discharge Current Setting
        constexpr uint8_t INPUT_CURRENT = 0x3F;       ///< 6-bit Input Current Setting
+
+        // BQ24800 专用寄存器
+       constexpr uint8_t VSYS_MIN = 0x3E;            ///< 最小系统电压 (BQ24800 only)
+
+        // BQ24800 ChargeOption2 (0x38) 特有位域
+       constexpr uint8_t CHARGE_OPTION2_EN_BATT_BOOST_BIT = 6;  ///< bit 6: 电池升压使能
+       constexpr uint8_t CHARGE_OPTION2_VBOOST_BIT = 5;         ///< bit 5: 升压电压选择 (0=VSYSMIN+1.5V, 1=VSYSMIN+2.3V)
     }
 }
 
@@ -308,6 +322,27 @@ public:
      */
     bool setHybridPowerBoost(bool enable);
 
+    // ==================== BQ24800 兼容性 ====================
+    /**
+     * @brief 获取检测到的芯片型号
+     * @return ChipVariant 枚举值
+     */
+    BQ24780SConst::ChipVariant getChipVariant() const { return chip_variant_; }
+
+    /**
+     * @brief 设置最小系统电压 (BQ24800 专用)
+     * @param voltage_mV 最小系统电压值 (mV)，步进 256mV
+     * @return true 设置成功, false 设置失败或非 BQ24800
+     */
+    bool setVsysMin(uint16_t voltage_mV);
+
+    /**
+     * @brief 读取最小系统电压设置 (BQ24800 专用)
+     * @param voltage_mV 存储读取值的指针
+     * @return true 读取成功, false 读取失败或非 BQ24800
+     */
+    bool getVsysMin(uint16_t* voltage_mV);
+
     // ==================== 状态读取与故障管理 ====================
     /**
      * @brief 读取 PROCHOT 状态寄存器
@@ -357,12 +392,14 @@ public:
      *   [8]  CHARGE_VOLTAGE (0x15)
      *   [9]  DISCHARGE_CURRENT (0x39)
      *   [10] INPUT_CURRENT (0x3F)
+     *   [11] VSYS_MIN (0x3E) - BQ24800 only, 0 if BQ24780S
      */
     bool readAllRegisters(uint16_t* values);
 
 private:
     I2CInterface* i2c;                 ///< I2C 接口指针
     bool initialized_;                 ///< 初始化状态标志
+    BQ24780SConst::ChipVariant chip_variant_ = BQ24780SConst::ChipVariant::BQ24780S;  ///< 芯片型号
     
     // 当前硬件配置状态
     BQ24780SConst::IadpGain current_iadp_gain_ = BQ24780SConst::IadpGain::Gain20x;      ///< 当前 IADP 增益配置

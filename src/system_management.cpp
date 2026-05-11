@@ -20,11 +20,13 @@
 #include "pins_config.h"
 #include "ups_hid_service.h"
 #include "mqtt_service.h"
+#include "XiaomiSensorBridge.h"
 #include "utils.h"
 #include <WiFi.h>
 
 // External reference to system config (defined in sketch_jan14a.ino)
 extern Configuration* systemConfig;
+extern bool g_is_new_board;
 
 // =============================================================================
 // Constructor
@@ -36,13 +38,15 @@ SystemManagement::SystemManagement(
     PowerManagement* pm,
     ConfigManager& cm,
     UPS_HID_Service* upsHid,
-    MQTTService* mqtt
+    MQTTService* mqtt,
+    XiaomiSensorBridge* xiaomi
 ) : hardware(&hw)
     , bms(battery)
     , powerManagement(pm)
     , configManager(&cm)
-    , upsHidService(upsHid),
-    mqttService(mqtt)  // MQTT 服务注入
+    , upsHidService(upsHid)
+    , mqttService(mqtt)
+    , xiaomiBridge(xiaomi)
     , currentState(SYS_STATE_INIT)
     , previousState(SYS_STATE_INIT)
     , systemInitialized(false)
@@ -118,6 +122,9 @@ bool SystemManagement::initialize() {
     
     // 订阅 BMS 运输模式请求事件
     EventBus::getInstance().subscribe(EVT_BMS_SHIPMODE_REQUEST, onBmsShipModeRequest);
+
+    // 订阅 BMS 重置电池数据请求事件
+    EventBus::getInstance().subscribe(EVT_BMS_RESET_BATTERY_DATA, onBmsResetBatteryData);
 
     // 订阅充电事件
     EventBus::getInstance().subscribe(EVT_PM_CHARGE_STARTED, onChargeStarted);
@@ -315,9 +322,14 @@ void SystemManagement::executeStateActions() {
     if (upsHidService != nullptr) {
         upsHidService->update(globalState);
     }
-    
+
     // MQTT loop
     if (mqttService) mqttService->loop();
+
+    // 小米传感器桥接更新
+    if (xiaomiBridge != nullptr) {
+        xiaomiBridge->update(globalState);
+    }
 }
 
 // =============================================================================
@@ -784,7 +796,7 @@ void SystemManagement::onConfigSystemChanged(EventType type, void* param) {
     systemManager->hardware->setBuzzerEnabled(buzzer_enabled);
     systemManager->hardware->setBuzzerVolume(buzzer_volume);
     systemManager->hardware->setLEDBrightness(led_brightness);
-    
+
     Serial.println(F("[SysMgr] System config applied successfully"));
 }
 
@@ -1047,6 +1059,11 @@ void SystemManagement::onDelayedStart() {
         upsHidService->begin();
     }
 
+    // 小米传感器桥接延迟启动
+    if (xiaomiBridge != nullptr) {
+        xiaomiBridge->begin();
+    }
+
     if (mqttService != nullptr && systemConfig != nullptr) {
         // 检查 MQTT 配置是否有效（broker 和端口）
         if (strlen(systemConfig->mqtt_broker) > 0 && systemConfig->mqtt_port > 0) {
@@ -1133,14 +1150,14 @@ void SystemManagement::checkBQ76920Registers() {
     bool mismatch = false;
 
     int reg_scd = Utils::parseBQ76920Protect1(regs[4]);
-    if (reg_scd > 0 && config->short_circuit_threshold > 0 && abs(reg_scd - (int)config->short_circuit_threshold) > config->short_circuit_threshold * 0.1f) {
+    if (reg_scd > 0 && config->short_circuit_threshold > 0 && abs(reg_scd - (int)config->short_circuit_threshold) > config->short_circuit_threshold * 0.15f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
             addTip("BQ76920短路阈值不一致:寄存器=%dmA,配置=%dmA", reg_scd, config->short_circuit_threshold);
     }
 
     int reg_ocd = Utils::parseBQ76920Protect2(regs[5], regs[4]);
-    if (reg_ocd > 0 && config->max_discharge_current > 0 && abs(reg_ocd - (int)config->max_discharge_current) > config->max_discharge_current * 0.1f) {
+    if (reg_ocd > 0 && config->max_discharge_current > 0 && abs(reg_ocd - (int)config->max_discharge_current) > config->max_discharge_current * 0.15f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
             addTip("BQ76920放电过流不一致:寄存器=%dmA,配置=%dmA", reg_ocd, config->max_discharge_current);
@@ -1206,6 +1223,45 @@ void SystemManagement::handleBmsShipModeRequest() {
         Serial.println(F("[SysMgr] BMS marked as offline"));
     } else {
         Serial.println(F("[SysMgr] ERROR: Failed to enter BMS ship mode"));
+    }
+}
+
+/**
+ * @brief BMS 重置电池数据请求事件回调（静态方法，供 EventBus 调用）
+ */
+void SystemManagement::onBmsResetBatteryData(EventType type, void* param) {
+    if (systemManager && systemManager->systemInitialized) {
+        Serial.println(F("[SysMgr] BMS Reset Battery Data event received"));
+        systemManager->handleBmsResetBatteryData();
+    }
+}
+
+/**
+ * @brief BMS 重置电池数据处理（成员函数）
+ * 重置 SOH、循环次数、均衡统计等电池生命周期数据
+ */
+void SystemManagement::handleBmsResetBatteryData() {
+    if (!bms) {
+        Serial.println(F("[SysMgr] ERROR: Cannot reset battery data - BMS is null"));
+        return;
+    }
+
+    Serial.println(F("[SysMgr] Executing BMS resetBatteryData..."));
+
+    bool result = bms->resetBatteryData();
+
+    if (result) {
+        // 重置全局状态中的BMS数据
+        globalState.bms.soh = 100.0f;
+        globalState.bms.cycle_count = 0;
+        globalState.bms.balancing_events_total = 0;
+        for (int i = 0; i < 5; i++) {
+            globalState.bms.cell_balancing_count[i] = 0;
+        }
+        addTip("电池数据已重置 (SOH/循环/均衡)");
+        Serial.println(F("[SysMgr] BMS battery data reset successfully"));
+    } else {
+        Serial.println(F("[SysMgr] ERROR: Failed to reset BMS battery data"));
     }
 }
 
@@ -1303,4 +1359,10 @@ void SystemManagement::addTip(const char* fmt, ...) {
     if (globalState.tip_count < SYSTEM_TIPS_MAX) {
         globalState.tip_count++;
     }
+}
+
+void SystemManagement::clearTips() {
+    memset(globalState.tips, 0, sizeof(globalState.tips));
+    globalState.tip_count = 0;
+    globalState.tip_index = 0;
 }

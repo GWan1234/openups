@@ -100,13 +100,14 @@ public:
 
     bool enterShipMode();
     bool isInitialized() const { return initialized_; }
-    bool startBalancing(const BMS_State& bmsState);
-    bool stopBalancing(const BMS_State& bmsState);
+    bool startBalancing(BMS_State& bmsState);
+    bool stopBalancing(BMS_State& bmsState);
     bool clearFault();
     bool emergencyShutdown();
     BMS_Fault_t translateChipFault(uint8_t fault_register);
     bool saveToStorage();
     bool loadFromStorage();
+    bool resetBatteryData();
     static BMS_Config_t getDefaultConfig(uint8_t cell_count);
     bool applyNewConfig(const BMS_Config_t& config);
     void applyPendingConfig();
@@ -147,6 +148,13 @@ public:
 
     BMS_Fault_t hardware_fault_wait_;
     
+    // 静置/活跃状态检测
+    bool is_quiescent_;                      // 当前是否处于静置状态
+    unsigned long quiescent_start_time_;     // 进入静置状态的开始时间
+    static const int QUIESCENT_CURRENT_THRESHOLD = 5;  // 静置电流阈值(mA)
+    static const unsigned long QUIESCENT_TIME_THRESHOLD = 10000; // 静置时间阈值(ms)
+    void updateQuiescentState(const BMS_State& bmsState);
+
     // 满充/放空校准锚点
     bool full_charge_calibrated_;
     bool empty_discharge_calibrated_;

@@ -142,7 +142,8 @@ bool ConfigManager::updateSystemConfig(const Configuration& config, bool immedia
     // 检查系统配置是否发生变化（用于事件触发）
     bool systemConfigChanged = (systemConfig.led_brightness != config.led_brightness) ||
                         (systemConfig.buzzer_volume != config.buzzer_volume) ||
-                        (systemConfig.buzzer_enabled != config.buzzer_enabled);
+                        (systemConfig.buzzer_enabled != config.buzzer_enabled) ||
+                        (systemConfig.xiaomi_sensor_enabled != config.xiaomi_sensor_enabled);
     
     // 检查 WiFi 配置是否发生变化
     bool wifiConfigChanged = (strcmp(systemConfig.wifi_ssid, config.wifi_ssid) != 0) ||
@@ -236,7 +237,7 @@ void ConfigManager::loadSystemDefaults() {
     Serial.printf_P(PSTR("Generated device identifier: %s\n"), systemConfig.identifier);
     
     systemConfig.buzzer_enabled = true;
-    systemConfig.buzzer_volume = 50;  // 50% 音量
+    systemConfig.buzzer_volume = 100;  // 100% 音量
     systemConfig.led_brightness = 30; // 30% 亮度
     systemConfig.hid_enabled = true;  // 默认启用 HID 服务
     systemConfig.hid_report_mode = 2; // 默认百分比模式 (0: mAh, 1: mWh, 2: %)
@@ -255,23 +256,11 @@ void ConfigManager::loadSystemDefaults() {
 void ConfigManager::loadBMSDefaults() {
     // BMS configuration defaults - 使用安全的保守值
     bmsConfig = BMS::getDefaultConfig(3); // 3 串默认配置
-    
-    // 确保为安全保守值
-    if (bmsConfig.max_charge_current > 1000) {
-        bmsConfig.max_charge_current = 1000; // 限制为 1A 安全电流
-    }
 }
 
 void ConfigManager::loadPowerDefaults() {
     // Power configuration defaults - 使用安全的保守值
     powerConfig = PowerManagement::getDefaultConfig();
-    
-    // 确保为安全保守值
-    if (powerConfig.max_charge_current > 500) {
-        powerConfig.max_charge_current = 500; // 限制为 0.5A 安全电流
-    }
-    
-    Serial.println(F("Power default configuration loaded with safe values"));
 }
 
 bool ConfigManager::validateSystemConfig(const Configuration& config) {

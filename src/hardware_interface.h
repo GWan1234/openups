@@ -105,8 +105,9 @@ static const uint8_t ADC_CAL_PIN_COUNT = sizeof(ADC_CAL_PINS) / sizeof(ADC_CAL_P
 
 class HardwareInterface {
 public:
-    explicit HardwareInterface(uint8_t led_brightness = 50, uint8_t buzzer_volume = 50, bool buzzer_enabled = true);
-    explicit HardwareInterface(const Configuration& config);
+    explicit HardwareInterface(uint8_t led_brightness = 50, uint8_t buzzer_volume = 50,
+                               bool buzzer_enabled = true, bool init_rgb = true);
+    explicit HardwareInterface(const Configuration& config, bool init_rgb = true);
     
     bool begin();
     void update();
@@ -142,6 +143,7 @@ public:
 
 private:
     CRGB leds_[1];
+    bool init_rgb_;
     I2CInterface i2cInterface_;
     uint32_t system_status_;
     

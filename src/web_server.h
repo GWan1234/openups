@@ -54,6 +54,12 @@ public:
     // BMS Ship Mode handler
     void handleBmsShipMode(AsyncWebServerRequest* request);
 
+    // BMS Reset Battery Data handler
+    void handleBmsResetData(AsyncWebServerRequest* request);
+
+    // Clear tips handler
+    void handleClearTips(AsyncWebServerRequest* request);
+
     // ADC Calibration API handlers
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);

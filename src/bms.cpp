@@ -15,7 +15,7 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       last_periodic_update_(0), last_day_update_(0), current_remaining_capacity(0.0f),
       accumulated_charge_mAh(0.0f), accumulated_discharge_mAh(0.0f),
       cc_ready_pending_(false), soc_initialized_(false), last_stable_soc_(50.0f),
-      last_soc_update_timestamp_(0), self_discharge_rate_per_day_(0.0005f),
+      last_soc_update_timestamp_(0), self_discharge_rate_per_day_(0.01f),
       soc_stable_start_time_(0), soc_waiting_for_stable_(false),
       hardware_fault_wait_(BMS_FAULT_NONE),
       full_charge_calibrated_(false),
@@ -25,7 +25,8 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       cc_accumulated_raw_mAh_(0.0f),
       charge_soh_tracking_(false), charge_soc_start_(0.0f), charge_cc_raw_start_(0.0f),
       partial_cycles_(0.0f),
-      config_update_pending_(false) {
+      config_update_pending_(false),
+      is_quiescent_(false), quiescent_start_time_(0) {
     
     memset(&stats_, 0, sizeof(BMS_Statistics_t));
     memset(cell_balance_timer, 0, sizeof(cell_balance_timer));
@@ -47,7 +48,7 @@ BMS_Config_t BMS::getDefaultConfig(uint8_t cell_count) {
         .short_circuit_threshold = 20000,
         .temp_overheat_threshold = 65.0f,
         .balancing_enabled = true,
-        .balancing_voltage_diff = 50.0f
+        .balancing_voltage_diff = 20.0f
     };
 }
 
@@ -162,7 +163,12 @@ void BMS::update(System_Global_State& globalState) {
         last_medium_update_ = last_slow_update_ = last_periodic_update_ = last_day_update_ = current_time;
     }
     
-    if (current_time - last_fast_update_ >= 500) {
+    // 根据静置状态动态调整更新周期
+    unsigned long fast_interval = is_quiescent_ ? 2000 : 500;
+    unsigned long medium_interval = is_quiescent_ ? 4000 : 1000;
+    unsigned long slow_interval = is_quiescent_ ? 30000 : 10000;
+    
+    if (current_time - last_fast_update_ >= fast_interval) {
         bool read_success = updateBasicInfo(bmsState);
         
         if (read_success) {
@@ -174,13 +180,16 @@ void BMS::update(System_Global_State& globalState) {
             bmsState.last_update_time = millis();
             checkCriticalFaults(bmsState);
             bmsState.is_connected = true;
+            
+            // 更新静置/活跃状态
+            updateQuiescentState(bmsState);
         } else {
             handleCommunicationLoss(bmsState);
         }
         last_fast_update_ = current_time;
     }
     
-    if (current_time - last_medium_update_ >= 1000) {
+    if (current_time - last_medium_update_ >= medium_interval) {
         if (i2c_failure_count_ < 10) {
             updateFaultLogic(bmsState);
             updateSOC(bmsState);
@@ -194,7 +203,7 @@ void BMS::update(System_Global_State& globalState) {
         last_medium_update_ = current_time;
     }
     
-    if (current_time - last_slow_update_ >= 10000) {
+    if (current_time - last_slow_update_ >= slow_interval) {
         updateSOHLearning(bmsState);
         bmsState.soh = stats_.soh;
         bmsState.cycle_count = stats_.total_cycles;
@@ -206,6 +215,17 @@ void BMS::update(System_Global_State& globalState) {
 
     if (current_time - last_periodic_update_ >= 60000) {
         evaluateAndExecuteBalancing(bmsState);
+        
+        // 从 stats_.balancing_events 解码均衡统计数据到 bmsState
+        // 高14bit (bit50-63): 总均衡次数
+        bmsState.balancing_events_total = (stats_.balancing_events >> 50) & 0x3FFF;
+        
+        // 低50bit (bit0-49): 每个电芯10bit，共5个电芯
+        for (uint8_t i = 0; i < config_.cell_count && i < 5; i++) {
+            uint8_t cell_shift = i * 10;
+            bmsState.cell_balancing_count[i] = (stats_.balancing_events >> cell_shift) & 0x3FF;
+        }
+        
         last_periodic_update_ = current_time;
     }
 
@@ -311,7 +331,7 @@ void BMS::handleCommunicationLoss(BMS_State& bmsState) {
     }
 }
 
-bool BMS::startBalancing(const BMS_State& bmsState) {
+bool BMS::startBalancing(BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) return false;
     
     bool valid_data = (bmsState.cell_voltage_max > 2500 && bmsState.cell_voltage_max < 4500 &&
@@ -361,6 +381,8 @@ bool BMS::startBalancing(const BMS_State& bmsState) {
             stats_.balancing_events &= clear_mask;
             stats_.balancing_events |= (current_total << 50);
         }
+
+        bmsState.balance_mask = balance_mask;
         
         if(!bmsState.balancing_active) {
            EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
@@ -370,7 +392,7 @@ bool BMS::startBalancing(const BMS_State& bmsState) {
     return false;
 }
 
-bool BMS::stopBalancing(const BMS_State& bmsState) {
+bool BMS::stopBalancing(BMS_State& bmsState) {
     if (!initialized_) return false;
     i2cPowerOn();
     if (bq76920_.setCellBalance(0)) {
@@ -448,16 +470,6 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     // 启动均衡并更新状态
     if (startBalancing(bmsState)) {
         bmsState.balancing_active = true;
-        // 计算当前均衡掩码
-        uint8_t balance_mask = 0;
-        const uint16_t* cell_voltages = bmsState.cell_voltages;
-        uint16_t avg_voltage = bmsState.cell_voltage_avg;
-        for (uint8_t i = 0; i < config_.cell_count; i++) {
-            if (cell_voltages[i] > avg_voltage + config_.balancing_voltage_diff) {
-                balance_mask |= (1 << i);
-            }
-        }
-        bmsState.balance_mask = balance_mask;
     } else {
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
@@ -946,6 +958,33 @@ void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
     }
 }
 
+void BMS::updateQuiescentState(const BMS_State& bmsState) {
+    unsigned long current_time = millis();
+    
+    if (abs(bmsState.current) <= QUIESCENT_CURRENT_THRESHOLD) {
+        // 电流在阈值内
+        if (!is_quiescent_) {
+            // 从活跃切换到静置，记录开始时间
+            if (quiescent_start_time_ == 0) {
+                quiescent_start_time_ = current_time;
+            } else if (current_time - quiescent_start_time_ >= QUIESCENT_TIME_THRESHOLD) {
+                // 持续10秒后进入静置状态
+                is_quiescent_ = true;
+                Serial.println(F("BMS: Entered quiescent state"));
+            }
+        }
+    } else {
+        // 电流超出阈值，立即切换到活跃状态
+        if (is_quiescent_) {
+            is_quiescent_ = false;
+            quiescent_start_time_ = 0;
+            Serial.printf_P(PSTR("BMS: Entered active state (current=%dmA)\n"), bmsState.current);
+        } else {
+            quiescent_start_time_ = 0; // 重置计时器
+        }
+    }
+}
+
 void BMS::checkCriticalFaults(BMS_State& bmsState) {
     BMS_Fault_t current_fault = BMS_FAULT_NONE;
     
@@ -1153,6 +1192,49 @@ bool BMS::saveToStorage() {
     Serial.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
         stats_.soh, current_remaining_capacity, accumulated_charge_mAh, accumulated_discharge_mAh);
     return true;
+}
+
+bool BMS::resetBatteryData() {
+    // 重置统计信息
+    stats_.soh = 100.0f;
+    stats_.total_cycles = 0;
+    stats_.balancing_events = 0;
+    stats_.last_fault = BMS_FAULT_NONE;
+    stats_.last_fault_time = 0;
+
+    // 重置容量和库仑计
+    current_remaining_capacity = -1.0f;  // 触发从OCV重新初始化
+    accumulated_charge_mAh = 0;
+    accumulated_discharge_mAh = 0;
+    cc_accumulated_raw_mAh_ = 0;
+
+    // 重置SOC相关
+    soc_initialized_ = false;  // 触发从OCV重新初始化SOC
+    last_stable_soc_ = 0;
+
+    // 重置SOH学习上下文
+    soh_learning_ctx_.is_learning = false;
+    soh_learning_ctx_.soc_start = 0;
+    soh_learning_ctx_.ah_start = 0;
+    soh_learning_ctx_.learning_start_time = 0;
+
+    // 重置循环计数
+    partial_cycles_ = 0;
+
+    // 重置充电SOH跟踪
+    charge_soh_tracking_ = false;
+    charge_soc_start_ = 0;
+    charge_cc_raw_start_ = 0;
+
+    // 重置校准锚点
+    full_charge_calibrated_ = false;
+    empty_discharge_calibrated_ = false;
+
+    // 持久化到NVS
+    bool result = saveToStorage();
+
+    Serial.println(F("[BMS] 电池数据已重置"));
+    return result;
 }
 
 bool BMS::loadFromStorage() {

@@ -55,6 +55,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row" style="margin-top:8px"><span class="lb">最高 / 最低</span><span class="vl" id="cellMM">--/-- mV</span></div>
 <div class="row"><span class="lb">压差</span><span class="vl" id="cellD">-- mV</span></div>
 <div class="row"><span class="lb">均衡状态</span><span class="vl" id="balSt">--</span></div>
+<div class="row"><span class="lb">总均衡次数</span><span class="vl" id="balTotal">--</span></div>
 </div>
 <div class="card"><div class="card-t">电源状态</div>
 <div class="row"><span class="lb">AC 电源</span><span class="vl" id="acSt">--</span></div>
@@ -90,6 +91,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 <div class="card"><div class="card-t">保护 & 均衡</div>
 <div class="row"><span class="lb">均衡状态</span><span class="vl" id="b_bal">--</span></div>
+<div class="row"><span class="lb">总均衡次数</span><span class="vl" id="b_bal_total">--</span></div>
 <div class="row"><span class="lb">故障类型</span><span class="vl r" id="b_fault">--</span></div>
 <div class="row"><span class="lb">BMS 模式</span><span class="vl" id="b_mode">--</span></div>
 </div>
@@ -187,6 +189,11 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="fg"><label>音量:</label><input type="range" id="vl" min="0" max="100" value="%VOLUME_VALUE%" oninput="document.getElementById('vv').textContent=this.value+'%'"><span id="vv" style="color:#888;font-size:12px;min-width:36px">%VOLUME_LEVEL%</span></div>
 <div class="fg"><label>LED 亮度:</label><input type="range" id="lb" min="0" max="100" value="%LIGHT_VALUE%" oninput="document.getElementById('lv').textContent=this.value+'%'"><span id="lv" style="color:#888;font-size:12px;min-width:36px">%LIGHT_BRIGHTNESS%</span></div>
 </fieldset>
+<fieldset class="fs" id="xiaomiSection" style="display:%XIAOMI_SECTION_DISPLAY%">
+<legend class="lg">小米传感器桥接</legend>
+<p style="color:#aaa;font-size:12px;margin-bottom:8px">通过I2C从机模拟SHTC3传感器，供米家温湿度计2读取UPS数据。仅新版PCB支持。电池温度→温度，板载温度→湿度，SOC→电量显示。(配置后需要重启生效)</p>
+<div class="fg"><label>传感器桥接:</label><label class="cl"><input type="checkbox" id="xiaomi_en" %XIAOMI_CHECKED%><span style="margin-left:8px">启用</span></label></div>
+</fieldset>
 </div>
 
 <div class="pnl" id="p-cfg-bms">
@@ -241,6 +248,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 <div class="ss"><div class="st">混合供电</div>
 <div class="fg"><label>混合供电:</label><label class="cl"><input type="checkbox" id="phe" %POWER_HYBRID_CHECKED%><span style="margin-left:8px">启用</span></label></div>
+<div class="fg"><label>最小系统电压:</label><input type="number" id="pvsm" value="%POWER_VSYS_MIN%" min="5888" max="16128" step="256"><span class="u">mV</span><span class="hint">仅 BQ24800 芯片有效，步进 256mV，默认 8960mV</span></div>
 </div>
 <div class="ss"><div class="st">保护配置</div>
 <div class="fg"><label>AC输入电流:</label><input type="number" id="poc" value="%POWER_OVER_CURRENT%" min="500" max="20000" step="100"><span class="u">mA</span><span class="hint">芯片配置最大值为8064，超过此值都会限制到8064</span></div>
@@ -262,6 +270,12 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <button type="button" class="btn" onclick="saveCalibration()">保存校准</button>
 <span id="calStatus" style="font-size:14px;color:#999"></span>
 </div>
+</fieldset>
+<fieldset class="fs" style="border:2px solid #faad14;border-radius:8px;margin-top:16px">
+<legend class="lg" style="color:#faad14">电池数据重置</legend>
+<p style="color:#666;font-size:13px;margin:8px 0;line-height:1.6">更换新电池后，重置 BMS 中记录的电池健康度(SOH)、循环次数、均衡统计数据。重置后系统将从开路电压重新初始化 SOC。</p>
+<button type="button" class="btn" style="background:#faad14;border-color:#faad14" onclick="resetBatteryData()">重置电池数据</button>
+<span id="resetBmsStatus" style="font-size:14px;color:#999;margin-left:12px"></span>
 </fieldset>
 </div>
 
@@ -324,8 +338,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="wz-step" id="wz-step-1"><div class="wz-step-circle">2</div><div class="wz-step-label">网络</div></div>
 <div class="wz-step" id="wz-step-2"><div class="wz-step-circle">3</div><div class="wz-step-label">电池</div></div>
 <div class="wz-step" id="wz-step-3"><div class="wz-step-circle">4</div><div class="wz-step-label">硬件</div></div>
-<div class="wz-step" id="wz-step-4"><div class="wz-step-circle">5</div><div class="wz-step-label">MQTT</div></div>
-<div class="wz-step" id="wz-step-5"><div class="wz-step-circle">6</div><div class="wz-step-label">完成</div></div>
+<div class="wz-step" id="wz-step-4"><div class="wz-step-circle">5</div><div class="wz-step-label">完成</div></div>
 </div>
 
 <!-- 步骤 1: WiFi 设置 -->
@@ -394,15 +407,15 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 <div class="wz-field">
 <label>最大充电电流 (mA)</label>
-<input type="number" id="wz-charge-current" placeholder="1000" min="100" max="10000">
+<input type="number" id="wz-charge-current" placeholder="2000" min="100" max="10000">
 </div>
 <div class="wz-field">
 <label>最大放电电流 (mA)</label>
-<input type="number" id="wz-discharge-current" placeholder="2000" min="100" max="20000">
+<input type="number" id="wz-discharge-current" placeholder="12000" min="100" max="20000">
 </div>
 <div class="wz-field">
 <label>过压保护阈值 (mV)</label>
-<input type="number" id="wz-ov-threshold" placeholder="4200" min="4000" max="4500">
+<input type="number" id="wz-ov-threshold" placeholder="4210" min="3200" max="4500">
 </div>
 <div class="wz-field">
 <label>欠压保护阈值 (mV)</label>
@@ -427,13 +440,13 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 <div class="wz-field">
 <label>蜂鸣器音量</label>
-<input type="range" id="wz-volume" min="0" max="100" value="70" oninput="document.getElementById('wz-vol-val').textContent=this.value+'%'">
-<div style="text-align:right;font-size:12px;color:#888;margin-top:4px"><span id="wz-vol-val">70%</span></div>
+<input type="range" id="wz-volume" min="0" max="100" value="100" oninput="document.getElementById('wz-vol-val').textContent=this.value+'%'">
+<div style="text-align:right;font-size:12px;color:#888;margin-top:4px"><span id="wz-vol-val">100%</span></div>
 </div>
 <div class="wz-field">
 <label>LED 亮度</label>
-<input type="range" id="wz-brightness" min="0" max="100" value="80" oninput="document.getElementById('wz-br-val').textContent=this.value+'%'">
-<div style="text-align:right;font-size:12px;color:#888;margin-top:4px"><span id="wz-br-val">80%</span></div>
+<input type="range" id="wz-brightness" min="0" max="100" value="30" oninput="document.getElementById('wz-br-val').textContent=this.value+'%'">
+<div style="text-align:right;font-size:12px;color:#888;margin-top:4px"><span id="wz-br-val">30%</span></div>
 </div>
 <div class="wz-field">
 <div class="wz-checkbox">
@@ -446,44 +459,13 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <select id="wz-hid-mode">
 <option value="0">毫安时 (mAh)</option>
 <option value="1">毫瓦时 (mWh)</option>
-<option value="2">百分比 (%)</option>
+<option value="2">百分比 (%)(nas，linux选这个)</option>
 </select>
 </div>
 </div>
 
-<!-- 步骤 4: MQTT 设置 (可选) -->
+<!-- 步骤 4: 完成 -->
 <div class="wz-card" id="wz-card-4" style="display:none">
-<div class="wz-card-title">🔌 MQTT 配置（可选）</div>
-<div class="wz-info">配置 Home Assistant 或其他 MQTT 客户端连接</div>
-<div class="wz-field">
-<div class="wz-checkbox">
-<label>启用 MQTT</label>
-<input type="checkbox" id="wz-mqtt-en">
-</div>
-</div>
-<div id="wz-mqtt-config" style="display:none">
-<div class="wz-field">
-<label>Broker 地址</label>
-<input type="text" id="wz-mqtt-broker" placeholder="192.168.1.100">
-</div>
-<div class="wz-field">
-<label>端口</label>
-<input type="number" id="wz-mqtt-port" placeholder="1883" min="1" max="65535">
-</div>
-<div class="wz-field">
-<label>用户名（可选）</label>
-<input type="text" id="wz-mqtt-user" placeholder="可选">
-</div>
-<div class="wz-field">
-<label>密码（可选）</label>
-<input type="password" id="wz-mqtt-pass" placeholder="可选">
-</div>
-</div>
-<script>document.getElementById('wz-mqtt-en').addEventListener('change',function(){var d=document.getElementById('wz-mqtt-config');d.style.display=this.checked?'block':'none';});</script>
-</div>
-
-<!-- 步骤 5: 完成 -->
-<div class="wz-card" id="wz-card-5" style="display:none">
 <div class="wz-success">
 <div class="wz-success-icon">✅</div>
 <h3>配置完成！</h3>

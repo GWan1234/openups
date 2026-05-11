@@ -61,7 +61,7 @@ Power_Config_t PowerManagement::getDefaultConfig() {
     config.enable_hybrid_boost = true;
 
     // 保护配置
-    config.over_current_threshold = 10000;
+    config.over_current_threshold = 8064;
     config.over_temp_threshold = 75.0f;
 
     config.charge_timeout_ms = 8 * 3600 * 1000; // 充电超时 8 小时
@@ -90,7 +90,10 @@ Power_Config_t PowerManagement::getDefaultConfig() {
         config.charging_windows[i].start_hour = 0;
         config.charging_windows[i].end_hour = 0;
     }
-    
+
+    // BQ24800 专用
+    config.vsys_min_mV = 8960; // 8960mV
+
   return config;
 }
 
@@ -122,6 +125,15 @@ bool PowerManagement::begin() {
             Serial.println(F("PowerManagement: BQ24780S hardware configuration applied"));
         } else {
             Serial.println(F("PowerManagement: WARNING - Failed to apply BQ24780S config"));
+        }
+
+        // BQ24800: 设置最小系统电压
+        if (bq24780s_.getChipVariant() == BQ24780SConst::ChipVariant::BQ24800) {
+            if (bq24780s_.setVsysMin(config_.vsys_min_mV)) {
+                Serial.printf_P(PSTR("PowerManagement: VsysMin set to %u mV\n"), config_.vsys_min_mV);
+            } else {
+                Serial.println(F("PowerManagement: WARNING - Failed to set VsysMin"));
+            }
         }
 
         EventBus::getInstance().subscribe(EVT_HW_ACOK_CHANGED, &PowerManagement::onAcokChangedStatic);
@@ -285,6 +297,7 @@ void PowerManagement::updateStatisticalData(System_Global_State& globalState) {
 
     //同步所有的寄存器值
     bq24780s_.readAllRegisters(globalState.power.bq24780s_registers);
+    globalState.power.chip_variant = static_cast<uint8_t>(bq24780s_.getChipVariant());
     
 }
 
@@ -472,7 +485,14 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
     // 2. 硬件配置更新成功（或无需更新），更新内部配置
     config_ = pending_config_;
     config_update_pending_ = false;
-    
+
+    // BQ24800: VsysMin 变更时应用
+    if (available_ && bq24780s_.getChipVariant() == BQ24780SConst::ChipVariant::BQ24800) {
+        if (!bq24780s_.setVsysMin(config_.vsys_min_mV)) {
+            Serial.println(F("[PowerMgr] WARNING - Failed to set VsysMin"));
+        }
+    }
+
     Serial.println(F("[PowerMgr] Configuration applied successfully"));
     
     // 3. 如果当前处于充电激活状态，并且新的限制比当前低，立即应用

@@ -20,6 +20,7 @@ class PowerManagement;
 class ConfigManager;
 class UPS_HID_Service;
 class MQTTService;
+class XiaomiSensorBridge;
 
 class SystemManagement {
 public:
@@ -40,7 +41,8 @@ public:
         PowerManagement* pm,  // 改为指针，允许 nullptr
         ConfigManager& cm,
         UPS_HID_Service* upsHid = nullptr,
-        MQTTService* mqtt = nullptr
+        MQTTService* mqtt = nullptr,
+        XiaomiSensorBridge* xiaomi = nullptr
     );
 
     // Destructor
@@ -71,6 +73,9 @@ public:
     // 持久化所有模块数据（OTA前调用）
     void saveAllData();
 
+    // 清除所有系统提示
+    void clearTips();
+
     // 系统提示信息管理 - 自动添加时间前缀 "[M月D日 HH:MM]"
     void addTip(const char* fmt, ...);
 
@@ -84,6 +89,7 @@ private:
     ConfigManager* configManager;
     UPS_HID_Service* upsHidService;         // UPS HID服务
     MQTTService* mqttService;
+    XiaomiSensorBridge* xiaomiBridge;       // 小米传感器桥接
     
     // =============================================================================
     // 核心状态管理
@@ -306,6 +312,12 @@ private:
 
     // BMS 运输模式处理（成员函数）
     void handleBmsShipModeRequest();
+
+    // BMS 重置电池数据请求事件回调
+    static void onBmsResetBatteryData(EventType type, void* param);
+
+    // BMS 重置电池数据处理（成员函数）
+    void handleBmsResetBatteryData();
 
     // 充电事件回调
     static void onChargeStarted(EventType type, void* param);

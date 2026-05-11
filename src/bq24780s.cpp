@@ -20,19 +20,34 @@ BQ24780S::BQ24780S(I2CInterface* i2c)
 // Public Methods
 // =============================================================================
 
-bool BQ24780S::begin() {    
+bool BQ24780S::begin() {
     if (i2c == nullptr) {
         Serial.println(F("BQ24780S: I2C interface not available"));
         return false;
     }
-    
+
     // 检查设备是否连接
     if (!isConnected()) {
         Serial.println(F("BQ24780S: Device not connected"));
         return false;
     }
-    
+
     initialized_ = true;
+
+    // 读取 DeviceID 检测芯片型号
+    uint16_t device_id = 0;
+    if (readRegister(0xFF, &device_id)) {
+        if (device_id == 0x38) {
+            chip_variant_ = BQ24780SConst::ChipVariant::BQ24800;
+            Serial.println(F("BQ24780S: Detected BQ24800 (DeviceID=0x38)"));
+        } else {
+            chip_variant_ = BQ24780SConst::ChipVariant::BQ24780S;
+            Serial.printf_P(PSTR("BQ24780S: Detected BQ24780S (DeviceID=0x%02X)\n"), device_id);
+        }
+    } else {
+        Serial.println(F("BQ24780S: Failed to read DeviceID, assuming BQ24780S"));
+    }
+
     //清除充电设置
     setChargeCurrent(0);
     setChargeVoltage(0);
@@ -307,30 +322,77 @@ bool BQ24780S::setHybridPowerBoost(bool enable) {
     if (!initialized_) {
         return false;
     }
-    
+
     uint16_t reg_value;
     // 读取 CHARGE_OPTION3 (0x37)
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION3, &reg_value)) {
         Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION3 for hybrid boost"));
         return false;
     }
-    
+
     // 修改 Bit 2 (EN_BOOST): 0=Disable, 1=Enable
     if (enable) {
         reg_value |= 0x0004;   // Set bit 2
     } else {
         reg_value &= ~0x0004;  // Clear bit 2
     }
-    
+
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION3, reg_value);
-    if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Hybrid power boost %s (bit2=%d)\n"),
-                      enable ? "enabled" : "disabled",
-                      (reg_value >> 2) & 0x01);
-    } else {
+    if (!result) {
         Serial.println(F("BQ24780S: Failed to set hybrid power boost"));
+        return false;
+    }
+
+    // BQ24800: 额外设置 ChargeOption2 (0x38) 的 EN_BATT_BOOST (bit6) 和 VBOOST (bit5)
+    if (chip_variant_ == BQ24780SConst::ChipVariant::BQ24800) {
+        uint16_t reg2_value;
+        if (readRegister(BQ24780SConst::Registers::CHARGE_OPTION2, &reg2_value)) {
+            if (enable) {
+                reg2_value |= (1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT);
+            } else {
+                reg2_value &= ~(1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT);
+            }
+            if (!writeRegister(BQ24780SConst::Registers::CHARGE_OPTION2, reg2_value)) {
+                Serial.println(F("BQ24800: Failed to set EN_BATT_BOOST"));
+            }
+        }
+    }
+
+    Serial.printf_P(PSTR("BQ24780S: Hybrid power boost %s\n"), enable ? "enabled" : "disabled");
+    return true;
+}
+
+bool BQ24780S::setVsysMin(uint16_t voltage_mV) {
+    if (!initialized_ || chip_variant_ != BQ24780SConst::ChipVariant::BQ24800) {
+        return false;
+    }
+
+    // 6-bit, bits [13:8], step 256mV
+    uint16_t reg_value = (voltage_mV / BQ24780SConst::Voltage::VSYS_MIN_STEP) & 0x3F;
+    reg_value <<= 8;
+
+    bool result = writeRegister(BQ24780SConst::Registers::VSYS_MIN, reg_value);
+    if (result) {
+        Serial.printf_P(PSTR("BQ24800: VsysMin set to %u mV\n"), voltage_mV);
+    } else {
+        Serial.println(F("BQ24800: Failed to set VsysMin"));
     }
     return result;
+}
+
+bool BQ24780S::getVsysMin(uint16_t* voltage_mV) {
+    if (!initialized_ || chip_variant_ != BQ24780SConst::ChipVariant::BQ24800 || voltage_mV == nullptr) {
+        return false;
+    }
+
+    uint16_t reg_value;
+    if (!readRegister(BQ24780SConst::Registers::VSYS_MIN, &reg_value)) {
+        return false;
+    }
+
+    uint16_t voltage_bits = (reg_value >> 8) & 0x3F;
+    *voltage_mV = voltage_bits * BQ24780SConst::Voltage::VSYS_MIN_STEP;
+    return true;
 }
 
 // =============================================================================
@@ -674,12 +736,39 @@ bool BQ24780S::debugReadChargeRegisters() {
         success = false;
     }
     
+    // CHARGE_OPTION2 (0x38) - EN_BATT_BOOST / VBOOST (BQ24800)
+    if (chip_variant_ == BQ24780SConst::ChipVariant::BQ24800) {
+        Serial.print(F("Reading CHARGE_OPTION2 (0x38): "));
+        if (readRegister(BQ24780SConst::Registers::CHARGE_OPTION2, &reg_value)) {
+            Serial.printf(F("0x%04X"), reg_value);
+            Serial.print(F("  -> EN_BATT_BOOST (Bit6): "));
+            Serial.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT)) ? F("1 (Enabled)") : F("0 (Disabled)"));
+            Serial.print(F("    VBOOST (Bit5): "));
+            Serial.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_VBOOST_BIT)) ? F("1 (VSYSMIN+2.3V)") : F("0 (VSYSMIN+1.5V)"));
+        } else {
+            Serial.println(F("FAILED"));
+            success = false;
+        }
+
+        // VSYS_MIN (0x3E)
+        Serial.print(F("Reading VSYS_MIN (0x3E): "));
+        if (readRegister(BQ24780SConst::Registers::VSYS_MIN, &reg_value)) {
+            Serial.printf(F("0x%04X"), reg_value);
+            uint16_t vsys_min_bits = (reg_value >> 8) & 0x3F;
+            uint16_t vsys_min_mV = vsys_min_bits * BQ24780SConst::Voltage::VSYS_MIN_STEP;
+            Serial.printf(F("  -> VsysMin: %u mV (%.3f V)\n"), vsys_min_mV, vsys_min_mV / 1000.0f);
+        } else {
+            Serial.println(F("FAILED"));
+            success = false;
+        }
+    }
+
     if (success) {
         Serial.println(F("=====================================================\n"));
     } else {
         Serial.println(F("===== Some registers failed to read =====\n"));
     }
-    
+
     return success;
 }
 
@@ -687,7 +776,7 @@ bool BQ24780S::readAllRegisters(uint16_t* values) {
     if (!initialized_ || values == nullptr) {
         return false;
     }
-    
+
     // 定义所有需要读取的寄存器地址
     const uint8_t registers[] = {
         BQ24780SConst::Registers::CHARGE_OPTION0,      // 0x12
@@ -702,14 +791,21 @@ bool BQ24780S::readAllRegisters(uint16_t* values) {
         BQ24780SConst::Registers::DISCHARGE_CURRENT,   // 0x39
         BQ24780SConst::Registers::INPUT_CURRENT        // 0x3F
     };
-    
+
     const int num_registers = sizeof(registers) / sizeof(registers[0]);
-    
+
     // 逐个读取寄存器
     for (int i = 0; i < num_registers; i++) {
         if (!readRegister(registers[i], &values[i])) {
             Serial.printf_P(PSTR("BQ24780S: Failed to read register 0x%02X\n"), registers[i]);
             return false;
+        }
+    }
+
+    // BQ24800: 额外读取 VsysMin (0x3E)
+    if (chip_variant_ == BQ24780SConst::ChipVariant::BQ24800) {
+        if (!readRegister(BQ24780SConst::Registers::VSYS_MIN, &values[11])) {
+            values[11] = 0;
         }
     }
     

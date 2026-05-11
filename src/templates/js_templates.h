@@ -42,7 +42,8 @@ ws.onclose=function(){document.getElementById('wsSt').className='ws-st fail';doc
 ws.onmessage=function(e){upd(JSON.parse(e.data))};
 }
 function badge(c,t){return'<span class="badge '+c+'">'+t+'</span>'}
-function renderCells(cs,max,min){var h='';for(var i=0;i<5;i++){var v=cs[i]||0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'</div></div>'}return h}
+function renderCells(cs,max,min,balCounts){var h='';for(var i=0;i<5;i++){var v=cs[i]||0;var bc=balCounts?balCounts[i]:0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'/'+bc+'</div></div>'}return h}
+function getBalancingCells(mask){if(!mask)return[];var cells=[];for(var i=0;i<5;i++){if(mask&(1<<i))cells.push('Cell'+(i+1))}return cells}
 function setStat(id,val,c){var e=$(id);e.textContent=val+' mV';e.className='stat-value'+c}
 // === 数据刷新 ===
 var $=function(id){return document.getElementById(id)}
@@ -59,10 +60,13 @@ $('battV').textContent=(b.voltage||0)+' mV';
 var ci=b.current||0;$('battI').textContent=ci+' mA';$('battI').className='vl'+(ci>0?' g':ci<0?' w':'');
 $('battT').textContent=(b.temperature||0).toFixed(1)+' °C';$('soh').textContent=(b.soh||0).toFixed(1)+' %';
 $('cycles').textContent=b.cycle_count||0;$('capR').textContent=(b.capacity_remaining||0)+' mAh';
-var cs=b.cell_voltages||[];$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0);
+var cs=b.cell_voltages||[],bcs=b.cell_balancing_count||[];$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs);
 $('cellMM').textContent=(b.cell_voltage_max||0)+'/'+(b.cell_voltage_min||0)+' mV';
 $('cellD').textContent=((b.cell_voltage_max||0)-(b.cell_voltage_min||0))+' mV';
-$('balSt').innerHTML=b.balancing_active?badge('g','均衡中'):badge('b','未激活');
+// 更新均衡状态显示
+if(b.balancing_active&&b.balance_mask){var balCells=getBalancingCells(b.balance_mask);$('balSt').innerHTML=badge('g','均衡中: '+balCells.join(','))}else{$('balSt').innerHTML=badge('b','未激活')}
+// 更新总均衡次数
+$('balTotal').textContent=b.balancing_events_total||0;
 $('acSt').innerHTML=p.ac_present?badge('g','在线'):badge('r','离线');
 $('inV').textContent=(p.input_voltage||0)+' mV';$('inI').textContent=(p.input_current||0)+' mA';
 $('outP').textContent=(p.output_power||0)+' W';
@@ -75,8 +79,11 @@ var bsc=b.soc||0,bb=$('b_soc_bar');$('b_soc').textContent=bsc.toFixed(1)+' %';bb
 $('b_soh').textContent=(b.soh||0).toFixed(1)+' %';$('b_v').textContent=(b.voltage||0)+' mV';
 var bci=b.current||0;$('b_i').textContent=bci+' mA';$('b_i').className='vl'+(bci>0?' g':bci<0?' w':'');
 $('b_t').textContent=(b.temperature||0).toFixed(1)+' °C';$('b_cyc').textContent=b.cycle_count||0;$('b_cap').textContent=(b.capacity_remaining||0)+' mAh';
-$('b_bal').innerHTML=b.balancing_active?badge('g','均衡中'):badge('b','未激活');$('b_fault').textContent=b.fault_type||0;$('b_mode').textContent=b.bms_mode||0;
-$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0);
+$('b_bal').innerHTML=b.balancing_active?badge('g','均衡中'):badge('b','未激活');
+// 更新BMS面板的总均衡次数
+$('b_bal_total').textContent=b.balancing_events_total||0;
+$('b_fault').textContent=b.fault_type||0;$('b_mode').textContent=b.bms_mode||0;
+var bcs2=b.cell_balancing_count||[];$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs2);
 setStat('b_max',b.cell_voltage_max||0,' g');setStat('b_min',b.cell_voltage_min||0,' r');setStat('b_avg',b.cell_voltage_avg||0,' b');
 setStat('b_dlt',(b.cell_voltage_max||0)-(b.cell_voltage_min||0),' w');
 // Power panel
@@ -88,24 +95,27 @@ $('p_ft').textContent=p.fault_type||0;$('p_ph').innerHTML=!p.prochot_status?badg
 $('updT').textContent='更新：'+new Date().toLocaleTimeString();
 // Tips
 var tips=d.tips||[];var tb=$('tipBar');
-if(tips.length>0){var th='';for(var ti=0;ti<tips.length;ti++){var t=tips[ti];th+='<div class="tip-item"><span class="tip-time">'+(t.msg||'')+'</span></div>'}tb.innerHTML='<div class="tip-list">'+th+'</div>';tb.classList.add('has-tips')}else{tb.innerHTML='';tb.classList.remove('has-tips')}
+if(tips.length>0){var th='';for(var ti=0;ti<tips.length;ti++){var t=tips[ti];th+='<div class="tip-item"><span class="tip-time">'+(t.msg||'')+'</span></div>'}tb.innerHTML='<div class="tip-list">'+th+'</div><button class="tip-close" onclick="clearTips()">&times;</button>';tb.classList.add('has-tips')}else{tb.innerHTML='';tb.classList.remove('has-tips')}
 // Regs
 var r2=p.bq24780s_registers||[],r7=b.bq76920_registers||[];
+var cv=p.chip_variant||0;
 var a2=['0x12','0x3B','0x38','0x37','0x3C','0x3D','0x3A','0x14','0x15','0x39','0x3F'];
 var n2=['CHARGE_OPTION0','CHARGE_OPTION1','CHARGE_OPTION2','CHARGE_OPTION3','PROCHOT_OPTION0','PROCHOT_OPTION1','PROCHOT_STATUS','CHARGE_CURRENT','CHARGE_VOLTAGE','DISCHARGE_CURRENT','INPUT_CURRENT'];
-var h2='';for(var i=0;i<11;i++){var v=r2[i]||0;h2+='<div class="card"><div class="card-t" style="font-size:13px">'+a2[i]+' '+n2[i]+'</div><div style="color:#1677ff;font-weight:700;font-size:16px">0x'+v.toString(16).toUpperCase().padStart(4,'0')+'</div>'+pB2(i,v)+'</div>'}
+if(cv===1){a2.push('0x3E');n2.push('VSYS_MIN')}
+var rc2=cv===1?12:11;
+var h2='';for(var i=0;i<rc2;i++){var v=r2[i]||0;h2+='<div class="card"><div class="card-t" style="font-size:13px">'+a2[i]+' '+n2[i]+'</div><div style="color:#1677ff;font-weight:700;font-size:16px">0x'+v.toString(16).toUpperCase().padStart(4,'0')+'</div>'+pB2(i,v,cv)+'</div>'}
 $('r24').innerHTML=h2;
 var a7=['0x00','0x01','0x04','0x05','0x06','0x07','0x08','0x09','0x0A','0x0B','0x50','0x51'];
 var n7=['SYS_STAT','CELLBAL1','SYS_CTRL1','SYS_CTRL2','PROTECT1','PROTECT2','PROTECT3','OV_TRIP','UV_TRIP','CC_CFG','GAIN_uV','OFFSET_mV'];
 var h7='';for(var i=0;i<12;i++){var v=r7[i]||0,bt='',hx='0x'+v.toString(16).toUpperCase().padStart(2,'0');for(var j=7;j>=0;j--)bt+=(v>>j&1);h7+='<div class="card"><div class="card-t" style="font-size:13px">'+a7[i]+' '+n7[i]+'</div><div style="color:#1677ff;font-weight:700;font-size:16px">'+hx+' <span style="color:#bbb;font-size:10px;font-family:monospace">'+bt+'</span></div>'+pB7(i,v,r7)+'</div>'}
 $('r76').innerHTML=h7;
 }
-function pB2(i,v){
+function pB2(i,v,cv){
 var r='',st='<div style="font-size:11px;',sb=st+'color:#888">',sc=st+'color:#52c41a;font-weight:600">';
 switch(i){
 case 0:r+=sc+'模式：'+(v>>15&1?'低功耗':'性能')+'</div>'+sb+'看门狗：'+['禁用','5s','88s','175s'][(v>>13)&3]+'</div>'+sb+'PWM: '+['600kHz','800kHz','1MHz','-'][(v>>8)&3]+'</div>'+sb+'LEARN: '+(v>>5&1?'使能':'禁用')+'</div>'+sb+'IADP 增益：'+(v>>4&1?'40x':'20x')+'</div>'+sb+'IDCHG 增益：'+(v>>3&1?'16x':'8x')+'</div>'+st+'color:#888">充电：'+(v&1?'抑制':'使能')+'</div>';break;
 case 1:r+=sb+'欠压阈值：'+['59.19%','62.65%','66.55%','70.97%'][(v>>14)&3]+'</div>'+sb+'IDCHG: '+(v>>11&1?'使能':'禁用')+'</div>'+sb+'PMON: '+(v>>10&1?'使能':'禁用')+'</div>';break;
-case 2:r+=sb+'外部 ILIM: '+(v>>7&1?'使能':'禁用')+'</div>';break;
+case 2:r+=sb+'外部 ILIM: '+(v>>7&1?'使能':'禁用')+'</div>';if(cv===1){r+=sb+'电池升压：'+(v>>6&1?'使能':'禁用')+'</div>'+sb+'升压电压：'+(v>>5&1?'VSYSMIN+2.3V':'VSYSMIN+1.5V')+'</div>'}break;
 case 3:r+=sb+'放电调节：'+(v>>15&1?'使能':'禁用')+'</div>'+sb+'ACOK 去抖：'+(v>>12&1?'1.3s':'150ms')+'</div>'+sb+'AC 存在：'+(v>>11&1?'是':'否')+'</div>';break;
 case 4:var ic=(v>>11)&31;r+=sb+'ICRIT: '+(ic>26?'溢出':(110+ic*5)+'%')+'</div>';break;
 case 5:r+=sb+'IDCHG 阈值：'+((v>>10)&63)*512+'mA</div>';break;
@@ -114,6 +124,7 @@ case 7:r+=sc+'充电电流：'+((v>>6)&127)*64+'mA</div>';break;
 case 8:r+=sc+'充电电压：'+((v>>4)&1023)*16+'mV</div>';break;
 case 9:r+=sc+'放电电流：'+((v>>9)&63)*512+'mA</div>';break;
 case 10:r+=sc+'输入电流：'+((v>>7)&63)*128+'mA</div>';break;
+case 11:r+=sc+'最小系统电压：'+((v>>8)&63)*256+'mV</div>'+sb+'(仅 BQ24800)</div>';break;
 }return r;}
 function pB7(i,v,r7){
 var r='',st='<div style="font-size:11px;margin-top:4px;',sb=st+'color:#888">',sg=st+'color:#52c41a">',sr=st+'color:#f5222d;font-weight:600">',sy=st+'color:#d48806;font-weight:600">',sw=st+'color:#d48806">';
@@ -161,9 +172,9 @@ function isWifiCfgChg(){return gVal('ws')!==iwCfg.ssid||gVal('wp')!==iwCfg.pass|
 
 function save(){
 var d={
-system:{wifi_ssid:gVal('ws'),wifi_pass:gVal('wp'),use_static_ip:$('ipMode').value==='static',static_ip:gVal('sip'),static_gateway:gVal('sgw'),static_subnet:gVal('ssn'),static_dns:gVal('sdns'),ntp_server:gVal('ntp'),buzzer_enabled:gChk('be'),volume_level:+gVal('vl'),led_brightness:+gVal('lb'),hid_enabled:gChk('hid_en'),hid_report_mode:+gVal('hid_mode'),mqtt_enabled:gChk('mqtt_en'),mqtt_broker:gVal('mqtt_brk'),mqtt_port:+gVal('mqtt_port'),mqtt_username:gVal('mqtt_usr'),mqtt_password:gVal('mqtt_pwd')},
+system:{wifi_ssid:gVal('ws'),wifi_pass:gVal('wp'),use_static_ip:$('ipMode').value==='static',static_ip:gVal('sip'),static_gateway:gVal('sgw'),static_subnet:gVal('ssn'),static_dns:gVal('sdns'),ntp_server:gVal('ntp'),buzzer_enabled:gChk('be'),volume_level:+gVal('vl'),led_brightness:+gVal('lb'),hid_enabled:gChk('hid_en'),hid_report_mode:+gVal('hid_mode'),mqtt_enabled:gChk('mqtt_en'),mqtt_broker:gVal('mqtt_brk'),mqtt_port:+gVal('mqtt_port'),mqtt_username:gVal('mqtt_usr'),mqtt_password:gVal('mqtt_pwd'),xiaomi_sensor_enabled:gChk('xiaomi_en')},
 bms:{cell_count:+gVal('bc'),nominal_capacity_mAh:+gVal('bn'),cell_ov_threshold:+gVal('bo'),cell_uv_threshold:+gVal('bu'),cell_ov_recover:+gVal('bor'),cell_uv_recover:+gVal('bur'),max_charge_current:+gVal('bmc'),max_discharge_current:+gVal('bmd'),short_circuit_threshold:+gVal('bsc'),temp_overheat_threshold:+gVal('both'),balancing_enabled:gChk('bbe'),balancing_voltage_diff:+gVal('bbd')},
-power:{max_charge_current:+gVal('pmc'),charge_voltage_limit:+gVal('pcv'),charge_soc_start:+gVal('pcs'),charge_soc_stop:+gVal('pcp'),max_discharge_current:+gVal('pmd'),discharge_soc_stop:+gVal('pds'),enable_hybrid_boost:gChk('phe'),over_current_threshold:+gVal('poc'),over_temp_threshold:+gVal('pot'),charge_temp_high_limit:+gVal('pth'),charge_temp_low_limit:+gVal('ptl'),charging_windows:cw,charging_window_count:cw.length}};
+power:{max_charge_current:+gVal('pmc'),charge_voltage_limit:+gVal('pcv'),charge_soc_start:+gVal('pcs'),charge_soc_stop:+gVal('pcp'),max_discharge_current:+gVal('pmd'),discharge_soc_stop:+gVal('pds'),enable_hybrid_boost:gChk('phe'),vsys_min_mV:+gVal('pvsm'),over_current_threshold:+gVal('poc'),over_temp_threshold:+gVal('pot'),charge_temp_high_limit:+gVal('pth'),charge_temp_low_limit:+gVal('ptl'),charging_windows:cw,charging_window_count:cw.length}};
 
 if(isWifiCfgChg()){alert('网络变动，保存成功。设备即将重启...');fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).catch(function(){});setTimeout(function(){location.href='/'},2e3)}else{fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(r){if(r.success){alert('保存成功'+(r.restart_required?'，设备即将重启':''));if(r.restart_required)setTimeout(function(){location.href='/'},2e3)}else{alert('保存失败：'+(r.message||'未知'))}}).catch(function(){alert('网络错误')})}
 }
@@ -185,8 +196,8 @@ xhr.onerror=function(){showOtaMsg('网络错误','er');$('upBtn').disabled=false
 xhr.send(fd);}
 
 // === 配置向导 (手机适配) ===
-var wzCurStep=0,wzTotalSteps=6;
-var wzData={wifi:{ssid:'',pass:''},network:{mode:'dhcp',ip:'',gateway:'',subnet:'',dns:'',ntp:'ntp.aliyun.com'},battery:{cells:4,capacity:2000,chargeCur:1000,dischargeCur:2000,ovThresh:4200,uvThresh:3000,balancing:true},hardware:{buzzer:true,volume:70,brightness:80,hid:true,hidMode:0},mqtt:{enabled:false,broker:'',port:1883,user:'',pass:''}};
+var wzCurStep=0,wzTotalSteps=5;
+var wzData={wifi:{ssid:'',pass:''},network:{mode:'dhcp',ip:'',gateway:'',subnet:'',dns:'',ntp:'ntp.aliyun.com'},battery:{cells:3,capacity:2000,chargeCur:2000,dischargeCur:12000,ovThresh:4210,uvThresh:3000,balancing:true},hardware:{buzzer:true,volume:70,brightness:80,hid:true,hidMode:0}};
 
 function wzShowStep(n){
 wzCurStep=n;
@@ -204,15 +215,14 @@ if(n===0){var ss=$('wz-wifi-ssid').value.trim();if(!ss){alert('请输入 WiFi �
 if(n===1){wzData.network.mode=wzGetVal('wz-ip-mode');wzData.network.ntp=wzGetVal('wz-ntp-server');if(wzData.network.mode==='static'){var ip=wzGetVal('wz-static-ip-addr');if(!ip){alert('请输入静态 IP');return false}wzData.network={ip:ip,gateway:wzGetVal('wz-static-gateway'),subnet:wzGetVal('wz-static-subnet'),dns:wzGetVal('wz-static-dns'),ntp:wzData.network.ntp}}}
 if(n===2){var cap=+$('wz-capacity').value;if(!cap||cap<100){alert('请输入有效的电池容量');return false}var ov=+$('wz-ov-threshold').value||4200,uv=+$('wz-uv-threshold').value||3000;if(ov<4000||ov>4500){alert('过压阈值必须在 4000-4500mV 之间');return false}if(uv<2500||uv>3500){alert('欠压阈值必须在 2500-3500mV 之间');return false}wzData.battery={cells:+$('wz-cell-count').value,capacity:cap,chargeCur:+$('wz-charge-current').value||1000,dischargeCur:+$('wz-discharge-current').value||2000,ovThresh:ov,uvThresh:uv,balancing:$('wz-balancing').checked}}
 if(n===3){wzData.hardware={buzzer:$('wz-buzzer').checked,volume:+$('wz-volume').value,brightness:+$('wz-brightness').value,hid:$('wz-hid').checked,hidMode:+$('wz-hid-mode').value}}
-if(n===4){var mqttEn=$('wz-mqtt-en').checked;wzData.mqtt={enabled:mqttEn};if(mqttEn){var broker=$('wz-mqtt-broker').value.trim();if(!broker){alert('请输入 MQTT Broker 地址');return false}wzData.mqtt={enabled:true,broker:broker,port:+$('wz-mqtt-port').value||1883,user:$('wz-mqtt-user').value,pass:$('wz-mqtt-pass').value}}}
 return true;
 }
 function wzToggleIP(){var d=$('wz-static-ip');d.style.display=$('wz-ip-mode').value==='static'?'block':'none'}
 function wzSaveAll(){
 var doc={
-system:{wifi_ssid:wzData.wifi.ssid,wifi_pass:wzData.wifi.pass,use_static_ip:wzData.network.mode==='static',static_ip:wzData.network.ip||'',static_gateway:wzData.network.gateway||'',static_subnet:wzData.network.subnet||'',static_dns:wzData.network.dns||'',ntp_server:wzData.network.ntp,buzzer_enabled:wzData.hardware.buzzer,volume_level:wzData.hardware.volume,led_brightness:wzData.hardware.brightness,hid_enabled:wzData.hardware.hid,hid_report_mode:wzData.hardware.hidMode,mqtt_enabled:wzData.mqtt.enabled,mqtt_broker:wzData.mqtt.broker||'',mqtt_port:wzData.mqtt.port||1883,mqtt_username:wzData.mqtt.user||'',mqtt_password:wzData.mqtt.pass||''},
-bms:{cell_count:wzData.battery.cells,nominal_capacity_mAh:wzData.battery.capacity,max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur,cell_ov_threshold:wzData.battery.ovThresh,cell_uv_threshold:wzData.battery.uvThresh,cell_ov_recover:wzData.battery.ovThresh-100,cell_uv_recover:wzData.battery.uvThresh+100,short_circuit_threshold:30000,temp_overheat_threshold:65,balancing_enabled:wzData.battery.balancing,balancing_voltage_diff:20},
-power:{max_charge_current:wzData.battery.chargeCur,charge_voltage_limit:wzData.battery.cells==3?12600:wzData.battery.cells==4?16800:21000,charge_soc_start:20,charge_soc_stop:90,max_discharge_current:wzData.battery.dischargeCur,discharge_soc_stop:10,enable_hybrid_boost:false,over_current_threshold:20000,over_temp_threshold:60,charge_temp_high_limit:55,charge_temp_low_limit:5,charging_windows:[],charging_window_count:0}};
+system:{wifi_ssid:wzData.wifi.ssid,wifi_pass:wzData.wifi.pass,use_static_ip:wzData.network.mode==='static',static_ip:wzData.network.ip||'',static_gateway:wzData.network.gateway||'',static_subnet:wzData.network.subnet||'',static_dns:wzData.network.dns||'',ntp_server:wzData.network.ntp,buzzer_enabled:wzData.hardware.buzzer,volume_level:wzData.hardware.volume,led_brightness:wzData.hardware.brightness,hid_enabled:wzData.hardware.hid,hid_report_mode:wzData.hardware.hidMode},
+bms:{cell_count:wzData.battery.cells,nominal_capacity_mAh:wzData.battery.capacity,max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur,cell_ov_threshold:wzData.battery.ovThresh,cell_uv_threshold:wzData.battery.uvThresh,balancing_enabled:wzData.battery.balancing},
+power:{max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur}};
 var r=new XMLHttpRequest();r.open('POST','/save',true);r.setRequestHeader('Content-Type','application/json');r.timeout=15000;
 r.onload=function(){try{var j=JSON.parse(r.responseText);if(j.success){$('wz-nav').style.display='none';startRebootCountdown()}else{alert('保存失败：'+(j.message||'未知'))}}catch(e){startRebootCountdown()}};
 r.onerror=r.ontimeout=function(){startRebootCountdown()};
@@ -220,8 +230,14 @@ r.send(JSON.stringify(doc));
 }
 function startRebootCountdown(){var c=5,el=$('wz-reboot-count');var t=setInterval(function(){c--;el.textContent=c;if(c<=0){clearInterval(t);el.textContent='重启中...';setTimeout(function(){location.href='/'},3e3)}},1e3)}
 
+// === 清除提示 ===
+function clearTips(){var x=new XMLHttpRequest();x.open('POST','/api/clear-tips',true);x.setRequestHeader('Content-Type','application/json');x.timeout=3e3;x.send('')}
+
 // === 运输模式 ===
 function enterShipMode(){if(!confirm('一旦进入此模式，需要点按对应的硬件开关才能启用电池\n\n确定要进入运输模式吗？'))return;var x=new XMLHttpRequest();x.open('POST','/bms/shipmode',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){alert('已进入运输模式！\n\nBMS 芯片已进入睡眠模式，需要点按硬件开关才能重新启用电池。')}else{alert('操作失败：'+(j.message||'未知错误'))}}catch(e){alert('已进入运输模式')}}else{alert('请求失败：HTTP '+x.status)}};x.onerror=function(){alert('网络错误，请检查连接')};x.ontimeout=function(){alert('请求超时')};x.send('')}
+
+// === 电池数据重置 ===
+function resetBatteryData(){if(!confirm('确定要重置电池数据吗？\n\n此操作将重置以下数据：\n- 电池健康度 (SOH) → 100%\n- 循环次数 → 0\n- 均衡统计数据 → 0\n- 库仑计累积值\n- SOH 学习数据\n\n重置后系统将从开路电压重新初始化 SOC。'))return;$('resetBmsStatus').style.color='#1677ff';$('resetBmsStatus').textContent='处理中...';var x=new XMLHttpRequest();x.open('POST','/bms/reset-data',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent='重置成功！'}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='失败：'+(j.message||'未知')}}catch(e){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent='重置成功！'}}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='请求失败：HTTP '+x.status}};x.onerror=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='网络错误'};x.ontimeout=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='请求超时'};x.send('')}
 
 // === ADC 校准系数 ===
 var calPins=[{name:'BQ24780S_IADP',desc:'输入电流检测',pin:1},{name:'BQ24780S_IDCHG',desc:'放电电流检测',pin:2},{name:'BQ24780S_PMON',desc:'系统功率监测',pin:9},{name:'INPUT_VOLTAGE',desc:'输入电压',pin:4},{name:'BATTERY_VOLTAGE',desc:'电池电压',pin:5},{name:'BOARD_TEMP',desc:'主板温度 (NTC)',pin:7},{name:'ENVIRONMENT_TEMP',desc:'环境温度 (NTC)',pin:8}];

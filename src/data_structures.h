@@ -120,11 +120,13 @@ typedef struct {
     uint8_t bq24780s_status;        // 状态寄存器值
     bool prochot_status;            // PROCHOT#引脚状态
     bool tbstat_status;             // TB_STAT#引脚状态
+    uint8_t chip_variant;           // 芯片型号 (0=BQ24780S, 1=BQ24800)
     
-    // BQ24780S 寄存器原始值
-    uint16_t bq24780s_registers[11]; // [0]CHARGE_OPTION0 [1]CHARGE_OPTION1 [2]CHARGE_OPTION2 [3]CHARGE_OPTION3
+    // BQ24780S/BQ24800 寄存器原始值
+    uint16_t bq24780s_registers[12]; // [0]CHARGE_OPTION0 [1]CHARGE_OPTION1 [2]CHARGE_OPTION2 [3]CHARGE_OPTION3
                                      // [4]PROCHOT_OPTION0 [5]PROCHOT_OPTION1 [6]PROCHOT_STATUS
                                      // [7]CHARGE_CURRENT [8]CHARGE_VOLTAGE [9]DISCHARGE_CURRENT [10]INPUT_CURRENT
+                                     // [11]VSYS_MIN (BQ24800 only, 0x3E)
     
     uint32_t last_update_time;      // 最后更新时间戳 (ms)
 } Power_State;
@@ -220,6 +222,8 @@ struct Configuration {
     uint16_t mqtt_port;             // MQTT 端口 (1883/8883)
     char mqtt_username[64];         // MQTT 用户名
     char mqtt_password[64];         // MQTT 密码
+
+    bool xiaomi_sensor_enabled;    // 小米传感器桥接使能 (仅新板)
 };
 
 #endif // DATA_STRUCTURES_H

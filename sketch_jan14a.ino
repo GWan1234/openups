@@ -22,6 +22,7 @@
 #include "src/time_utils.h"
 #include "src/ups_hid_service.h"
 #include "src/mqtt_service.h"
+#include "src/XiaomiSensorBridge.h"
 
 // =============================================================================
 // OTA 固件特征标签
@@ -47,6 +48,7 @@ BMS_Config_t* bmsConfig = nullptr;
 Power_Config_t* powerConfig = nullptr;
 
 bool g_force_factory_reset = false;
+bool g_is_new_board = false;
 UPS_HID_Service* upsHidService = nullptr;
 MQTTService* mqttService = nullptr;
 
@@ -56,7 +58,7 @@ MQTTService* mqttService = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.1";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.2";
   strcpy(FIRMWARE_ID_TAG, version);
   Serial.println(F("Checking for factory reset button..."));
   
@@ -86,6 +88,18 @@ bool checkFactoryReset() {
   
   Serial.println(F("Normal Boot"));
   return false;
+}
+
+// 板型检测: GPIO47新板有硬件上拉，旧板浮空
+bool detectBoardRevision() {
+    pinMode(XIAOMI_SDA_PIN, INPUT_PULLDOWN);
+    delay(10);
+    bool pinState = digitalRead(XIAOMI_SDA_PIN);
+    pinMode(XIAOMI_SDA_PIN, INPUT);
+    Serial.printf_P(PSTR("Board: GPIO47=%s -> %s board\n"),
+                   pinState ? "HIGH" : "LOW",
+                   pinState ? "NEW" : "OLD");
+    return pinState;
 }
 
 template<typename T>
@@ -127,7 +141,7 @@ bool initializeSystemModules() {
   
   // Step 2: HardwareInterface
   Serial.println(F("Step 2: Initializing HardwareInterface..."));
-  hardware = new HardwareInterface(*systemConfig);
+  hardware = new HardwareInterface(*systemConfig, !g_is_new_board);
   if (!initModule(hardware, "HardwareInterface")) {
     delete hardware;
     hardware = nullptr;
@@ -196,16 +210,31 @@ bool initializeSystemModules() {
     upsHidService = nullptr;
   }
   delay(1);
-  
+
+  // Step 5.5: Xiaomi Sensor Bridge (仅新板, 条件创建, 延迟启动)
+  XiaomiSensorBridge* xiaomiBridge = nullptr;
+  if (g_is_new_board && systemConfig->xiaomi_sensor_enabled) {
+      Serial.println(F("Step 5.5: Xiaomi Sensor Bridge (will start delayed)..."));
+      xiaomiBridge = new XiaomiSensorBridge();
+      xiaomiBridge->setConfig(systemConfig);
+  } else {
+      if (!g_is_new_board) {
+          Serial.println(F("Xiaomi Sensor Bridge: skipped (old board)"));
+      } else {
+          Serial.println(F("Xiaomi Sensor Bridge: disabled in config"));
+      }
+  }
+  delay(1);
+
   // Step 6: SystemManagement
   Serial.println(F("Step 6: Initializing SystemManagement..."));
   // MQTT Service initialization (conditional based on config)
   if (systemConfig->mqtt_broker[0] != 0 && systemConfig->mqtt_port > 0) {
     mqttService = new MQTTService();
   }
-  
+
   // SystemManagement with optional MQTT service
-  systemManager = new SystemManagement(*hardware, bms, powerManagement, configManager, upsHidService, mqttService);
+  systemManager = new SystemManagement(*hardware, bms, powerManagement, configManager, upsHidService, mqttService, xiaomiBridge);
   if (!systemManager->initialize()) {
     Serial.println(F("ERROR: Failed to initialize SystemManagement"));
     delete systemManager;
@@ -237,10 +266,11 @@ void setup() {
   Serial.begin(115200);
 
   g_force_factory_reset = checkFactoryReset();
-  
+  g_is_new_board = detectBoardRevision();
+
   Serial.println(F("=== UPS Control System Starting ==="));
   Serial.printf_P(PSTR("Build: %s %s\n"), __DATE__, __TIME__);
-  
+
   if (!initializeSystemModules()) {
     Serial.println(F("FATAL Error: System initialization failed"));
     Serial.println(F("System will restart automatically..."));
@@ -288,6 +318,6 @@ void loop() {
     webServer->notifyClients();
     lastWebNotify = millis();
   }
-  
+
   delay(10);
 }
