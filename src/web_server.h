@@ -60,6 +60,9 @@ public:
     // Clear tips handler
     void handleClearTips(AsyncWebServerRequest* request);
 
+    // Restart device handler
+    void handleRestart(AsyncWebServerRequest* request);
+
     // ADC Calibration API handlers
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);

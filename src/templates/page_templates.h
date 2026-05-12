@@ -30,11 +30,14 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="tip-bar" id="tipBar"></div>
 <div class="main-wrap">
 <div class="side">
+<div class="side-nav">
 <div class="si active" onclick="show('status',this)">状态概览</div>
 <div class="si" onclick="show('bms',this)">BMS 状态</div>
 <div class="si" onclick="show('power',this)">电源状态</div>
 <div class="si" onclick="show('config',this)">系统配置</div>
 <div class="si" onclick="show('ota',this)">固件升级</div>
+</div>
+<div class="side-restart" onclick="restartDevice()">重启设备</div>
 </div>
 <div class="ct">
 <!-- ===== 面板：状态概览 ===== -->
@@ -173,7 +176,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="fg"><label>电量模式:</label><select id="hid_mode"><option value="0"%HID_MODE_MAH%>毫安时 (mAh)</option><option value="1"%HID_MODE_MWH%>毫瓦时 (mWh)</option><option value="2"%HID_MODE_PCT%>百分比 (%)（linux 选这个）</option></select></div>
 </fieldset>
 <fieldset class="fs">
-<legend class="lg">MQTT 配置</legend>
+<legend class="lg">MQTT 配置（需要重启后生效）</legend>
 <div class="fg"><label>MQTT 服务:</label><label class="cl"><input type="checkbox" id="mqtt_en" %MQTT_CHECKED%><span style="margin-left:8px">启用</span></label></div>
 <div class="fg"><label>Broker 地址:</label><input type="text" id="mqtt_brk" value="%MQTT_BROKER%" placeholder="192.168.1.100"></div>
 <div class="fg"><label>端口:</label><input type="number" id="mqtt_port" value="%MQTT_PORT%" min="1" max="65535" placeholder="1883"><span class="u">端口</span></div>

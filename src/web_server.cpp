@@ -117,6 +117,11 @@ void WebServer::setupHttpRoutes() {
   server.on("/api/clear-tips", HTTP_POST, [this](AsyncWebServerRequest* request) {
     this->handleClearTips(request);
   });
+
+  // Restart device endpoint
+  server.on("/api/restart", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    this->handleRestart(request);
+  });
   
   // ADC Calibration API - GET
   server.on("/api/calibration", HTTP_GET, [this](AsyncWebServerRequest* request) {
@@ -1365,6 +1370,34 @@ void WebServer::handleClearTips(AsyncWebServerRequest* request) {
     notifyClients();
   }
   request->send(200, "application/json", "{\"success\":true}");
+}
+
+void WebServer::handleRestart(AsyncWebServerRequest* request) {
+  if (systemManager == nullptr) {
+    sendErrorResponse(request, "Config mode", 503);
+    return;
+  }
+
+  const System_Global_State& state = systemManager->getGlobalState();
+  if (state.power_mode != POWER_MODE_AC) {
+    sendErrorResponse(request, "AC power required for restart", 403);
+    return;
+  }
+
+  StaticJsonDocument<128> doc;
+  doc["success"] = true;
+  doc["message"] = "Device will reboot in 2 seconds";
+  String response;
+  serializeJson(doc, response);
+  request->send(200, "application/json", response);
+
+  Serial.println(F("Restart requested via web API. Rebooting in 2 seconds..."));
+
+  static Ticker restartTicker;
+  restartTicker.once(2, []() {
+    Serial.println(F("Rebooting now..."));
+    ESP.restart();
+  });
 }
 
 // =============================================================================

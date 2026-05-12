@@ -820,15 +820,15 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
         if (current_ok) {
             float delta_soc = abs(current_soc - soh_learning_ctx_.soc_start);
             
-            // SOC变化≥3%即可计算
-            if (delta_soc >= 3.0f) {
+            // SOC变化≥20%才计算（低门限下库仑计误差主导，无意义）
+            if (delta_soc >= 20.0f) {
                 float delta_ah_raw = abs(cc_accumulated_raw_mAh_ - soh_learning_ctx_.ah_start);
-                
+
                 if (delta_soc > 0.1f && delta_ah_raw > 10.0f) {
                     float q_actual = delta_ah_raw / (delta_soc / 100.0f);
                     float soh_calc = (q_actual / q_nominal) * 100.0f;
-                    
-                    float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
+
+                    float soh_new = 0.95f * stats_.soh + 0.05f * soh_calc;
                     soh_new = constrain(soh_new, 40.0f, 100.0f);
                     
                     Serial.printf_P(PSTR("BMS: SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
@@ -943,17 +943,39 @@ void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
     if (bmsState.current > cutoff_current) {
         // 正在充电
         if (!charge_soh_tracking_) {
-            // 充电刚开始，记录起点
+            // 充电刚开始，记录起点，重置CC累积（排除放电阶段的零漂累积）
             charge_soh_tracking_ = true;
             charge_soc_start_ = bmsState.soc;
-            charge_cc_raw_start_ = cc_accumulated_raw_mAh_;
+            cc_accumulated_raw_mAh_ = 0.0f;
+            charge_cc_raw_start_ = 0.0f;
             Serial.printf_P(PSTR("BMS: Charge SOH tracking started at SOC=%.1f%%\n"), charge_soc_start_);
         }
     } else if (bmsState.current <= 0) {
-        // 未在充电，取消跟踪（除非已到满充锚定，由detectFullChargeCalibration处理）
+        // 充电停止：完成SOH计算（不再依赖满充）
         if (charge_soh_tracking_) {
+            float delta_ah_raw = cc_accumulated_raw_mAh_ - charge_cc_raw_start_;
+            float delta_soc = bmsState.soc - charge_soc_start_;
+            float q_nominal = (float)config_.nominal_capacity_mAh;
+
+            if (delta_soc >= 20.0f && delta_ah_raw > 10.0f) {
+                float q_actual = delta_ah_raw / (delta_soc / 100.0f);
+                float soh_calc = (q_actual / q_nominal) * 100.0f;
+                float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
+                soh_new = constrain(soh_new, 40.0f, 100.0f);
+
+                Serial.printf_P(PSTR("BMS: Charge SOH learned (end): dSOC=%.1f%% dAh_raw=%.1f "
+                    "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
+                    delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
+
+                stats_.soh = soh_new;
+                bmsState.soh = stats_.soh;
+                saveToStorage();
+            } else {
+                Serial.printf_P(PSTR("BMS: Charge SOH skipped (dSOC=%.1f%%, dAh=%.1f)\n"),
+                    delta_soc, delta_ah_raw);
+            }
+
             charge_soh_tracking_ = false;
-            Serial.println(F("BMS: Charge SOH tracking cancelled (charging stopped)"));
         }
     }
 }

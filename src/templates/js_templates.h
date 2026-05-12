@@ -8,6 +8,7 @@
 // =============================================================================
 const char SPA_PAGE_JS[] PROGMEM = R"rawliteral(
 var ws,rc=0;
+var curPowerMode=-1;
 var iwCfg={ssid:'',pass:'',ipMode:'dhcp',staticIp:'',staticGateway:'',staticSubnet:'',staticDns:''};
 document.addEventListener('DOMContentLoaded',function(){iwCfg={ssid:$('ws').value,pass:$('wp').value,ipMode:$('ipMode').value,staticIp:$('sip').value,staticGateway:$('sgw').value,staticSubnet:$('ssn').value,staticDns:$('sdns').value}});
 
@@ -50,6 +51,7 @@ var $=function(id){return document.getElementById(id)}
 function upd(d){
 if(d.status==='config_mode'){$('hSt').textContent='配置模式';return}
 var b=d.bms||{},p=d.power||{},s=d.system||{};
+curPowerMode=d.power_mode;
 $('uptime').textContent='运行：'+fmtUp(s.uptime||0);
 $('wifi').textContent=s.wifi_ssid||'--';
 $('rssi').textContent=(s.wifi_rssi||0)+' dBm';
@@ -238,6 +240,16 @@ function enterShipMode(){if(!confirm('一旦进入此模式，需要点按对应
 
 // === 电池数据重置 ===
 function resetBatteryData(){if(!confirm('确定要重置电池数据吗？\n\n此操作将重置以下数据：\n- 电池健康度 (SOH) → 100%\n- 循环次数 → 0\n- 均衡统计数据 → 0\n- 库仑计累积值\n- SOH 学习数据\n\n重置后系统将从开路电压重新初始化 SOC。'))return;$('resetBmsStatus').style.color='#1677ff';$('resetBmsStatus').textContent='处理中...';var x=new XMLHttpRequest();x.open('POST','/bms/reset-data',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent='重置成功！'}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='失败：'+(j.message||'未知')}}catch(e){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent='重置成功！'}}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='请求失败：HTTP '+x.status}};x.onerror=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='网络错误'};x.ontimeout=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='请求超时'};x.send('')}
+
+// === 重启设备 ===
+function restartDevice(){
+if(curPowerMode!==0){alert('当前非 AC 供电模式，无法重启设备。\n\n请连接电源适配器后再尝试重启。');return}
+if(!confirm('确定要重启设备吗？\n\n设备将在重启后短暂离线。'))return;
+var x=new XMLHttpRequest();x.open('POST','/api/restart',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;
+x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){alert('设备即将重启，请等待几秒后刷新页面。')}else{alert('重启失败：'+(j.message||'未知错误'))}}catch(e){alert('设备即将重启，请等待几秒后刷新页面。')}}else if(x.status===403){alert('当前非 AC 供电模式，无法重启设备。\n\n请连接电源适配器后再尝试重启。')}else{alert('请求失败：HTTP '+x.status)}};
+x.onerror=function(){alert('网络错误，请检查连接')};
+x.ontimeout=function(){alert('请求超时')};
+x.send('')}
 
 // === ADC 校准系数 ===
 var calPins=[{name:'BQ24780S_IADP',desc:'输入电流检测',pin:1},{name:'BQ24780S_IDCHG',desc:'放电电流检测',pin:2},{name:'BQ24780S_PMON',desc:'系统功率监测',pin:9},{name:'INPUT_VOLTAGE',desc:'输入电压',pin:4},{name:'BATTERY_VOLTAGE',desc:'电池电压',pin:5},{name:'BOARD_TEMP',desc:'主板温度 (NTC)',pin:7},{name:'ENVIRONMENT_TEMP',desc:'环境温度 (NTC)',pin:8}];

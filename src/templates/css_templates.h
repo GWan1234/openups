@@ -29,7 +29,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text'
 .main-wrap{display:flex;flex:1;overflow:hidden}
 
 /* macOS 风格侧边栏 */
-.side{width:200px;background:rgba(251,251,253,0.82);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-right:1px solid rgba(0,0,0,0.08);padding:8px 0;overflow-y:auto;flex-shrink:0}
+.side{width:200px;background:rgba(251,251,253,0.82);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-right:1px solid rgba(0,0,0,0.08);padding:8px 0;overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column}
+.side-nav{flex:1}
+.side-restart{margin:8px 12px 12px;padding:8px 12px;text-align:center;font-size:13px;color:#ff3b30;cursor:pointer;border-radius:8px;border:1px solid rgba(255,59,48,0.2);background:rgba(255,59,48,0.05);transition:all .2s ease;font-weight:500}
+.side-restart:hover{background:rgba(255,59,48,0.12);border-color:rgba(255,59,48,0.4)}
 .si{padding:10px 20px;cursor:pointer;font-size:13px;color:#1d1d1f;border-left:3px solid transparent;transition:all .2s ease;font-weight:500}
 .si:hover{background:rgba(0,0,0,0.04)}
 .si.active{background:rgba(0,122,255,0.08);color:#007AFF;border-left-color:#007AFF;font-weight:600}
