@@ -4,6 +4,7 @@
 #include "event_bus.h"
 #include "time_utils.h"
 #include <time.h>
+#include "debug.h"
 
 extern PowerManagement* powerManagement; 
 PowerManagement::PowerManagement(const Power_Config_t& config, HardwareInterface& hardware)
@@ -98,14 +99,14 @@ Power_Config_t PowerManagement::getDefaultConfig() {
 }
 
 bool PowerManagement::begin() {
-    Serial.println(F("PowerManagement: Initializing..."));
+    DBG.println(F("PowerManagement: Initializing..."));
     
     // 初始化 BQ24780S - 失败时不阻止系统运行
     if (!bq24780s_.begin()) {
-        Serial.println(F("PowerManagement: WARNING - Failed to initialize BQ24780S"));
+        DBG.println(F("PowerManagement: WARNING - Failed to initialize BQ24780S"));
         available_ = false;
     } else {
-        Serial.println(F("PowerManagement: BQ24780S initialized successfully"));
+        DBG.println(F("PowerManagement: BQ24780S initialized successfully"));
         available_ = true;
         
         // 应用电源配置中的 BQ24780S 硬件配置
@@ -122,17 +123,17 @@ bool PowerManagement::begin() {
         hw_config.discharge_current_max = config_.max_discharge_current; // 最大放电电流 (mA)
         
         if (bq24780s_.applyHardwareConfig(hw_config)) {
-            Serial.println(F("PowerManagement: BQ24780S hardware configuration applied"));
+            DBG.println(F("PowerManagement: BQ24780S hardware configuration applied"));
         } else {
-            Serial.println(F("PowerManagement: WARNING - Failed to apply BQ24780S config"));
+            DBG.println(F("PowerManagement: WARNING - Failed to apply BQ24780S config"));
         }
 
         // BQ24800: 设置最小系统电压
         if (bq24780s_.getChipVariant() == BQ24780SConst::ChipVariant::BQ24800) {
             if (bq24780s_.setVsysMin(config_.vsys_min_mV)) {
-                Serial.printf_P(PSTR("PowerManagement: VsysMin set to %u mV\n"), config_.vsys_min_mV);
+                DBG.printf_P(PSTR("PowerManagement: VsysMin set to %u mV\n"), config_.vsys_min_mV);
             } else {
-                Serial.println(F("PowerManagement: WARNING - Failed to set VsysMin"));
+                DBG.println(F("PowerManagement: WARNING - Failed to set VsysMin"));
             }
         }
 
@@ -146,7 +147,7 @@ bool PowerManagement::begin() {
     // 记录启动时间，用于启动延迟
     startup_time_ = millis();
     
-    Serial.println(F("PowerManagement: Initialization complete"));
+    DBG.println(F("PowerManagement: Initialization complete"));
     return true;  // 总是返回 true，即使芯片不可用
 }
 
@@ -277,9 +278,9 @@ void PowerManagement::updateOperationalData(System_Global_State& globalState) {
 void PowerManagement::updateStatisticalData(System_Global_State& globalState) {
     // 更新一般统计数据（5s 级）
     if (hal_ != nullptr) {
-        globalState.power.input_voltage = hal_->readVoltage(INPUT_VOLTAGE_PIN, 10.0f);
+        globalState.power.input_voltage = hal_->readVoltage(INPUT_VOLTAGE_PIN, 10.1f);
         
-        globalState.power.battery_voltage = hal_->readVoltage(BATTERY_VOLTAGE_PIN, 10.0f);
+        globalState.power.battery_voltage = hal_->readVoltage(BATTERY_VOLTAGE_PIN, 10.1f);
 
         globalState.system.board_temperature = hal_->readBoardTemperature();
 
@@ -308,13 +309,13 @@ void PowerManagement::updateHistoricalData(System_Global_State& globalState) {
 
 bool PowerManagement::setChargingCurrent(uint16_t current_mA) {
     if (!initialized_ || !available_) {
-        Serial.println("PowerManagement: Not initialized or available");
+        DBG.println("PowerManagement: Not initialized or available");
         return false;
     }
     
     // 检查 AC 电源是否存在
     if (!ac_present_) {
-        Serial.println("PowerManagement: AC not present, charging aborted");
+        DBG.println("PowerManagement: AC not present, charging aborted");
         return false;
     }
     
@@ -323,19 +324,19 @@ bool PowerManagement::setChargingCurrent(uint16_t current_mA) {
         current_mA = config_.max_charge_current;
     }
     
-    Serial.printf_P(PSTR("PowerManagement: Starting charging with %d mA\n"), current_mA);
+    DBG.printf_P(PSTR("PowerManagement: Starting charging with %d mA\n"), current_mA);
     
     // 1. 启用 BQ24780S 充电功能
     bool result = bq24780s_.setCharging(true);
     if (!result) {
-        Serial.println("PowerManagement: Failed to enable charging");
+        DBG.println("PowerManagement: Failed to enable charging");
         return false;
     }
     
     // 2. 设置充电电压为配置最大值
     result = bq24780s_.setChargeVoltage(config_.charge_voltage_limit);
     if (!result) {
-        Serial.println("PowerManagement: Failed to set charge voltage");
+        DBG.println("PowerManagement: Failed to set charge voltage");
         bq24780s_.setCharging(false);
         return false;
     }
@@ -343,7 +344,7 @@ bool PowerManagement::setChargingCurrent(uint16_t current_mA) {
     // 3. 设置充电电流
     result = bq24780s_.setChargeCurrent(current_mA);
     if (!result) {
-        Serial.println("PowerManagement: Failed to set charge current");
+        DBG.println("PowerManagement: Failed to set charge current");
         bq24780s_.setCharging(false);
         return false;
     }
@@ -358,7 +359,7 @@ bool PowerManagement::setChargingCurrent(uint16_t current_mA) {
         hal_->setLED(CHARGING_LED_PIN, LED_MODE_ON);
     }
     
-    Serial.printf_P(PSTR("PowerManagement: Charging started - Voltage: %d mV, Current: %d mA\n"),
+    DBG.printf_P(PSTR("PowerManagement: Charging started - Voltage: %d mV, Current: %d mA\n"),
                   config_.charge_voltage_limit, current_mA);
 
     // 发布充电启动事件，将电流和电压打包为 uint32 传递
@@ -373,12 +374,12 @@ bool PowerManagement::stopCharging() {
         return false;
     }
     
-    Serial.println("PowerManagement: Stopping charging");
+    DBG.println("PowerManagement: Stopping charging");
     
     // 1. 禁用 BQ24780S 充电功能
     bool result = bq24780s_.setCharging(false);
     if (!result) {
-        Serial.println("PowerManagement: Failed to disable charging");
+        DBG.println("PowerManagement: Failed to disable charging");
         return false;
     }
     
@@ -395,7 +396,7 @@ bool PowerManagement::stopCharging() {
         hal_->setLED(CHARGING_LED_PIN, LED_MODE_OFF);
     }
     
-    Serial.println("PowerManagement: Charging stopped");
+    DBG.println("PowerManagement: Charging stopped");
 
     // 发布充电完成事件
     EventBus::getInstance().publish(EVT_PM_CHARGE_COMPLETE, nullptr);
@@ -415,7 +416,7 @@ bool PowerManagement::setDischargeCurrentLimit(uint16_t current_mA) {
     
     bool result = bq24780s_.setDischargeCurrentLimit(current_mA);
     if (result) {
-        Serial.printf_P(PSTR("PowerManagement: Discharge current limit set to %d mA\n"), current_mA);
+        DBG.printf_P(PSTR("PowerManagement: Discharge current limit set to %d mA\n"), current_mA);
     }
     return result;
 }
@@ -430,11 +431,11 @@ bool PowerManagement::setDischargeCurrentLimit(uint16_t current_mA) {
  *       采用异步模式：仅保存配置并标记待更新，在下一个 update 循环中执行硬件操作
  */
 bool PowerManagement::applyNewConfig(const Power_Config_t& config) {
-    Serial.println(F("[PowerMgr] Config update received"));
+    DBG.println(F("[PowerMgr] Config update received"));
     
     // 1. 验证新配置
     if (config.max_charge_current == 0 || config.max_discharge_current == 0) {
-        Serial.println(F("[PowerMgr] Invalid config: zero current limits"));
+        DBG.println(F("[PowerMgr] Invalid config: zero current limits"));
         return false;
     }
     
@@ -442,7 +443,7 @@ bool PowerManagement::applyNewConfig(const Power_Config_t& config) {
     pending_config_ = config;
     config_update_pending_ = true;
     
-    Serial.println(F("[PowerMgr] Configuration update marked, will apply in next update cycle"));
+    DBG.println(F("[PowerMgr] Configuration update marked, will apply in next update cycle"));
     return true;
 }
 
@@ -452,7 +453,7 @@ bool PowerManagement::applyNewConfig(const Power_Config_t& config) {
  * @note 此函数在 update() 中检测到 config_update_pending_ 时自动调用
  */
 void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
-    Serial.println(F("[PowerMgr] Applying pending configuration..."));
+    DBG.println(F("[PowerMgr] Applying pending configuration..."));
     
     // 1. 检查 BQ24780S 硬件配置是否发生变化
     bool hw_config_changed = 
@@ -461,7 +462,7 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
         (config_.enable_hybrid_boost != pending_config_.enable_hybrid_boost);
     
     if (hw_config_changed && available_) {
-        Serial.println(F("[PowerMgr] BQ24780S hardware config changed, applying..."));
+        DBG.println(F("[PowerMgr] BQ24780S hardware config changed, applying..."));
         
         BQ24780S::HardwareConfig hw_config;
         hw_config.iadp_gain = pending_config_.iadp_gain_setting;
@@ -474,9 +475,9 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
         hw_config.discharge_current_max = pending_config_.max_discharge_current;
         
         if (bq24780s_.applyHardwareConfig(hw_config)) {
-            Serial.println(F("[PowerMgr] BQ24780S hardware config updated successfully"));
+            DBG.println(F("[PowerMgr] BQ24780S hardware config updated successfully"));
         } else {
-            Serial.println(F("[PowerMgr] WARNING - Failed to update BQ24780S hardware config, will retry"));
+            DBG.println(F("[PowerMgr] WARNING - Failed to update BQ24780S hardware config, will retry"));
             // 注意：不清除标记，下次循环继续尝试
             return;
         }
@@ -489,11 +490,11 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
     // BQ24800: VsysMin 变更时应用
     if (available_ && bq24780s_.getChipVariant() == BQ24780SConst::ChipVariant::BQ24800) {
         if (!bq24780s_.setVsysMin(config_.vsys_min_mV)) {
-            Serial.println(F("[PowerMgr] WARNING - Failed to set VsysMin"));
+            DBG.println(F("[PowerMgr] WARNING - Failed to set VsysMin"));
         }
     }
 
-    Serial.println(F("[PowerMgr] Configuration applied successfully"));
+    DBG.println(F("[PowerMgr] Configuration applied successfully"));
     
     // 3. 如果当前处于充电激活状态，并且新的限制比当前低，立即应用
     if (globalState.power.charger_enabled && available_) {
@@ -501,7 +502,7 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
             last_charge_current_mA_ = config_.max_charge_current;
             adaptive_charge_current_ = config_.max_charge_current;
             
-            Serial.printf_P(PSTR("[PowerMgr] Adjusting charge current from %d to %d mA\n"),
+            DBG.printf_P(PSTR("[PowerMgr] Adjusting charge current from %d to %d mA\n"),
                            last_charge_current_mA_, config_.max_charge_current);
             
             setChargingCurrent(last_charge_current_mA_);
@@ -523,13 +524,13 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
             return;
         }
         startup_time_ = 0;
-        Serial.println(F("[ChargeRule] System startup delay completed"));
+        DBG.println(F("[ChargeRule] System startup delay completed"));
     }
 
     // 仅在 AC 存在时评估充电规则
     if (!ac_present_) {
         if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
-            Serial.println(F("[ChargeRule] AC disconnected, stopping charging"));
+            DBG.println(F("[ChargeRule] AC disconnected, stopping charging"));
             stopCharging();
             charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
             last_stop_time_ = millis();
@@ -555,7 +556,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
     // 检查 BMS 数据有效性
     if (!globalState.bms.is_connected) {
         if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
-            Serial.println(F("[ChargeRule] BMS disconnected while charging, stopping"));
+            DBG.println(F("[ChargeRule] BMS disconnected while charging, stopping"));
             if (stopCharging()) {
                 charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
                 last_stop_time_ = current_time;
@@ -582,7 +583,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         if (elapsed < COOLDOWN_TIME_MS) {
             return;
         }
-        Serial.println(F("[ChargeRule] Cooldown completed, transitioning to IDLE"));
+        DBG.println(F("[ChargeRule] Cooldown completed, transitioning to IDLE"));
         charge_mgmt_state_ = CHARGE_STATE_IDLE;
     }
 
@@ -607,7 +608,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
     if (current_soc >= config_.charge_soc_stop) {
         if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE ||
             (charge_mgmt_state_ == CHARGE_STATE_IDLE && globalState.power.charger_enabled)) {
-            Serial.printf_P(PSTR("[CR] SOC STOP: %.1f%% >= %.1f%%\n"),
+            DBG.printf_P(PSTR("[CR] SOC STOP: %.1f%% >= %.1f%%\n"),
                            current_soc, config_.charge_soc_stop);
             if (stopCharging()) {
                 charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
@@ -624,7 +625,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         if (!rtc_valid) {
             if (current_soc < RTC_INVALID_SOC_START) {
                 if (charge_mgmt_state_ == CHARGE_STATE_IDLE) {
-                    Serial.println(F("[ChargeRule] RTC invalid & SOC low, emergency charging started"));
+                    DBG.println(F("[ChargeRule] RTC invalid & SOC low, emergency charging started"));
                     uint16_t emergency_current = config_.max_charge_current / 2;
                     bool success = setChargingCurrent(emergency_current);
                     if (success) {
@@ -635,7 +636,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
                 return;
             } else if (current_soc >= RTC_INVALID_SOC_STOP) {
                 if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
-                    Serial.println(F("[ChargeRule] RTC invalid & SOC reached limit, emergency charging stopped"));
+                    DBG.println(F("[ChargeRule] RTC invalid & SOC reached limit, emergency charging stopped"));
                     stopCharging();
                     charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
                     last_stop_time_ = current_time;
@@ -676,7 +677,7 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
             return;
         }
 
-        Serial.printf_P(PSTR("[ChargeRule] All conditions met (SOC=%.1f%%, Temp=%.1f°C), starting charging\n"),
+        DBG.printf_P(PSTR("[ChargeRule] All conditions met (SOC=%.1f%%, Temp=%.1f°C), starting charging\n"),
                        current_soc, battery_temp);
 
         uint16_t charge_current = adaptive_charge_current_;
@@ -687,11 +688,11 @@ void PowerManagement::evaluateChargingRulesAndApply(System_Global_State& globalS
         bool success = setChargingCurrent(charge_current);
 
         if (success) {
-            Serial.printf_P(PSTR("[ChargeRule] Charging started with %d mA\n"), charge_current);
+            DBG.printf_P(PSTR("[ChargeRule] Charging started with %d mA\n"), charge_current);
             charge_mgmt_state_ = CHARGE_STATE_ACTIVE;
             adaptive_charge_current_ = charge_current;
         } else {
-            Serial.println(F("[ChargeRule] Failed to start charging"));
+            DBG.println(F("[ChargeRule] Failed to start charging"));
         }
 
         return;
@@ -834,13 +835,13 @@ void PowerManagement::updateFault(System_Global_State& globalState) {
                 // 其他故障（ACOK/BATPRES/Comparator）使用通用芯片错误
                 globalState.power.fault_type = POWER_FAULT_CHIP_ERROR;
             }
-            Serial.println(F("[PROCHOT] Status register read (auto-cleared by chip). Fault recorded, will auto-clear after 60s."));
+            DBG.println(F("[PROCHOT] Status register read (auto-cleared by chip). Fault recorded, will auto-clear after 60s."));
             
             // 记录清除时间戳，用于 60 秒后自动清除
             last_prochot_clear_time_ = millis();
         } else {
             // 没有真实故障位，仅为瞬态干扰
-            Serial.println(F("[PROCHOT] No real fault bits set, likely transient noise."));
+            DBG.println(F("[PROCHOT] No real fault bits set, likely transient noise."));
             // 清除 pending 标志，不记录故障
             prochot_pending_clear_ = false;
         }
@@ -849,7 +850,7 @@ void PowerManagement::updateFault(System_Global_State& globalState) {
     // ==================== 60 秒自动清除 ====================
     // 检查 60 秒超时，自动清除 globalState 中的故障
     if (prochot_pending_clear_ && (millis() - last_prochot_clear_time_ >= 60000UL)) {
-        Serial.println(F("[PROCHOT] 60s timeout reached, clearing fault from globalState."));
+        DBG.println(F("[PROCHOT] 60s timeout reached, clearing fault from globalState."));
         prochot_pending_clear_ = false;
         if (globalState.power.fault_type == POWER_FAULT_CHIP_ERROR) {
             globalState.power.fault_type = POWER_FAULT_NONE;
@@ -886,7 +887,7 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
     if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
         // 【终止条件 1】总时长限制检查
         if (charge_start_time_ > 0 && current_time - charge_start_time_ > config_.charge_timeout_ms) {
-            Serial.println(F("[ChargeMaint] Timeout reached, stopping charging"));
+            DBG.println(F("[ChargeMaint] Timeout reached, stopping charging"));
             stopCharging();
             charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
             last_stop_time_ = current_time;
@@ -901,7 +902,7 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
                 zero_current_detect_count_++;
 
                 if (zero_current_detect_count_ >= 3) {
-                    Serial.printf_P(PSTR("[ChargeMaint] Zero current detected %d times (actual=%dmA, set=%dmA), suspending charging\n"),
+                    DBG.printf_P(PSTR("[ChargeMaint] Zero current detected %d times (actual=%dmA, set=%dmA), suspending charging\n"),
                                    zero_current_detect_count_, actual_current_mA, last_charge_current_mA_);
                     stopCharging();
                     charge_mgmt_state_ = CHARGE_STATE_SUSPENDED_LOW_INPUT;
@@ -919,7 +920,7 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
     if (last_charge_current_mA_ > 0 && available_) {
         // 【安全校验】喂狗前必须校验电流不超过最大限制
         if (last_charge_current_mA_ > config_.max_charge_current) {
-            Serial.printf_P(PSTR("[ChargeMaint] ERROR: Charge current %d mA exceeds max %d mA, stopping charging\n"),
+            DBG.printf_P(PSTR("[ChargeMaint] ERROR: Charge current %d mA exceeds max %d mA, stopping charging\n"),
                            last_charge_current_mA_, config_.max_charge_current);
             stopCharging();
             charge_mgmt_state_ = CHARGE_STATE_SUSPENDED_FAULT;
@@ -936,7 +937,7 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
             
             // 连续 3 次喂狗失败，触发故障保护
             if (i2c_error_count_ >= MAX_I2C_ERRORS) {
-                Serial.println(F("[ChargeMaint] I2C watchdog failed, entering SUSPENDED_FAULT"));
+                DBG.println(F("[ChargeMaint] I2C watchdog failed, entering SUSPENDED_FAULT"));
                 stopCharging();
                 charge_mgmt_state_ = CHARGE_STATE_SUSPENDED_FAULT;
                 return;
@@ -944,7 +945,7 @@ void PowerManagement::maintainCharging(System_Global_State& globalState) {
         }
     } else {
         // 电流为 0 或芯片不可用，停止充电
-        Serial.println(F("[ChargeMaint] Charge current is 0 or chip unavailable, stopping charging"));
+        DBG.println(F("[ChargeMaint] Charge current is 0 or chip unavailable, stopping charging"));
         stopCharging();
         charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
         last_stop_time_ = current_time;
@@ -986,7 +987,7 @@ void PowerManagement::checkOverTemperatureProtection(System_Global_State& global
         // 过温保护触发
         if (globalState.power.fault_type != POWER_FAULT_OVER_TEMPERATURE) {
             // 首次触发时记录日志
-            Serial.printf_P(PSTR("[OverTemp] Protection triggered! Board: %.1f°C, Env: %.1f°C, Threshold: %.1f°C\n"),
+            DBG.printf_P(PSTR("[OverTemp] Protection triggered! Board: %.1f°C, Env: %.1f°C, Threshold: %.1f°C\n"),
                            board_temp, env_temp, temp_threshold);
         }
         
@@ -996,7 +997,7 @@ void PowerManagement::checkOverTemperatureProtection(System_Global_State& global
         
         // 如果正在充电，立即停止充电
         if (charge_mgmt_state_ == CHARGE_STATE_ACTIVE) {
-            Serial.println(F("[OverTemp] Stopping charging due to over-temperature"));
+            DBG.println(F("[OverTemp] Stopping charging due to over-temperature"));
             stopCharging();
             charge_mgmt_state_ = CHARGE_STATE_SUSPENDED_FAULT;
         }
@@ -1005,7 +1006,7 @@ void PowerManagement::checkOverTemperatureProtection(System_Global_State& global
     } else if (temp_recovered) {
         // 温度恢复到安全范围（低于阈值 10°C 以上）
         if (globalState.over_temp_protection) {
-            Serial.printf_P(PSTR("[OverTemp] Temperature recovered. Board: %.1f°C, Env: %.1f°C, Recover threshold: %.1f°C\n"),
+            DBG.printf_P(PSTR("[OverTemp] Temperature recovered. Board: %.1f°C, Env: %.1f°C, Recover threshold: %.1f°C\n"),
                            board_temp, env_temp, recover_threshold);
             globalState.over_temp_protection = false;
         }
@@ -1020,7 +1021,7 @@ void PowerManagement::checkOverTemperatureProtection(System_Global_State& global
             globalState.power.fault_type == POWER_FAULT_NONE) {
             charge_mgmt_state_ = CHARGE_STATE_COOLDOWN;
             last_stop_time_ = millis();
-            Serial.println(F("[OverTemp] Entering cooldown before retry after temperature recovered"));
+            DBG.println(F("[OverTemp] Entering cooldown before retry after temperature recovered"));
         }
     }
     // 注意：温度在 recover_threshold 和 temp_threshold 之间时保持当前状态不变（迟滞区）

@@ -8,6 +8,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include "debug.h"
 #include <esp_ota_ops.h>
 #include <Ticker.h>
 
@@ -31,9 +32,9 @@ WebServer::WebServer(ConfigManager* configMgr, SystemManagement* sysMgr, int por
   spa_html = SPA_PAGE_TEMPLATE;
   
   if (systemManager == nullptr) {
-    Serial.println(F("WebServer: CONFIG_MODE (no systemManager)"));
+    DBG.println(F("WebServer: CONFIG_MODE (no systemManager)"));
   } else {
-    Serial.println(F("WebServer: NORMAL_MODE"));
+    DBG.println(F("WebServer: NORMAL_MODE"));
   }
 }
 
@@ -41,7 +42,7 @@ WebServer::~WebServer() {
   if (g_webServerInstance == this) {
     g_webServerInstance = nullptr;
   }
-  Serial.println(F("WebServer: Destructor called"));
+  DBG.println(F("WebServer: Destructor called"));
 }
 
 // =============================================================================
@@ -59,7 +60,7 @@ bool WebServer::begin() {
   g_webServerInstance = this;
   server.begin();
   
-  Serial.println(F("Web server started on port 80"));
+  DBG.println(F("Web server started on port 80"));
   return true;
 }
 
@@ -158,7 +159,7 @@ void WebServer::setupHttpRoutes() {
   server.on("/firmware", HTTP_POST,
     [this](AsyncWebServerRequest* request) {
       // Upload complete handler — 仅根据 s_otaSuccess 判断是否真正写入成功
-      Serial.printf_P(PSTR("[OTA-REQ] s_otaSuccess=%d hasError=%d\n"), s_otaSuccess, Update.hasError());
+      DBG.printf_P(PSTR("[OTA-REQ] s_otaSuccess=%d hasError=%d\n"), s_otaSuccess, Update.hasError());
       if (!s_otaSuccess || Update.hasError()) {
         StaticJsonDocument<256> doc;
         doc["success"] = false;
@@ -166,7 +167,7 @@ void WebServer::setupHttpRoutes() {
         String response;
         serializeJson(doc, response);
         request->send(500, "application/json", response);
-        Serial.println(F("OTA: 升级失败，固件未写入。"));
+        DBG.println(F("OTA: 升级失败，固件未写入。"));
       } else {
         StaticJsonDocument<256> doc;
         doc["success"] = true;
@@ -175,13 +176,13 @@ void WebServer::setupHttpRoutes() {
         serializeJson(doc, response);
         request->send(200, "application/json", response);
 
-        Serial.println(F("==========================================="));
-        Serial.println(F("OTA update successful! Rebooting in 3 seconds..."));
-        Serial.println(F("==========================================="));
+        DBG.println(F("==========================================="));
+        DBG.println(F("OTA update successful! Rebooting in 3 seconds..."));
+        DBG.println(F("==========================================="));
 
         static Ticker rebootTicker;
         rebootTicker.once(3, []() {
-          Serial.println(F("Rebooting now..."));
+          DBG.println(F("Rebooting now..."));
           ESP.restart();
         });
       }
@@ -192,7 +193,7 @@ void WebServer::setupHttpRoutes() {
     }
   );
   
-  Serial.println(systemManager ? F("API routes: NORMAL_MODE") : F("API routes: CONFIG_MODE (stubs)"));
+  DBG.println(systemManager ? F("API routes: NORMAL_MODE") : F("API routes: CONFIG_MODE (stubs)"));
 }
 
 // =============================================================================
@@ -202,7 +203,7 @@ void WebServer::setupHttpRoutes() {
 void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, 
                           AwsEventType type, void* arg, uint8_t* data, size_t len) {
   if (type == WS_EVT_CONNECT) {
-    Serial.printf("WebSocket client #%u connected\n", client->id());
+    DBG.printf("WebSocket client #%u connected\n", client->id());
     if (systemManager != nullptr) {
       notifyClients();
     } else {
@@ -216,7 +217,7 @@ void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
       client->text(buffer);
     }
   } else if (type == WS_EVT_DISCONNECT) {
-    Serial.printf("WebSocket client #%u disconnected\n", client->id());
+    DBG.printf("WebSocket client #%u disconnected\n", client->id());
   } else if (type == WS_EVT_DATA) {
     // 处理客户端消息
     String msg = "";
@@ -645,7 +646,7 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
 // =============================================================================
 
 void WebServer::handleRoot(AsyncWebServerRequest* request) {
-  Serial.println(F("WebServer: Serving SPA page"));
+  DBG.println(F("WebServer: Serving SPA page"));
   renderSPA(request);
 }
 
@@ -891,7 +892,7 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   delete[] buffer;
   delete[] tempBuffer;
   
-  Serial.printf_P(PSTR("SPA page: SSID=%s, Buzzer=%s, Vol=%d, Bright=%d, Windows=%d\n"),
+  DBG.printf_P(PSTR("SPA page: SSID=%s, Buzzer=%s, Vol=%d, Bright=%d, Windows=%d\n"),
                   sysConfig->wifi_ssid, sysConfig->buzzer_enabled ? "ON" : "OFF",
                   sysConfig->buzzer_volume, sysConfig->led_brightness,
                   powerConfig->charging_window_count);
@@ -902,7 +903,7 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
 // =============================================================================
 
 void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
-  Serial.println(F("WebServer: Handling save config request"));
+  DBG.println(F("WebServer: Handling save config request"));
   
   String jsonString;
   if (request->_tempObject != nullptr) {
@@ -918,13 +919,13 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
     return;
   }
   
-  Serial.printf_P(PSTR("Received JSON: %s\n"), jsonString.c_str());
+  DBG.printf_P(PSTR("Received JSON: %s\n"), jsonString.c_str());
   
   StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, jsonString);
   
   if (error) {
-    Serial.printf_P(PSTR("JSON parse error: %s\n"), error.c_str());
+    DBG.printf_P(PSTR("JSON parse error: %s\n"), error.c_str());
     sendErrorResponse(request, "Invalid JSON format", 400);
     return;
   }
@@ -939,7 +940,7 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
     return;
   }
   
-  Serial.println(F("Configuration saved successfully"));
+  DBG.println(F("Configuration saved successfully"));
   
   // 判断是否在配置模式（systemManager 为 nullptr 表示配置模式）
   bool isConfigMode = (systemManager == nullptr);
@@ -959,9 +960,9 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
     // 确保响应完全发送后再重启
     delay(100);
 
-    Serial.println(F("==========================================="));
-    Serial.println(F("Configuration saved. Rebooting..."));
-    Serial.println(F("==========================================="));
+    DBG.println(F("==========================================="));
+    DBG.println(F("Configuration saved. Rebooting..."));
+    DBG.println(F("==========================================="));
 
     ESP.restart();
   } else {
@@ -975,7 +976,7 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
     serializeJson(responseDoc, responseBuffer);
     request->send(200, "application/json", responseBuffer);
     
-    Serial.println(F("Configuration applied via hot update (no restart required)"));
+    DBG.println(F("Configuration applied via hot update (no restart required)"));
   }
   return;
 }
@@ -985,7 +986,7 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
 // =============================================================================
 
 void WebServer::sendErrorResponse(AsyncWebServerRequest* request, const String& message, int code) {
-  Serial.printf_P(PSTR("Error response: %s (code: %d)\n"), message.c_str(), code);
+  DBG.printf_P(PSTR("Error response: %s (code: %d)\n"), message.c_str(), code);
   request->send(code, "application/json", "{\"success\":false,\"message\":\"" + message + "\"}");
 }
 
@@ -1005,7 +1006,7 @@ void WebServer::sendConfigModeResponse(AsyncWebServerRequest* request) {
 // =============================================================================
 
 bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
-  Serial.println(F("Updating configuration from JSON"));
+  DBG.println(F("Updating configuration from JSON"));
   
   bool success = true;
   
@@ -1112,7 +1113,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     // ======================================
     
     if (!configManager->updateSystemConfig(tempSysConfig, false)) {
-      Serial.println(F("Error: Failed to update system config"));
+      DBG.println(F("Error: Failed to update system config"));
       success = false;
     }
   }
@@ -1170,7 +1171,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     }
     
     if (!configManager->updateBMSConfig(tempBmsConfig, false)) {
-      Serial.println(F("Error: Failed to update BMS config"));
+      DBG.println(F("Error: Failed to update BMS config"));
       success = false;
     }
   }
@@ -1232,7 +1233,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
       JsonArrayConst windowsArray = pwr["charging_windows"].as<JsonArrayConst>();
       uint8_t windowCount = pwr["charging_window_count"];
       
-      Serial.printf_P(PSTR("[Config] Processing %d charging windows\n"), windowCount);
+      DBG.printf_P(PSTR("[Config] Processing %d charging windows\n"), windowCount);
       
       // 首先清空所有时间窗口
       memset(tempPowerConfig.charging_windows, 0, sizeof(tempPowerConfig.charging_windows));
@@ -1262,10 +1263,10 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
             
             validWindowCount++;
             
-            Serial.printf_P(PSTR("[Config] Window %d: mask=0x%02X, %02d:00-%02d:00\n"),
+            DBG.printf_P(PSTR("[Config] Window %d: mask=0x%02X, %02d:00-%02d:00\n"),
                            validWindowCount, dayMask, startHour, endHour);
           } else {
-            Serial.printf_P(PSTR("[Config] Invalid window %d: mask=%d, %d:00-%d:00 (skipped)\n"),
+            DBG.printf_P(PSTR("[Config] Invalid window %d: mask=%d, %d:00-%d:00 (skipped)\n"),
                            i, dayMask, startHour, endHour);
           }
         }
@@ -1273,17 +1274,17 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
       
       // 更新实际窗口数量
       tempPowerConfig.charging_window_count = validWindowCount;
-      Serial.printf_P(PSTR("[Config] Total valid charging windows: %d\n"), validWindowCount);
+      DBG.printf_P(PSTR("[Config] Total valid charging windows: %d\n"), validWindowCount);
     }
     // ======================================
     
     if (!configManager->updatePowerConfig(tempPowerConfig, false)) {
-      Serial.println(F("Error: Failed to update power config"));
+      DBG.println(F("Error: Failed to update power config"));
       success = false;
     }
   }
   
-  Serial.println(success ? F("All configs updated successfully") : F("Some config updates failed"));
+  DBG.println(success ? F("All configs updated successfully") : F("Some config updates failed"));
   return success;
 }
 
@@ -1329,7 +1330,7 @@ void WebServer::replaceStringInBuffer(char* buffer, size_t bufferSize, const cha
 // =============================================================================
 
 void WebServer::handleBmsShipMode(AsyncWebServerRequest* request) {
-  Serial.println(F("[WebServer] BMS Ship Mode request received"));
+  DBG.println(F("[WebServer] BMS Ship Mode request received"));
   
   // First, send response to frontend confirming receipt
   StaticJsonDocument<256> doc;
@@ -1341,7 +1342,7 @@ void WebServer::handleBmsShipMode(AsyncWebServerRequest* request) {
   request->send(200, "application/json", response);
   
   // Then, publish event for SystemManager to handle
-  Serial.println(F("[WebServer] Publishing EVT_BMS_SHIPMODE_REQUEST event"));
+  DBG.println(F("[WebServer] Publishing EVT_BMS_SHIPMODE_REQUEST event"));
   EventBus::getInstance().publish(EVT_BMS_SHIPMODE_REQUEST, nullptr);
 }
 
@@ -1350,7 +1351,7 @@ void WebServer::handleBmsResetData(AsyncWebServerRequest* request) {
     request->send(503, "application/json", "{\"success\":false,\"message\":\"系统未就绪\"}");
     return;
   }
-  Serial.println(F("[WebServer] BMS Reset Battery Data request received"));
+  DBG.println(F("[WebServer] BMS Reset Battery Data request received"));
 
   StaticJsonDocument<256> doc;
   doc["success"] = true;
@@ -1360,7 +1361,7 @@ void WebServer::handleBmsResetData(AsyncWebServerRequest* request) {
   serializeJson(doc, response);
   request->send(200, "application/json", response);
 
-  Serial.println(F("[WebServer] Publishing EVT_BMS_RESET_BATTERY_DATA event"));
+  DBG.println(F("[WebServer] Publishing EVT_BMS_RESET_BATTERY_DATA event"));
   EventBus::getInstance().publish(EVT_BMS_RESET_BATTERY_DATA, nullptr);
 }
 
@@ -1391,11 +1392,11 @@ void WebServer::handleRestart(AsyncWebServerRequest* request) {
   serializeJson(doc, response);
   request->send(200, "application/json", response);
 
-  Serial.println(F("Restart requested via web API. Rebooting in 2 seconds..."));
+  DBG.println(F("Restart requested via web API. Rebooting in 2 seconds..."));
 
   static Ticker restartTicker;
   restartTicker.once(2, []() {
-    Serial.println(F("Rebooting now..."));
+    DBG.println(F("Rebooting now..."));
     ESP.restart();
   });
 }
@@ -1470,7 +1471,7 @@ void WebServer::handleCalibrationPost(AsyncWebServerRequest* request) {
   serializeJson(resp, response);
   request->send(200, "application/json", response);
 
-  Serial.println(F("[WebServer] ADC calibration updated"));
+  DBG.println(F("[WebServer] ADC calibration updated"));
 }
 
 // =============================================================================
@@ -1540,7 +1541,7 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
 
     uint32_t maxSketchSpace = ESP.getFreeSketchSpace();
     if (maxSketchSpace == 0) {
-      Serial.println(F("OTA ERROR: 无法获取可用 Flash 空间"));
+      DBG.println(F("OTA ERROR: 无法获取可用 Flash 空间"));
       otaRejected = true;
       return;
     }
@@ -1552,8 +1553,8 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
     }
 
     if (!Update.begin(safeSize)) {
-      Serial.print(F("OTA ERROR: Update.begin() 失败："));
-      Serial.println(Update.errorString());
+      DBG.print(F("OTA ERROR: Update.begin() 失败："));
+      DBG.println(Update.errorString());
       otaRejected = true;
       return;
     }
@@ -1594,13 +1595,13 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
       newVer[j] = '\0';
 
       if (j == 0) {
-        Serial.printf_P(PSTR("OTA: 前缀已找到(偏移 %u, bufLen=%u)，等待版本号数据...\n"), (unsigned)i, (unsigned)otaBufLen);
+        DBG.printf_P(PSTR("OTA: 前缀已找到(偏移 %u, bufLen=%u)，等待版本号数据...\n"), (unsigned)i, (unsigned)otaBufLen);
         break;
       }
 
       // 有版本号，开始校验
       if (!isVersionGreaterOrEqual(newVer, MIN_REQUIRED_VERSION)) {
-        Serial.printf_P(PSTR("OTA REJECT: 版本 %s < 最低要求 %s\n"), newVer, MIN_REQUIRED_VERSION);
+        DBG.printf_P(PSTR("OTA REJECT: 版本 %s < 最低要求 %s\n"), newVer, MIN_REQUIRED_VERSION);
         otaRejected = true;
         Update.abort();
         return;
@@ -1608,8 +1609,8 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
 
       // 版本校验通过，将缓冲区写入 flash
       if (Update.write(otaBuf, otaBufLen) != otaBufLen) {
-        Serial.print(F("OTA ERROR: 缓冲区写入失败："));
-        Serial.println(Update.errorString());
+        DBG.print(F("OTA ERROR: 缓冲区写入失败："));
+        DBG.println(Update.errorString());
         otaRejected = true;
         return;
       }
@@ -1619,8 +1620,8 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
         size_t extraOffset = copyLen;
         size_t extraLen = len - extraOffset;
         if (Update.write(data + extraOffset, extraLen) != extraLen) {
-          Serial.print(F("OTA ERROR: 额外数据写入失败："));
-          Serial.println(Update.errorString());
+          DBG.print(F("OTA ERROR: 额外数据写入失败："));
+          DBG.println(Update.errorString());
           otaRejected = true;
           return;
         }
@@ -1632,13 +1633,13 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
     }
 
     if (!otaVerified && otaBufLen >= sizeof(otaBuf) && !final) {
-      Serial.printf_P(PSTR("OTA REJECT: 缓冲区已满(%u 字节)未找到签名\n"), (unsigned)otaBufLen);
+      DBG.printf_P(PSTR("OTA REJECT: 缓冲区已满(%u 字节)未找到签名\n"), (unsigned)otaBufLen);
       otaRejected = true;
       Update.abort();
     }
 
     if (final && !otaVerified && !otaRejected) {
-      Serial.println(F("OTA REJECT: 全文未找到项目特征前缀。"));
+      DBG.println(F("OTA REJECT: 全文未找到项目特征前缀。"));
       otaRejected = true;
       Update.abort();
     }
@@ -1647,28 +1648,28 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
 
   // === 阶段 B：签名已验证，流式写入 ===
   if (len && Update.write(data, len) != len) {
-    Serial.print(F("OTA ERROR: 写入失败："));
-    Serial.println(Update.errorString());
+    DBG.print(F("OTA ERROR: 写入失败："));
+    DBG.println(Update.errorString());
     otaRejected = true;
     return;
   }
   totalBytes += len;
 
   if (totalBytes - lastPrint > 51200) {
-    Serial.printf_P(PSTR("OTA 进度：%lu KB\n"), totalBytes / 1024);
+    DBG.printf_P(PSTR("OTA 进度：%lu KB\n"), totalBytes / 1024);
     lastPrint = totalBytes / 1024;
   }
 
   if (final) {
-    Serial.printf_P(PSTR("OTA: 写入完成，共 %lu KB\n"), totalBytes / 1024);
+    DBG.printf_P(PSTR("OTA: 写入完成，共 %lu KB\n"), totalBytes / 1024);
     if (Update.end(true)) {
       s_otaSuccess = true;
-      Serial.println(F("OTA 成功！即将重启..."));
+      DBG.println(F("OTA 成功！即将重启..."));
       const esp_partition_t* bootPart = esp_ota_get_boot_partition();
-      if (bootPart) Serial.printf_P(PSTR("OTA: 启动分区已切换至 %s @ 0x%06X\n"), bootPart->label, bootPart->address);
+      if (bootPart) DBG.printf_P(PSTR("OTA: 启动分区已切换至 %s @ 0x%06X\n"), bootPart->label, bootPart->address);
     } else {
-      Serial.print(F("OTA ERROR: 结束失败："));
-      Serial.println(Update.errorString());
+      DBG.print(F("OTA ERROR: 结束失败："));
+      DBG.println(Update.errorString());
     }
   }
 }

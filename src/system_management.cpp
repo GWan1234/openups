@@ -22,6 +22,7 @@
 #include "mqtt_service.h"
 #include "XiaomiSensorBridge.h"
 #include "utils.h"
+#include "debug.h"
 #include <WiFi.h>
 
 // External reference to system config (defined in sketch_jan14a.ino)
@@ -74,11 +75,11 @@ SystemManagement::SystemManagement(
     
     // 如果 BMS 或 PowerManagement 为 nullptr，在全局状态中记录警告 (非故障)
    if (!bms) {
-        Serial.println(F("SystemManagement: BMS is nullptr - will run in WARNING mode"));
+        DBG.println(F("SystemManagement: BMS is nullptr - will run in WARNING mode"));
         globalState.overall_status = 1;  // 警告状态，非故障
     }
    if (!powerManagement) {
-        Serial.println(F("SystemManagement: PowerManagement is nullptr - will run in WARNING mode"));
+        DBG.println(F("SystemManagement: PowerManagement is nullptr - will run in WARNING mode"));
         globalState.overall_status = 1;  // 警告状态，非故障
     }
 }
@@ -96,7 +97,7 @@ SystemManagement::~SystemManagement() {
 // =============================================================================
 
 bool SystemManagement::initialize() {
-    Serial.println(F("=== System Management FSM Initializing ==="));
+    DBG.println(F("=== System Management FSM Initializing ==="));
     
     lastStateChangeTime = millis();
     lastMillisValue = millis();
@@ -142,7 +143,7 @@ bool SystemManagement::initialize() {
     systemInitialized = true;
     hardware->setBuzzer(BUZZER_MODE_BEEP_ONCE);
 
-    Serial.println(F("=== System Management FSM Ready ==="));
+    DBG.println(F("=== System Management FSM Ready ==="));
     return true;
 }
 
@@ -324,7 +325,7 @@ void SystemManagement::executeStateActions() {
     }
 
     // MQTT loop
-    if (mqttService) mqttService->loop();
+    if (mqttService) mqttService->loop(globalState);
 
     // 小米传感器桥接更新
     if (xiaomiBridge != nullptr) {
@@ -337,7 +338,7 @@ void SystemManagement::executeStateActions() {
 // =============================================================================
 
 void SystemManagement::onStateEnter(SystemState newState) {
-    Serial.printf_P(PSTR("FSM: Entering state: %s\n"),
+    DBG.printf_P(PSTR("FSM: Entering state: %s\n"),
                    newState == SYS_STATE_INIT ? "INIT" :
                    newState == SYS_STATE_NORMAL ? "NORMAL" :
                    newState == SYS_STATE_WARNING ? "WARNING" : "CRITICAL");
@@ -488,13 +489,13 @@ void SystemManagement::handleStateInit() {
     
     if (bms_ready && pm_ready) {
         // 设备就绪，转入 NORMAL
-        Serial.println(F("[FSM] INIT: All modules ready, transitioning to NORMAL"));
+        DBG.println(F("[FSM] INIT: All modules ready, transitioning to NORMAL"));
         transitionToState(SYS_STATE_NORMAL);
     } else {
         // 设备缺失，转入 CRITICAL
-        Serial.println(F("[FSM] INIT: Missing modules, transitioning to CRITICAL"));
-        if (!bms_ready) Serial.println(F("[FSM] INIT: BMS is nullptr"));
-        if (!pm_ready) Serial.println(F("[FSM] INIT: PowerManagement is nullptr"));
+        DBG.println(F("[FSM] INIT: Missing modules, transitioning to CRITICAL"));
+        if (!bms_ready) DBG.println(F("[FSM] INIT: BMS is nullptr"));
+        if (!pm_ready) DBG.println(F("[FSM] INIT: PowerManagement is nullptr"));
         transitionToState(SYS_STATE_CRITICAL);
     }
 }
@@ -507,14 +508,14 @@ void SystemManagement::handleStateInit() {
 void SystemManagement::handleStateNormal() {
     // 优先检测 CRITICAL 条件（模块掉线）
     if (checkCriticalConditions()) {
-        Serial.println(F("[FSM] NORMAL: CRITICAL condition detected"));
+        DBG.println(F("[FSM] NORMAL: CRITICAL condition detected"));
         transitionToState(SYS_STATE_CRITICAL);
         return;
     }
     
     // 检测 WARNING 条件（模块在线但存在故障）
     if (checkWarningConditions()) {
-        Serial.println(F("[FSM] NORMAL: WARNING condition detected"));
+        DBG.println(F("[FSM] NORMAL: WARNING condition detected"));
         transitionToState(SYS_STATE_WARNING);
         return;
     }
@@ -532,14 +533,14 @@ void SystemManagement::handleStateNormal() {
 void SystemManagement::handleStateWarning() {
     // 优先检测 CRITICAL 条件（模块掉线/BMS全部错误）
     if (checkCriticalConditions()) {
-        Serial.println(F("[FSM] WARNING: CRITICAL condition detected, downgrading"));
+        DBG.println(F("[FSM] WARNING: CRITICAL condition detected, downgrading"));
         transitionToState(SYS_STATE_CRITICAL);
         return;
     }
     
     // 检测故障是否恢复
     if (!checkWarningConditions()) {
-        Serial.println(F("[FSM] WARNING: Conditions recovered, transitioning to NORMAL"));
+        DBG.println(F("[FSM] WARNING: Conditions recovered, transitioning to NORMAL"));
         transitionToState(SYS_STATE_NORMAL);
         return;
     }
@@ -558,12 +559,12 @@ void SystemManagement::handleStateCritical() {
     if (!checkCriticalConditions() && !checkWarningConditions()) {
         // 条件恢复，增加计数器
         criticalRecoveryCounter_++;
-        Serial.printf_P(PSTR("[FSM] CRITICAL: Recovery counter: %d/%d\n"), 
+        DBG.printf_P(PSTR("[FSM] CRITICAL: Recovery counter: %d/%d\n"), 
                        criticalRecoveryCounter_, CRITICAL_RECOVERY_COUNT);
         
         // 连续 N 次检测正常，才允许恢复
         if (criticalRecoveryCounter_ >= CRITICAL_RECOVERY_COUNT) {
-            Serial.println(F("[FSM] CRITICAL: Recovery confirmed, transitioning to NORMAL"));
+            DBG.println(F("[FSM] CRITICAL: Recovery confirmed, transitioning to NORMAL"));
             criticalRecoveryCounter_ = 0;
             transitionToState(SYS_STATE_NORMAL);
             return;
@@ -571,7 +572,7 @@ void SystemManagement::handleStateCritical() {
     } else {
         // 条件未恢复，重置计数器
         if (criticalRecoveryCounter_ > 0) {
-            Serial.println(F("[FSM] CRITICAL: Recovery counter reset due to ongoing issues"));
+            DBG.println(F("[FSM] CRITICAL: Recovery counter reset due to ongoing issues"));
             criticalRecoveryCounter_ = 0;
         }
     }
@@ -697,13 +698,13 @@ void SystemManagement::checkEmergencyShutdown() {
         if (current_soc <= soc_threshold) {
             if (!globalState.emergency_shutdown) {
                 globalState.emergency_shutdown = true;
-                Serial.printf_P(PSTR("[EmergencyShutdown] AC offline + SOC %.1f%% <= %.1f%% (150%% of %.1f%%), emergency shutdown activated\n"),
+                DBG.printf_P(PSTR("[EmergencyShutdown] AC offline + SOC %.1f%% <= %.1f%% (150%% of %.1f%%), emergency shutdown activated\n"),
                                current_soc, soc_threshold, soc_stop);
             }
 
             // SOC <= discharge_soc_stop 时，关闭 BMS 放电开关
             if (current_soc <= soc_stop && !emergency_discharge_disabled_) {
-                Serial.printf_P(PSTR("[EmergencyShutdown] SOC %.1f%% <= %.1f%%, disabling BMS discharge\n"),
+                DBG.printf_P(PSTR("[EmergencyShutdown] SOC %.1f%% <= %.1f%%, disabling BMS discharge\n"),
                                current_soc, soc_stop);
                 bms->disableDischarge();
                 emergency_discharge_disabled_ = true;
@@ -713,12 +714,12 @@ void SystemManagement::checkEmergencyShutdown() {
         // AC 在线：恢复条件
         if (globalState.emergency_shutdown) {
             globalState.emergency_shutdown = false;
-            Serial.println(F("[EmergencyShutdown] AC online, emergency shutdown cleared"));
+            DBG.println(F("[EmergencyShutdown] AC online, emergency shutdown cleared"));
         }
 
         // SOC >= discharge_soc_stop * 150% 时，重新打开 BMS 放电开关
         if (emergency_discharge_disabled_ && current_soc >= soc_threshold) {
-            Serial.printf_P(PSTR("[EmergencyShutdown] AC online + SOC %.1f%% >= %.1f%%, re-enabling BMS discharge\n"),
+            DBG.printf_P(PSTR("[EmergencyShutdown] AC online + SOC %.1f%% >= %.1f%%, re-enabling BMS discharge\n"),
                            current_soc, soc_threshold);
             bms->enableDischarge();
             emergency_discharge_disabled_ = false;
@@ -775,7 +776,7 @@ void SystemManagement::updateDischargeIndicator() {
 void SystemManagement::onConfigSystemChanged(EventType type, void* param) {
     
     if (param == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: Config param is null"));
+        DBG.println(F("[SysMgr] ERROR: Config param is null"));
         return;
     }
     
@@ -783,7 +784,7 @@ void SystemManagement::onConfigSystemChanged(EventType type, void* param) {
     
     // 空指针检查
     if (systemManager == nullptr || systemManager->hardware == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: System manager or hardware is null"));
+        DBG.println(F("[SysMgr] ERROR: System manager or hardware is null"));
         return;
     }
     
@@ -797,7 +798,7 @@ void SystemManagement::onConfigSystemChanged(EventType type, void* param) {
     systemManager->hardware->setBuzzerVolume(buzzer_volume);
     systemManager->hardware->setLEDBrightness(led_brightness);
 
-    Serial.println(F("[SysMgr] System config applied successfully"));
+    DBG.println(F("[SysMgr] System config applied successfully"));
 }
 
 /**
@@ -808,7 +809,7 @@ void SystemManagement::onConfigSystemChanged(EventType type, void* param) {
 void SystemManagement::onConfigBmsChanged(EventType type, void* param) {
 
     if (param == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: BMS config param is null"));
+        DBG.println(F("[SysMgr] ERROR: BMS config param is null"));
         return;
     }
     
@@ -816,17 +817,17 @@ void SystemManagement::onConfigBmsChanged(EventType type, void* param) {
     
     // 空指针检查
     if (systemManager == nullptr || systemManager->bms == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: System manager or BMS is null"));
+        DBG.println(F("[SysMgr] ERROR: System manager or BMS is null"));
         return;
     }
     
     // 调用 BMS 的 applyNewConfig 方法
     if (!systemManager->bms->applyNewConfig(*config)) {
-        Serial.println(F("[SysMgr] ERROR: Failed to apply BMS config"));
+        DBG.println(F("[SysMgr] ERROR: Failed to apply BMS config"));
         return;
     }
     
-    Serial.println(F("[SysMgr] BMS config applied successfully"));
+    DBG.println(F("[SysMgr] BMS config applied successfully"));
 }
 
 /**
@@ -836,7 +837,7 @@ void SystemManagement::onConfigBmsChanged(EventType type, void* param) {
  */
 void SystemManagement::onConfigPowerChanged(EventType type, void* param) {
     if (param == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: Power config param is null"));
+        DBG.println(F("[SysMgr] ERROR: Power config param is null"));
         return;
     }
     
@@ -844,17 +845,17 @@ void SystemManagement::onConfigPowerChanged(EventType type, void* param) {
     
     // 空指针检查
     if (systemManager == nullptr || systemManager->powerManagement == nullptr) {
-        Serial.println(F("[SysMgr] ERROR: System manager or PowerManagement is null"));
+        DBG.println(F("[SysMgr] ERROR: System manager or PowerManagement is null"));
         return;
     }
     
     // 调用 PowerManagement 的 applyNewConfig 方法
     if (!systemManager->powerManagement->applyNewConfig(*config)) {
-        Serial.println(F("[SysMgr] ERROR: Failed to apply Power config"));
+        DBG.println(F("[SysMgr] ERROR: Failed to apply Power config"));
         return;
     }
     
-    Serial.println(F("[SysMgr] Power config applied successfully"));
+    DBG.println(F("[SysMgr] Power config applied successfully"));
 }
 
 // =============================================================================
@@ -978,13 +979,13 @@ void SystemManagement::onBmsFaultDetected(EventType type, void* param) {
  */
 void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
     if (!bms || !powerManagement) {
-        Serial.println(F("[SysMgr] Cannot handle BMS fault: BMS or PowerManagement is null"));
+        DBG.println(F("[SysMgr] Cannot handle BMS fault: BMS or PowerManagement is null"));
         return;
     }
     
     switch (fault_type) {
         case BMS_FAULT_OVER_TEMP:
-            Serial.println(F("[SysMgr] OVER TEMP protection: Disabling both charge and discharge"));
+            DBG.println(F("[SysMgr] OVER TEMP protection: Disabling both charge and discharge"));
             addTip("BMS过温保护：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
@@ -992,20 +993,20 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             break;
             
         case BMS_FAULT_OVER_VOLTAGE:
-            Serial.println(F("[SysMgr] OVER VOLTAGE protection: Disabling charge"));
+            DBG.println(F("[SysMgr] OVER VOLTAGE protection: Disabling charge"));
             addTip("BMS过压保护：关闭充电");
             bms->disableCharge();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_UNDER_VOLTAGE:
-            Serial.println(F("[SysMgr] UNDER VOLTAGE protection: Disabling discharge"));
+            DBG.println(F("[SysMgr] UNDER VOLTAGE protection: Disabling discharge"));
             addTip("BMS欠压保护：关闭放电");
             bms->disableDischarge();
             break;
             
         case BMS_FAULT_OVER_CURRENT:
-            Serial.println(F("[SysMgr] OVER CURRENT protection: Disabling both charge and discharge"));
+            DBG.println(F("[SysMgr] OVER CURRENT protection: Disabling both charge and discharge"));
             addTip("BMS过流保护：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
@@ -1013,20 +1014,20 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             break;
             
         case BMS_FAULT_SHORT_CIRCUIT:
-            Serial.println(F("[SysMgr] SHORT CIRCUIT protection: Emergency shutdown!"));
+            DBG.println(F("[SysMgr] SHORT CIRCUIT protection: Emergency shutdown!"));
             addTip("BMS短路保护：紧急关机");
             bms->emergencyShutdown();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_CHIP_ERROR:
-            Serial.println(F("[SysMgr] CHIP ERROR protection: Disabling both charge and discharge"));
+            DBG.println(F("[SysMgr] CHIP ERROR protection: Disabling both charge and discharge"));
             addTip("BMS芯片错误");
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_PASSIVE_SHUTDOWN:
-            Serial.println(F("[SysMgr] PASSIVE SHUTDOWN protection: Disabling both charge and discharge"));
+            DBG.println(F("[SysMgr] PASSIVE SHUTDOWN protection: Disabling both charge and discharge"));
             addTip("BMS被动关机：关闭充放电");
             bms->disableCharge();
             bms->disableDischarge();
@@ -1034,11 +1035,11 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             break;
             
         case BMS_FAULT_NONE:
-            Serial.println(F("[SysMgr] BMS fault cleared"));
+            DBG.println(F("[SysMgr] BMS fault cleared"));
             break;
             
         default:
-            Serial.printf_P(PSTR("[SysMgr] Unknown BMS fault type: %d, taking safe action\n"), 
+            DBG.printf_P(PSTR("[SysMgr] Unknown BMS fault type: %d, taking safe action\n"), 
                            static_cast<int>(fault_type));
             addTip("BMS未知故障(%d)", static_cast<int>(fault_type));
             bms->disableCharge();
@@ -1067,7 +1068,7 @@ void SystemManagement::onDelayedStart() {
     if (mqttService != nullptr && systemConfig != nullptr) {
         // 检查 MQTT 配置是否有效（broker 和端口）
         if (strlen(systemConfig->mqtt_broker) > 0 && systemConfig->mqtt_port > 0) {
-            Serial.println("[SysMgr] Starting MQTT service...");
+            DBG.println("[SysMgr] Starting MQTT service...");
             mqttService->setBrokerAddress(systemConfig->mqtt_broker);
             mqttService->setBrokerPort(systemConfig->mqtt_port);
             if (strlen(systemConfig->mqtt_username) > 0) {
@@ -1079,13 +1080,13 @@ void SystemManagement::onDelayedStart() {
             bool begin_ok = mqttService->begin(systemConfig, &globalState);
             bool connect_ok = mqttService->connect();
             if (!connect_ok) {
-                Serial.println("[SysMgr] WARNING: MQTT connect failed, will retry in loop()");
+                DBG.println("[SysMgr] WARNING: MQTT connect failed, will retry in loop()");
             }
         } else {
-            Serial.println("[SysMgr] MQTT not configured, skipping");
+            DBG.println("[SysMgr] MQTT not configured, skipping");
         }
     } else {
-        Serial.println("[SysMgr] MQTT service not created (config not enabled)");
+        DBG.println("[SysMgr] MQTT service not created (config not enabled)");
     }
 }
 
@@ -1196,7 +1197,7 @@ void SystemManagement::checkBQ76920Registers() {
  */
 void SystemManagement::onBmsShipModeRequest(EventType type, void* param) {
     if (systemManager && systemManager->systemInitialized) {
-        Serial.println(F("[SysMgr] BMS Ship Mode Request event received"));
+        DBG.println(F("[SysMgr] BMS Ship Mode Request event received"));
         systemManager->handleBmsShipModeRequest();
     }
 }
@@ -1207,22 +1208,22 @@ void SystemManagement::onBmsShipModeRequest(EventType type, void* param) {
  */
 void SystemManagement::handleBmsShipModeRequest() {
     if (!bms) {
-        Serial.println(F("[SysMgr] ERROR: Cannot enter ship mode - BMS is null"));
+        DBG.println(F("[SysMgr] ERROR: Cannot enter ship mode - BMS is null"));
         return;
     }
     
-    Serial.println(F("[SysMgr] Executing BMS enterShipMode command..."));
+    DBG.println(F("[SysMgr] Executing BMS enterShipMode command..."));
     
     // 执行 BMS 的 enterShipMode 指令
     bool result = bms->enterShipMode();
     
     if (result) {
-        Serial.println(F("[SysMgr] BMS entered ship mode successfully"));
+        DBG.println(F("[SysMgr] BMS entered ship mode successfully"));
         // 将 BMS 标记为离线
         globalState.bms.is_connected = false;
-        Serial.println(F("[SysMgr] BMS marked as offline"));
+        DBG.println(F("[SysMgr] BMS marked as offline"));
     } else {
-        Serial.println(F("[SysMgr] ERROR: Failed to enter BMS ship mode"));
+        DBG.println(F("[SysMgr] ERROR: Failed to enter BMS ship mode"));
     }
 }
 
@@ -1231,7 +1232,7 @@ void SystemManagement::handleBmsShipModeRequest() {
  */
 void SystemManagement::onBmsResetBatteryData(EventType type, void* param) {
     if (systemManager && systemManager->systemInitialized) {
-        Serial.println(F("[SysMgr] BMS Reset Battery Data event received"));
+        DBG.println(F("[SysMgr] BMS Reset Battery Data event received"));
         systemManager->handleBmsResetBatteryData();
     }
 }
@@ -1242,11 +1243,11 @@ void SystemManagement::onBmsResetBatteryData(EventType type, void* param) {
  */
 void SystemManagement::handleBmsResetBatteryData() {
     if (!bms) {
-        Serial.println(F("[SysMgr] ERROR: Cannot reset battery data - BMS is null"));
+        DBG.println(F("[SysMgr] ERROR: Cannot reset battery data - BMS is null"));
         return;
     }
 
-    Serial.println(F("[SysMgr] Executing BMS resetBatteryData..."));
+    DBG.println(F("[SysMgr] Executing BMS resetBatteryData..."));
 
     bool result = bms->resetBatteryData();
 
@@ -1259,9 +1260,9 @@ void SystemManagement::handleBmsResetBatteryData() {
             globalState.bms.cell_balancing_count[i] = 0;
         }
         addTip("电池数据已重置 (SOH/循环/均衡)");
-        Serial.println(F("[SysMgr] BMS battery data reset successfully"));
+        DBG.println(F("[SysMgr] BMS battery data reset successfully"));
     } else {
-        Serial.println(F("[SysMgr] ERROR: Failed to reset BMS battery data"));
+        DBG.println(F("[SysMgr] ERROR: Failed to reset BMS battery data"));
     }
 }
 
@@ -1327,14 +1328,14 @@ void SystemManagement::setADCCalibration(uint8_t pin, uint8_t coefficient) {
 // =============================================================================
 
 void SystemManagement::saveAllData() {
-    Serial.println(F("[SysMgr] Saving all module data..."));
+    DBG.println(F("[SysMgr] Saving all module data..."));
     if (bms) {
         bms->saveToStorage();
     }
     if (configManager) {
         configManager->saveConfiguration();
     }
-    Serial.println(F("[SysMgr] All module data saved"));
+    DBG.println(F("[SysMgr] All module data saved"));
 }
 
 void SystemManagement::addTip(const char* fmt, ...) {

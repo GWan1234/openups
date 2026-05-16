@@ -1,4 +1,5 @@
 #include "i2c_interface.h"
+#include "debug.h"
 
 I2CInterface i2cInterface;
 
@@ -7,7 +8,7 @@ I2CInterface::I2CInterface() : i2cBus(&Wire), initialized(false) {
 
 bool I2CInterface::checkInitialized() {
     if (!initialized) {
-        Serial.println("I2C Interface not initialized");
+        DBG.println("I2C Interface not initialized");
         return false;
     }
     return true;
@@ -17,8 +18,8 @@ bool I2CInterface::initialize(int sdaPin, int sclPin, uint32_t frequency) {
     i2cBus->begin(sdaPin, sclPin, frequency);
     initialized = true;
     
-    Serial.println("I2C Interface initialized");
-    Serial.printf("I2C initialized with SDA: GPIO%d, SCL: GPIO%d, Frequency: %d Hz\n", sdaPin, sclPin, frequency);
+    DBG.println("I2C Interface initialized");
+    DBG.printf("I2C initialized with SDA: GPIO%d, SCL: GPIO%d, Frequency: %d Hz\n", sdaPin, sclPin, frequency);
     
     return true;
 }
@@ -33,18 +34,18 @@ bool I2CInterface::isDeviceConnected(uint8_t deviceAddr) {
 void I2CInterface::scanI2CBus() {
     if (!checkInitialized()) return;
     
-    Serial.println("\nScanning I2C bus...");
+    DBG.println("\nScanning I2C bus...");
     
     int nDevices = 0;
     for (uint8_t addr = 1; addr < 127; addr++) {
         i2cBus->beginTransmission(addr);
         if (i2cBus->endTransmission() == 0) {
-            Serial.printf("Device found at 0x%02X\n", addr);
+            DBG.printf("Device found at 0x%02X\n", addr);
             nDevices++;
         }
     }
     
-    Serial.printf("Scan complete. Found %d device(s).\n", nDevices);
+    DBG.printf("Scan complete. Found %d device(s).\n", nDevices);
 }
 
 bool I2CInterface::readRegisterByte(uint8_t deviceAddr, uint8_t reg, uint8_t *value) {
@@ -127,7 +128,7 @@ bool I2CInterface::readRegisterByteCRC(uint8_t deviceAddr, uint8_t reg, uint8_t 
     
     uint8_t buf[2] = { (uint8_t)((deviceAddr << 1) | 0x01), data };
     if (CRC8(buf, 2) != crc) {
-        Serial.printf("CRC failed: device 0x%02X, reg 0x%02X\n", deviceAddr, reg);
+        DBG.printf("CRC failed: device 0x%02X, reg 0x%02X\n", deviceAddr, reg);
         return false;
     }
     
@@ -153,13 +154,13 @@ bool I2CInterface::readRegisterWordCRC(uint8_t deviceAddr, uint8_t reg, uint16_t
     uint8_t readAddr = (deviceAddr << 1) | 0x01;
     uint8_t bufH[2] = { readAddr, dataH };
     if (CRC8(bufH, 2) != crcH) {
-        Serial.println("CRC failed: High Byte");
+        DBG.println("CRC failed: High Byte");
         return false;
     }
     
     uint8_t bufL[1] = { dataL };
     if (CRC8(bufL, 1) != crcL) {
-        Serial.println("CRC failed: Low Byte");
+        DBG.println("CRC failed: Low Byte");
         return false;
     }
     

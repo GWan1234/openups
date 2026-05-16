@@ -1,18 +1,14 @@
 #include "XiaomiSensorBridge.h"
+#include "debug.h"
 
 XiaomiSensorBridge::XiaomiSensorBridge()
-    : slaveWire_(1), config_(nullptr), initialized_(false), lastBatteryTemp_(25.0f), lastBoardTemp_(25.0f), lastSOC_(50.0f), lastUpdateTime_(0) {
+    : slaveWire_(1), config_(nullptr), initialized_(false), lastUpdateTime_(0) {
 }
 
 XiaomiSensorBridge::~XiaomiSensorBridge() {
-    // 1. 清除初始化标志，防止 update 在销毁过程中被调用
     initialized_ = false;
-    
-    // 2. 停止 PWM 输出并恢复引脚为输入
-    analogWrite(XIAOMI_POWER_PIN, 0);
-    pinMode(XIAOMI_POWER_PIN, INPUT);
-    
-    // 3. 清理 I2C 从机回调（防止悬空指针）
+    ledcWrite(XIAOMI_POWER_PIN, 0);
+    ledcDetach(XIAOMI_POWER_PIN);
     shtc3_.cleanup();
 }
 
@@ -21,63 +17,76 @@ void XiaomiSensorBridge::setConfig(Configuration* config) {
 }
 
 bool XiaomiSensorBridge::begin() {
-    Serial.println(F("XiaomiBridge: Initializing..."));
+    DBG.println(F("XiaomiBridge: Initializing..."));
 
-    // 初始化从机I2C, SHTC3_Simulator内部负责调用wire.begin()
+    shtc3_.setValues(20.0f, 70.0f);
     shtc3_.begin(slaveWire_, XIAOMI_SDA_PIN, XIAOMI_SCL_PIN);
 
-    // 初始化GPIO10为PWM输出
-    pinMode(XIAOMI_POWER_PIN, OUTPUT);
-    analogWrite(XIAOMI_POWER_PIN, 0);
+    if (!ledcAttach(XIAOMI_POWER_PIN, 150000, 8)) {
+        DBG.println(F("XiaomiBridge: ledcAttach failed"));
+        return false;
+    }
 
-    initialized_ = true;  // 标记为已初始化
-    Serial.println(F("XiaomiBridge: Init complete"));
+    //软启动
+    for (int i = 0; i <= 232; i += 4) {
+        ledcWrite(XIAOMI_POWER_PIN, i);
+        delayMicroseconds(20);
+    }
+
+    initialized_ = true;
+    DBG.println(F("XiaomiBridge: Init complete"));
     return true;
 }
 
 void XiaomiSensorBridge::update(const System_Global_State& state) {
-    // 检查是否已成功初始化
     if (!initialized_) return;
 
-    // 固定 3 秒更新间隔，不依赖数据变化阈值
     uint32_t currentTime = millis();
     if (currentTime - lastUpdateTime_ < 3000) {
-        return;  // 未到更新时间，直接返回
+        return;
     }
 
-    // 温度 → 电池温度 (来自BMS)
-    // 湿度 → 板载NTC温度 (编码为"湿度"供米家显示)
     float batteryTemp = state.bms.temperature;
-    float boardTemp = state.system.board_temperature;
+    float soh = state.bms.soh;
     float soc = state.bms.soc;
 
-    // 无条件更新 I2C 传感器数据
-    shtc3_.setValues(batteryTemp, boardTemp);
-    lastBatteryTemp_ = batteryTemp;
-    lastBoardTemp_ = boardTemp;
+    shtc3_.setValues(batteryTemp, soc);
+    updateSOHOutput(soh);
 
-    // 无条件更新 SOC 输出到 GPIO10
-    updateSOCOutput(soc);
-    lastSOC_ = soc;
-
-    // 更新最后更新时间戳
     lastUpdateTime_ = currentTime;
 }
 
-void XiaomiSensorBridge::updateSOCOutput(float soc) {
-    uint8_t dacValue = socToDAC(soc);
-    analogWrite(XIAOMI_POWER_PIN, dacValue);
-    Serial.printf_P(PSTR("XiaomiBridge: SOC=%.1f%% -> PWM=%u\n"), soc, dacValue);
+void XiaomiSensorBridge::updateSOHOutput(float soh) {
+    ledcWrite(XIAOMI_POWER_PIN, sohToDAC(soh));
 }
 
-// SOC百分比映射到PWM占空比值
-// 电压曲线: 0% ≈ 2.2V, 100% ≈ 3.0V
-// ESP32-S3 analogWrite (PWM): 0=0V, 255=3.3V
-// 2.2V ≈ 169/255*3.3V, 3.0V ≈ 232/255*3.3V
-// 使用幂曲线平滑过渡: pwmValue = 169 + 63 * (soc/100)^1.5
-uint8_t XiaomiSensorBridge::socToDAC(float soc) {
-    float t = constrain(soc, 0.0f, 100.0f) / 100.0f;
-    float curve = powf(t, 1.5f);
-    uint8_t pwmValue = (uint8_t)(169.0f + 63.0f * curve);
-    return constrain(pwmValue, (uint8_t)169, (uint8_t)232);
+uint8_t XiaomiSensorBridge::sohToDAC(float soh) {
+    static const uint8_t table[][2] = {
+        {  0, 193}, // 2.50V
+        {  5, 202}, // 2.62V
+        { 10, 207}, // 2.68V
+        { 20, 212}, // 2.74V
+        { 30, 215}, // 2.78V
+        { 40, 217}, // 2.81V
+        { 50, 219}, // 2.83V
+        { 60, 220}, // 2.85V
+        { 70, 223}, // 2.88V
+        { 80, 225}, // 2.91V
+        { 90, 228}, // 2.95V
+        {100, 232}, // 3.00V
+    };
+    constexpr int COUNT = sizeof(table) / sizeof(table[0]);
+
+    float v = constrain(soh, 50.0f, 100.0f);
+    if (v <= table[0][0]) return table[0][1];
+    if (v >= table[COUNT - 1][0]) return table[COUNT - 1][1];
+
+    for (int i = 1; i < COUNT; i++) {
+        if (v <= table[i][0]) {
+            float x0 = table[i - 1][0], y0 = table[i - 1][1];
+            float x1 = table[i][0],     y1 = table[i][1];
+            return (uint8_t)(y0 + (y1 - y0) * (v - x0) / (x1 - x0));
+        }
+    }
+    return table[COUNT - 1][1];
 }

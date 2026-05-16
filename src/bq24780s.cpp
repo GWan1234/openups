@@ -2,6 +2,7 @@
 #include "i2c_interface.h"
 #include "hardware_interface.h"
 #include <Arduino.h>
+#include "debug.h"
 
 // =============================================================================
 // Constructors
@@ -22,13 +23,13 @@ BQ24780S::BQ24780S(I2CInterface* i2c)
 
 bool BQ24780S::begin() {
     if (i2c == nullptr) {
-        Serial.println(F("BQ24780S: I2C interface not available"));
+        DBG.println(F("BQ24780S: I2C interface not available"));
         return false;
     }
 
     // 检查设备是否连接
     if (!isConnected()) {
-        Serial.println(F("BQ24780S: Device not connected"));
+        DBG.println(F("BQ24780S: Device not connected"));
         return false;
     }
 
@@ -39,95 +40,95 @@ bool BQ24780S::begin() {
     if (readRegister(0xFF, &device_id)) {
         if (device_id == 0x38) {
             chip_variant_ = BQ24780SConst::ChipVariant::BQ24800;
-            Serial.println(F("BQ24780S: Detected BQ24800 (DeviceID=0x38)"));
+            DBG.println(F("BQ24780S: Detected BQ24800 (DeviceID=0x38)"));
         } else {
             chip_variant_ = BQ24780SConst::ChipVariant::BQ24780S;
-            Serial.printf_P(PSTR("BQ24780S: Detected BQ24780S (DeviceID=0x%02X)\n"), device_id);
+            DBG.printf_P(PSTR("BQ24780S: Detected BQ24780S (DeviceID=0x%02X)\n"), device_id);
         }
     } else {
-        Serial.println(F("BQ24780S: Failed to read DeviceID, assuming BQ24780S"));
+        DBG.println(F("BQ24780S: Failed to read DeviceID, assuming BQ24780S"));
     }
 
     //清除充电设置
     setChargeCurrent(0);
     setChargeVoltage(0);
-    Serial.println(F("BQ24780S: Initialized successfully"));
+    DBG.println(F("BQ24780S: Initialized successfully"));
     return true;
 }
 
 bool BQ24780S::applyHardwareConfig(const HardwareConfig& config) {
     if (!initialized_) {
-        Serial.println(F("BQ24780S: Not initialized, cannot apply config"));
+        DBG.println(F("BQ24780S: Not initialized, cannot apply config"));
         return false;
     }
     
-    Serial.println(F("BQ24780S: Applying hardware configuration..."));
+    DBG.println(F("BQ24780S: Applying hardware configuration..."));
     bool success = true;
     
     // 1. 设置增益配置
     if (setIadpGain(config.iadp_gain)) {
-        Serial.printf_P(PSTR("BQ24780S: IADP gain set to %s\n"), 
+        DBG.printf_P(PSTR("BQ24780S: IADP gain set to %s\n"), 
                      config.iadp_gain == BQ24780SConst::IadpGain::Gain20x ? "20x" : "40x");
     } else {
-        Serial.println(F("BQ24780S: Failed to set IADP gain"));
+        DBG.println(F("BQ24780S: Failed to set IADP gain"));
         success = false;
     }
     
     if (setIdchgGain(config.idchg_gain)) {
-        Serial.printf_P(PSTR("BQ24780S: IDCHG gain set to %s\n"), 
+        DBG.printf_P(PSTR("BQ24780S: IDCHG gain set to %s\n"), 
                      config.idchg_gain == BQ24780SConst::IdchgGain::Gain8x ? "8x" : "16x");
     } else {
-        Serial.println(F("BQ24780S: Failed to set IDCHG gain"));
+        DBG.println(F("BQ24780S: Failed to set IDCHG gain"));
         success = false;
     }
     
     // 2. 配置监测输出使能
     if (configureMonitoringOutputs(config.enable_idchg_monitor, config.enable_pmon_monitor)) {
-        Serial.printf_P(PSTR("BQ24780S: Monitoring outputs configured (IDCHG=%s, PMON=%s)\n"),
+        DBG.printf_P(PSTR("BQ24780S: Monitoring outputs configured (IDCHG=%s, PMON=%s)\n"),
                       config.enable_idchg_monitor ? "EN" : "DIS",
                       config.enable_pmon_monitor ? "EN" : "DIS");
     } else {
-        Serial.println(F("BQ24780S: Failed to configure monitoring outputs"));
+        DBG.println(F("BQ24780S: Failed to configure monitoring outputs"));
         success = false;
     }
     
     // 3. 配置放电调节
     if (configureDischargeRegulation(config.enable_discharge_regulation)) {
-        Serial.printf_P(PSTR("BQ24780S: Discharge regulation %s\n"),
+        DBG.printf_P(PSTR("BQ24780S: Discharge regulation %s\n"),
                       config.enable_discharge_regulation ? "enabled" : "disabled");
     } else {
-        Serial.println(F("BQ24780S: Failed to configure discharge regulation"));
+        DBG.println(F("BQ24780S: Failed to configure discharge regulation"));
         success = false;
     }
     
     // 4. 配置混合供电增强模式
     if (setHybridPowerBoost(config.enable_hybrid_boost)) {
-        Serial.printf_P(PSTR("BQ24780S: Hybrid power boost %s\n"),
+        DBG.printf_P(PSTR("BQ24780S: Hybrid power boost %s\n"),
                       config.enable_hybrid_boost ? "enabled" : "disabled");
     } else {
-        Serial.println(F("BQ24780S: Failed to configure hybrid power boost"));
+        DBG.println(F("BQ24780S: Failed to configure hybrid power boost"));
         success = false;
     }
     
     // 5. 配置电流限制（直接写入硬件，确保立即生效）
     if (setInputCurrentLimit(config.input_current_limit)) {
-        Serial.printf_P(PSTR("BQ24780S: Input current limit set to %u mA\n"), config.input_current_limit);
+        DBG.printf_P(PSTR("BQ24780S: Input current limit set to %u mA\n"), config.input_current_limit);
     } else {
-        Serial.println(F("BQ24780S: Failed to set input current limit"));
+        DBG.println(F("BQ24780S: Failed to set input current limit"));
         success = false;
     }
     
     if (setDischargeCurrentLimit(config.discharge_current_max)) {
-        Serial.printf_P(PSTR("BQ24780S: Discharge current limit set to %u mA\n"), config.discharge_current_max);
+        DBG.printf_P(PSTR("BQ24780S: Discharge current limit set to %u mA\n"), config.discharge_current_max);
     } else {
-        Serial.println(F("BQ24780S: Failed to set discharge current limit"));
+        DBG.println(F("BQ24780S: Failed to set discharge current limit"));
         success = false;
     }
     
     if (success) {
-        Serial.println(F("BQ24780S: Hardware configuration applied successfully"));
+        DBG.println(F("BQ24780S: Hardware configuration applied successfully"));
     } else {
-        Serial.println(F("BQ24780S: Hardware configuration completed with errors"));
+        DBG.println(F("BQ24780S: Hardware configuration completed with errors"));
     }
     
     return success;
@@ -195,7 +196,7 @@ bool BQ24780S::setIadpGain(BQ24780SConst::IadpGain gain) {
     
     uint16_t reg_value;
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION0, &reg_value)) {
-        Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION0 for IADP gain"));
+        DBG.println(F("BQ24780S: Failed to read CHARGE_OPTION0 for IADP gain"));
         return false;
     }
     
@@ -209,11 +210,11 @@ bool BQ24780S::setIadpGain(BQ24780SConst::IadpGain gain) {
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION0, reg_value);
     if (result) {
         current_iadp_gain_ = gain;
-        Serial.printf_P(PSTR("BQ24780S: IADP gain set to %s (bit4=%d)\n"),
+        DBG.printf_P(PSTR("BQ24780S: IADP gain set to %s (bit4=%d)\n"),
                       gain == BQ24780SConst::IadpGain::Gain20x ? "20x" : "40x",
                       (reg_value >> 4) & 0x01);
     } else {
-        Serial.println(F("BQ24780S: Failed to write IADP gain"));
+        DBG.println(F("BQ24780S: Failed to write IADP gain"));
     }
     return result;
 }
@@ -225,7 +226,7 @@ bool BQ24780S::setIdchgGain(BQ24780SConst::IdchgGain gain) {
     
     uint16_t reg_value;
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION0, &reg_value)) {
-        Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION0 for IDCHG gain"));
+        DBG.println(F("BQ24780S: Failed to read CHARGE_OPTION0 for IDCHG gain"));
         return false;
     }
     
@@ -239,11 +240,11 @@ bool BQ24780S::setIdchgGain(BQ24780SConst::IdchgGain gain) {
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION0, reg_value);
     if (result) {
         current_idchg_gain_ = gain;
-        Serial.printf_P(PSTR("BQ24780S: IDCHG gain set to %s (bit3=%d)\n"),
+        DBG.printf_P(PSTR("BQ24780S: IDCHG gain set to %s (bit3=%d)\n"),
                       gain == BQ24780SConst::IdchgGain::Gain8x ? "8x" : "16x",
                       (reg_value >> 3) & 0x01);
     } else {
-        Serial.println(F("BQ24780S: Failed to write IDCHG gain"));
+        DBG.println(F("BQ24780S: Failed to write IDCHG gain"));
     }
     return result;
 }
@@ -260,7 +261,7 @@ bool BQ24780S::configureMonitoringOutputs(bool enable_idchg, bool enable_pmon) {
     uint16_t reg_value;
     // 读取 CHARGE_OPTION1 (0x3B)
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION1, &reg_value)) {
-        Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION1 for monitoring config"));
+        DBG.println(F("BQ24780S: Failed to read CHARGE_OPTION1 for monitoring config"));
         return false;
     }
     
@@ -279,11 +280,11 @@ bool BQ24780S::configureMonitoringOutputs(bool enable_idchg, bool enable_pmon) {
     
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION1, reg_value);
     if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Monitoring outputs configured (EN_IDCHG=%d, EN_PMON=%d)\n"),
+        DBG.printf_P(PSTR("BQ24780S: Monitoring outputs configured (EN_IDCHG=%d, EN_PMON=%d)\n"),
                       (reg_value >> 11) & 0x01,
                       (reg_value >> 10) & 0x01);
     } else {
-        Serial.println(F("BQ24780S: Failed to configure monitoring outputs"));
+        DBG.println(F("BQ24780S: Failed to configure monitoring outputs"));
     }
     return result;
 }
@@ -296,7 +297,7 @@ bool BQ24780S::configureDischargeRegulation(bool enable) {
     uint16_t reg_value;
     // 读取 CHARGE_OPTION3 (0x37)
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION3, &reg_value)) {
-        Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION3 for discharge regulation"));
+        DBG.println(F("BQ24780S: Failed to read CHARGE_OPTION3 for discharge regulation"));
         return false;
     }
     
@@ -309,11 +310,11 @@ bool BQ24780S::configureDischargeRegulation(bool enable) {
     
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION3, reg_value);
     if (result) {
-        Serial.printf_P(PSTR("BQ24780S: Discharge regulation %s (bit15=%d)\n"),
+        DBG.printf_P(PSTR("BQ24780S: Discharge regulation %s (bit15=%d)\n"),
                       enable ? "enabled" : "disabled",
                       (reg_value >> 15) & 0x01);
     } else {
-        Serial.println(F("BQ24780S: Failed to configure discharge regulation"));
+        DBG.println(F("BQ24780S: Failed to configure discharge regulation"));
     }
     return result;
 }
@@ -326,7 +327,7 @@ bool BQ24780S::setHybridPowerBoost(bool enable) {
     uint16_t reg_value;
     // 读取 CHARGE_OPTION3 (0x37)
     if (!readRegister(BQ24780SConst::Registers::CHARGE_OPTION3, &reg_value)) {
-        Serial.println(F("BQ24780S: Failed to read CHARGE_OPTION3 for hybrid boost"));
+        DBG.println(F("BQ24780S: Failed to read CHARGE_OPTION3 for hybrid boost"));
         return false;
     }
 
@@ -339,7 +340,7 @@ bool BQ24780S::setHybridPowerBoost(bool enable) {
 
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION3, reg_value);
     if (!result) {
-        Serial.println(F("BQ24780S: Failed to set hybrid power boost"));
+        DBG.println(F("BQ24780S: Failed to set hybrid power boost"));
         return false;
     }
 
@@ -353,12 +354,12 @@ bool BQ24780S::setHybridPowerBoost(bool enable) {
                 reg2_value &= ~(1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT);
             }
             if (!writeRegister(BQ24780SConst::Registers::CHARGE_OPTION2, reg2_value)) {
-                Serial.println(F("BQ24800: Failed to set EN_BATT_BOOST"));
+                DBG.println(F("BQ24800: Failed to set EN_BATT_BOOST"));
             }
         }
     }
 
-    Serial.printf_P(PSTR("BQ24780S: Hybrid power boost %s\n"), enable ? "enabled" : "disabled");
+    DBG.printf_P(PSTR("BQ24780S: Hybrid power boost %s\n"), enable ? "enabled" : "disabled");
     return true;
 }
 
@@ -373,9 +374,9 @@ bool BQ24780S::setVsysMin(uint16_t voltage_mV) {
 
     bool result = writeRegister(BQ24780SConst::Registers::VSYS_MIN, reg_value);
     if (result) {
-        Serial.printf_P(PSTR("BQ24800: VsysMin set to %u mV\n"), voltage_mV);
+        DBG.printf_P(PSTR("BQ24800: VsysMin set to %u mV\n"), voltage_mV);
     } else {
-        Serial.println(F("BQ24800: Failed to set VsysMin"));
+        DBG.println(F("BQ24800: Failed to set VsysMin"));
     }
     return result;
 }
@@ -447,7 +448,7 @@ bool BQ24780S::setChargeCurrent(uint16_t current_mA) {
     
     // 如果超过最大值，限制为最大值
     if (current_mA > BQ24780SConst::Current::CHARGE_CURRENT_MAX) {
-        Serial.printf_P(PSTR("BQ24780S: Charge current %u mA exceeds maximum, limiting to %u mA\n"), 
+        DBG.printf_P(PSTR("BQ24780S: Charge current %u mA exceeds maximum, limiting to %u mA\n"), 
                        current_mA, BQ24780SConst::Current::CHARGE_CURRENT_MAX);
         current_mA = BQ24780SConst::Current::CHARGE_CURRENT_MAX;
     }
@@ -460,7 +461,7 @@ bool BQ24780S::setChargeCurrent(uint16_t current_mA) {
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_CURRENT, reg_value);
 
     if (!result) {
-        Serial.printf_P(PSTR("BQ24780S: Failed to set charge current to %u mA\n"), current_mA);
+        DBG.printf_P(PSTR("BQ24780S: Failed to set charge current to %u mA\n"), current_mA);
     }
     return result;
 }
@@ -489,7 +490,7 @@ bool BQ24780S::setChargeVoltage(uint16_t voltage_mV) {
     
     // 验证电压值范围
     if (voltage_mV > BQ24780SConst::Voltage::CHARGE_VOLTAGE_MAX) {
-        Serial.printf_P(PSTR("BQ24780S: Charge voltage %u mV exceeds maximum %u mV\n"), 
+        DBG.printf_P(PSTR("BQ24780S: Charge voltage %u mV exceeds maximum %u mV\n"), 
                        voltage_mV, BQ24780SConst::Voltage::CHARGE_VOLTAGE_MAX);
         return false;
     }
@@ -502,7 +503,7 @@ bool BQ24780S::setChargeVoltage(uint16_t voltage_mV) {
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_VOLTAGE, reg_value);
 
     if (!result) {
-        Serial.printf_P(PSTR("BQ24780S: Failed to set charge voltage to %u mV\n"), voltage_mV);
+        DBG.printf_P(PSTR("BQ24780S: Failed to set charge voltage to %u mV\n"), voltage_mV);
     }
     return result;
 }
@@ -544,9 +545,9 @@ bool BQ24780S::setCharging(bool enable) {
     bool result = writeRegister(BQ24780SConst::Registers::CHARGE_OPTION0, reg_value);
     
     if (result) {
-        Serial.printf_P(PSTR("BQ24780S: %s charging\n"), enable ? "Enabled" : "Disabled");
+        DBG.printf_P(PSTR("BQ24780S: %s charging\n"), enable ? "Enabled" : "Disabled");
     } else {
-        Serial.printf_P(PSTR("BQ24780S: Failed to %s charging\n"), enable ? "enable" : "disable");
+        DBG.printf_P(PSTR("BQ24780S: Failed to %s charging\n"), enable ? "enable" : "disable");
     }
     return result;
 }
@@ -572,7 +573,7 @@ bool BQ24780S::setInputCurrentLimit(uint16_t current_mA) {
     
     // 如果超过最大值，限制为最大值
     if (current_mA > BQ24780SConst::Current::INPUT_CURRENT_MAX) {
-        Serial.printf_P(PSTR("BQ24780S: Input current limit %u mA exceeds maximum, limiting to %u mA\n"), 
+        DBG.printf_P(PSTR("BQ24780S: Input current limit %u mA exceeds maximum, limiting to %u mA\n"), 
                        current_mA, BQ24780SConst::Current::INPUT_CURRENT_MAX);
         current_mA = BQ24780SConst::Current::INPUT_CURRENT_MAX;
     }
@@ -585,7 +586,7 @@ bool BQ24780S::setInputCurrentLimit(uint16_t current_mA) {
     bool result = writeRegister(BQ24780SConst::Registers::INPUT_CURRENT, reg_value);
     
     if (!result) {
-        Serial.printf_P(PSTR("BQ24780S: Failed to set input current limit to %u mA\n"), current_mA);
+        DBG.printf_P(PSTR("BQ24780S: Failed to set input current limit to %u mA\n"), current_mA);
     }
     return result;
 }
@@ -614,7 +615,7 @@ bool BQ24780S::setDischargeCurrentLimit(uint16_t current_mA) {
     
     // 如果超过最大值，限制为最大值
     if (current_mA > BQ24780SConst::Current::DISCHARGE_CURRENT_MAX) {
-        Serial.printf_P(PSTR("BQ24780S: Discharge current limit %u mA exceeds maximum, limiting to %u mA\n"), 
+        DBG.printf_P(PSTR("BQ24780S: Discharge current limit %u mA exceeds maximum, limiting to %u mA\n"), 
                        current_mA, BQ24780SConst::Current::DISCHARGE_CURRENT_MAX);
         current_mA = BQ24780SConst::Current::DISCHARGE_CURRENT_MAX;
     }
@@ -627,7 +628,7 @@ bool BQ24780S::setDischargeCurrentLimit(uint16_t current_mA) {
     bool result = writeRegister(BQ24780SConst::Registers::DISCHARGE_CURRENT, reg_value);
     
     if (!result) {
-        Serial.printf_P(PSTR("BQ24780S: Failed to set discharge current limit to %u mA\n"), current_mA);
+        DBG.printf_P(PSTR("BQ24780S: Failed to set discharge current limit to %u mA\n"), current_mA);
     }
     return result;
 }
@@ -665,22 +666,22 @@ bool BQ24780S::readProchotStatus(uint16_t* status) {
         *status = raw_status & 0x007F;
         
         if (*status > 0) {
-            Serial.print(F("BQ24780S: PROCHOT status = 0x"));
-            Serial.print(*status, HEX);
-            Serial.print(F(" | "));
+            DBG.print(F("BQ24780S: PROCHOT status = 0x"));
+            DBG.print(*status, HEX);
+            DBG.print(F(" | "));
             
-            if (*status & 0x01) Serial.print(F("ACOK "));
-            if (*status & 0x02) Serial.print(F("BATPRES "));
-            if (*status & 0x04) Serial.print(F("VSYS "));
-            if (*status & 0x08) Serial.print(F("IDCHG "));
-            if (*status & 0x10) Serial.print(F("INOM "));
-            if (*status & 0x20) Serial.print(F("ICRIT "));
-            if (*status & 0x40) Serial.print(F("CMP "));
+            if (*status & 0x01) DBG.print(F("ACOK "));
+            if (*status & 0x02) DBG.print(F("BATPRES "));
+            if (*status & 0x04) DBG.print(F("VSYS "));
+            if (*status & 0x08) DBG.print(F("IDCHG "));
+            if (*status & 0x10) DBG.print(F("INOM "));
+            if (*status & 0x20) DBG.print(F("ICRIT "));
+            if (*status & 0x40) DBG.print(F("CMP "));
             
-            Serial.println();
+            DBG.println();
         }
     } else {
-        Serial.println(F("BQ24780S: Failed to read PROCHOT status"));
+        DBG.println(F("BQ24780S: Failed to read PROCHOT status"));
     }
     
     return result;
@@ -688,85 +689,85 @@ bool BQ24780S::readProchotStatus(uint16_t* status) {
 
 bool BQ24780S::debugReadChargeRegisters() {
     if (!initialized_) {
-        Serial.println(F("BQ24780S: Not initialized, cannot read registers"));
+        DBG.println(F("BQ24780S: Not initialized, cannot read registers"));
         return false;
     }
     
-    Serial.println(F("\n========== BQ24780S Charge Registers Debug =========="));
+    DBG.println(F("\n========== BQ24780S Charge Registers Debug =========="));
     
     bool success = true;
     uint16_t reg_value;
     
-    Serial.print(F("Reading CHARGE_VOLTAGE (0x15): "));
+    DBG.print(F("Reading CHARGE_VOLTAGE (0x15): "));
     if (readRegister(BQ24780SConst::Registers::CHARGE_VOLTAGE, &reg_value)) {
-        Serial.printf(F("0x%04X"), reg_value);
+        DBG.printf(F("0x%04X"), reg_value);
         uint16_t voltage_bits = (reg_value >> 4) & 0x7FF;
         uint16_t voltage_mV = voltage_bits * static_cast<uint16_t>(BQ24780SConst::Voltage::CHARGE_VOLTAGE_STEP);
-        Serial.printf(F("  -> Voltage: %u mV (%.3f V)\n"), voltage_mV, voltage_mV / 1000.0f);
+        DBG.printf(F("  -> Voltage: %u mV (%.3f V)\n"), voltage_mV, voltage_mV / 1000.0f);
     } else {
-        Serial.println(F("FAILED"));
+        DBG.println(F("FAILED"));
         success = false;
     }
     
-    Serial.print(F("Reading CHARGE_CURRENT (0x14): "));
+    DBG.print(F("Reading CHARGE_CURRENT (0x14): "));
     if (readRegister(BQ24780SConst::Registers::CHARGE_CURRENT, &reg_value)) {
-        Serial.printf(F("0x%04X"), reg_value);
+        DBG.printf(F("0x%04X"), reg_value);
         uint16_t current_bits = (reg_value >> 6) & 0x7F;
         uint16_t current_mA = current_bits * static_cast<uint16_t>(BQ24780SConst::Current::CHARGE_CURRENT_STEP);
-        Serial.printf(F("  -> Current: %u mA (%.2f A)\n"), current_mA, current_mA / 1000.0f);
+        DBG.printf(F("  -> Current: %u mA (%.2f A)\n"), current_mA, current_mA / 1000.0f);
     } else {
-        Serial.println(F("FAILED"));
+        DBG.println(F("FAILED"));
         success = false;
     }
     
-    Serial.print(F("Reading CHARGE_OPTION0 (0x12): "));
+    DBG.print(F("Reading CHARGE_OPTION0 (0x12): "));
     if (readRegister(BQ24780SConst::Registers::CHARGE_OPTION0, &reg_value)) {
-        Serial.printf(F("0x%04X"), reg_value);
-        Serial.print(F("  -> "));
-        Serial.print(F("CHRG_INHIBIT (Bit0): "));
-        Serial.print((reg_value & 0x01) ? F("1 (Charging DISABLED)\n") : F("0 (Charging ENABLED)\n"));
+        DBG.printf(F("0x%04X"), reg_value);
+        DBG.print(F("  -> "));
+        DBG.print(F("CHRG_INHIBIT (Bit0): "));
+        DBG.print((reg_value & 0x01) ? F("1 (Charging DISABLED)\n") : F("0 (Charging ENABLED)\n"));
         
-        Serial.print(F("    IDCHG Gain (Bit3): "));
-        Serial.println((reg_value & 0x08) ? F("16x") : F("8x"));
+        DBG.print(F("    IDCHG Gain (Bit3): "));
+        DBG.println((reg_value & 0x08) ? F("16x") : F("8x"));
         
-        Serial.print(F("    IADP Gain (Bit4): "));
-        Serial.println((reg_value & 0x10) ? F("40x") : F("20x"));
+        DBG.print(F("    IADP Gain (Bit4): "));
+        DBG.println((reg_value & 0x10) ? F("40x") : F("20x"));
     } else {
-        Serial.println(F("FAILED"));
+        DBG.println(F("FAILED"));
         success = false;
     }
     
     // CHARGE_OPTION2 (0x38) - EN_BATT_BOOST / VBOOST (BQ24800)
     if (chip_variant_ == BQ24780SConst::ChipVariant::BQ24800) {
-        Serial.print(F("Reading CHARGE_OPTION2 (0x38): "));
+        DBG.print(F("Reading CHARGE_OPTION2 (0x38): "));
         if (readRegister(BQ24780SConst::Registers::CHARGE_OPTION2, &reg_value)) {
-            Serial.printf(F("0x%04X"), reg_value);
-            Serial.print(F("  -> EN_BATT_BOOST (Bit6): "));
-            Serial.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT)) ? F("1 (Enabled)") : F("0 (Disabled)"));
-            Serial.print(F("    VBOOST (Bit5): "));
-            Serial.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_VBOOST_BIT)) ? F("1 (VSYSMIN+2.3V)") : F("0 (VSYSMIN+1.5V)"));
+            DBG.printf(F("0x%04X"), reg_value);
+            DBG.print(F("  -> EN_BATT_BOOST (Bit6): "));
+            DBG.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_EN_BATT_BOOST_BIT)) ? F("1 (Enabled)") : F("0 (Disabled)"));
+            DBG.print(F("    VBOOST (Bit5): "));
+            DBG.println((reg_value & (1 << BQ24780SConst::Registers::CHARGE_OPTION2_VBOOST_BIT)) ? F("1 (VSYSMIN+2.3V)") : F("0 (VSYSMIN+1.5V)"));
         } else {
-            Serial.println(F("FAILED"));
+            DBG.println(F("FAILED"));
             success = false;
         }
 
         // VSYS_MIN (0x3E)
-        Serial.print(F("Reading VSYS_MIN (0x3E): "));
+        DBG.print(F("Reading VSYS_MIN (0x3E): "));
         if (readRegister(BQ24780SConst::Registers::VSYS_MIN, &reg_value)) {
-            Serial.printf(F("0x%04X"), reg_value);
+            DBG.printf(F("0x%04X"), reg_value);
             uint16_t vsys_min_bits = (reg_value >> 8) & 0x3F;
             uint16_t vsys_min_mV = vsys_min_bits * BQ24780SConst::Voltage::VSYS_MIN_STEP;
-            Serial.printf(F("  -> VsysMin: %u mV (%.3f V)\n"), vsys_min_mV, vsys_min_mV / 1000.0f);
+            DBG.printf(F("  -> VsysMin: %u mV (%.3f V)\n"), vsys_min_mV, vsys_min_mV / 1000.0f);
         } else {
-            Serial.println(F("FAILED"));
+            DBG.println(F("FAILED"));
             success = false;
         }
     }
 
     if (success) {
-        Serial.println(F("=====================================================\n"));
+        DBG.println(F("=====================================================\n"));
     } else {
-        Serial.println(F("===== Some registers failed to read =====\n"));
+        DBG.println(F("===== Some registers failed to read =====\n"));
     }
 
     return success;
@@ -797,7 +798,7 @@ bool BQ24780S::readAllRegisters(uint16_t* values) {
     // 逐个读取寄存器
     for (int i = 0; i < num_registers; i++) {
         if (!readRegister(registers[i], &values[i])) {
-            Serial.printf_P(PSTR("BQ24780S: Failed to read register 0x%02X\n"), registers[i]);
+            DBG.printf_P(PSTR("BQ24780S: Failed to read register 0x%02X\n"), registers[i]);
             return false;
         }
     }

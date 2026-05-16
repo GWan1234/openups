@@ -1,6 +1,7 @@
 #include "bq76920.h"
 #include "i2c_interface.h"
 #include <Arduino.h>
+#include "debug.h"
 
 // =============================================================================
 // Constructor and Initialization
@@ -29,19 +30,19 @@ BQ76920::BQ76920(I2CInterface& i2c_interface)
 bool BQ76920::begin() {    
     // Verify I2C interface availability
     if (i2c == nullptr) {
-        Serial.println(F("BQ76920: I2C interface not available"));
+        DBG.println(F("BQ76920: I2C interface not available"));
         return false;
     }
     
     // Check device connection status
     if (!isConnected()) {
-        Serial.println(F("BQ76920: Device not connected"));
+        DBG.println(F("BQ76920: Device not connected"));
         return false;
     }
     //首先要关闭充放电，以免旧设置影响
     setMOS(0,0);
     delay(INIT_DELAY_MS);
-    Serial.println(F("BQ76920: Initialized successfully"));
+    DBG.println(F("BQ76920: Initialized successfully"));
     return true;
 }
 
@@ -52,7 +53,7 @@ bool BQ76920::begin() {
  */
 bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     if (config.cell_count < 3 || config.cell_count > 5) {
-        Serial.println(F("BQ76920: Invalid cell count, must be 3-5"));
+        DBG.println(F("BQ76920: Invalid cell count, must be 3-5"));
         return false;
     }
     
@@ -60,14 +61,14 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     actual_cell_count = config.cell_count;
     
     if (!writeRegister(STATUS_REG_ADDR, 0xff)) {
-        Serial.println(F("BQ76920: Failed to clear status register"));
+        DBG.println(F("BQ76920: Failed to clear status register"));
         return false;
     }
     delay(INIT_DELAY_MS);
 
     // cc_cfg write 0x19
     if (!writeRegister(CC_CFG_REG_ADDR, 0x19)) {
-        Serial.println(F("BQ76920: Failed to write CC_CFG register"));
+        DBG.println(F("BQ76920: Failed to write CC_CFG register"));
         return false;
     }
     delay(INIT_DELAY_MS);
@@ -75,14 +76,14 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     // Force disable cell balancing to prevent 100 ohm resistor from causing voltage drop
     // 用户后续可通过 setCellBalance 开启
     if (!writeRegister(CELL_BALANCE_REG_ADDR, 0x00)) {
-        Serial.println(F("BQ76920: Failed to disable cell balancing"));
+        DBG.println(F("BQ76920: Failed to disable cell balancing"));
         return false;
     }
     delay(INIT_DELAY_MS);
 
     uint8_t sys_ctrl1;
     if (!readRegister(SYS_CTRL1_REG_ADDR, &sys_ctrl1)) {
-        Serial.println(F("BQ76920: Failed to read SYS_CTRL1 register"));
+        DBG.println(F("BQ76920: Failed to read SYS_CTRL1 register"));
         return false;
     }
     
@@ -90,12 +91,12 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     // Bit 3 (TEMP_SEL): 1 for external NTC, 0 for internal sensing. Usually select 1
     sys_ctrl1 |= (ADC_ENABLE_BIT | TEMP_SELECT_BIT);
     if (!writeRegister(SYS_CTRL1_REG_ADDR, sys_ctrl1)) {
-        Serial.println(F("BQ76920: Failed to enable ADC and temperature sensing"));
+        DBG.println(F("BQ76920: Failed to enable ADC and temperature sensing"));
         return false;
     }
 
     // Read gain and offset calibration parameters ---
-    Serial.println(F("BQ76920: Reading calibration parameters..."));
+    DBG.println(F("BQ76920: Reading calibration parameters..."));
     uint8_t retry = INIT_RETRY_COUNT;
     bool calibration_success = false;
     
@@ -109,7 +110,7 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     }
     
     if (!calibration_success) {
-        Serial.println(F("BQ76920: Calibration parameter read failed, using defaults"));
+        DBG.println(F("BQ76920: Calibration parameter read failed, using defaults"));
         bq_gain = DEFAULT_CALIBRATION_GAIN;
         bq_offset = 0;
     }
@@ -117,12 +118,12 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     // Force correction! Give it a reasonable value regardless of what was read
     if(getBqOffset() < CALIBRATION_OFFSET_MIN || getBqOffset() > CALIBRATION_OFFSET_MAX) {
         bq_offset = 0;
-        Serial.println(F("BQ76920: Offset out of range, reset to 0"));
+        DBG.println(F("BQ76920: Offset out of range, reset to 0"));
     }
 
     if(getBqGain() < CALIBRATION_GAIN_MIN || getBqGain() > CALIBRATION_GAIN_MAX) {
         bq_gain = DEFAULT_CALIBRATION_GAIN;
-        Serial.println(F("BQ76920: Gain out of range, using default value"));
+        DBG.println(F("BQ76920: Gain out of range, using default value"));
     }
     
     // Apply gain adjustment factor
@@ -132,54 +133,54 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
     uint8_t ovReg = calculateTripReg(config.cell_ov_threshold, bq_gain, bq_offset);
     uint8_t uvReg = calculateTripReg(config.cell_uv_threshold, bq_gain, bq_offset);
     if (!writeRegister(OV_TRIP_REG_ADDR, ovReg)) {
-        Serial.println(F("BQ76920: Failed to configure over-voltage threshold"));
+        DBG.println(F("BQ76920: Failed to configure over-voltage threshold"));
         return false;
     }
     if (!writeRegister(UV_TRIP_REG_ADDR, uvReg)) {
-        Serial.println(F("BQ76920: Failed to configure under-voltage threshold"));
+        DBG.println(F("BQ76920: Failed to configure under-voltage threshold"));
         return false;
     }
 
     // Configure Over/Under Voltage Delays (PROTECT3)
     uint8_t protect3 = ((config.uv_delay & 0x03) << 6) | ((config.ov_delay & 0x03) << 4);
     if (!writeRegister(PROTECT3_REG_ADDR, protect3)) {
-        Serial.println(F("BQ76920: Failed to configure voltage protection delay"));
+        DBG.println(F("BQ76920: Failed to configure voltage protection delay"));
         return false;
     }
 
     // Configure Over-Current/Short-Circuit Protection (OCD/SCD)
     if (!setOCDSCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay,
                              config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
-        Serial.println(F("BQ76920: Failed to configure over-current and short circuit protection"));
+        DBG.println(F("BQ76920: Failed to configure over-current and short circuit protection"));
         return false;
     }
     
-    Serial.printf_P(PSTR("BQ76920: Initialization complete. Cells: %d, Gain: %.4f mV/LSB, Offset: %d mV\n"), 
+    DBG.printf_P(PSTR("BQ76920: Initialization complete. Cells: %d, Gain: %.4f mV/LSB, Offset: %d mV\n"), 
     actual_cell_count, bq_gain, bq_offset);
     
     // Initialize coulomb counter if enabled
     if (config.coulomb_counter_enabled) {
         uint8_t sys_ctrl2;
         if (!readRegister(SYS_CTRL2_REG_ADDR, &sys_ctrl2)) {
-            Serial.println(F("BQ76920: Failed to read SYS_CTRL2 register"));
+            DBG.println(F("BQ76920: Failed to read SYS_CTRL2 register"));
             return false;
         }
         
         // Bit 6 (CC_EN): Enable continuous current sampling
         sys_ctrl2 |= CC_ENABLE_BIT;
         if (!writeRegister(SYS_CTRL2_REG_ADDR, sys_ctrl2)) {
-            Serial.println(F("BQ76920: Failed to enable coulomb counter"));
+            DBG.println(F("BQ76920: Failed to enable coulomb counter"));
             return false;
         }
 
         // --- Step 3: Necessary waiting ---
-        Serial.println(F("BQ76920: Waiting for ADC stabilization..."));
+        DBG.println(F("BQ76920: Waiting for ADC stabilization..."));
         delay(ADC_STABILIZE_DELAY_MS);
-        Serial.println(F("BMS: Calibrating current zero drift..."));
+        DBG.println(F("BMS: Calibrating current zero drift..."));
         calibrateCurrentZero();
     }
     
-    Serial.println(F("BQ76920: Chip initialized successfully"));
+    DBG.println(F("BQ76920: Chip initialized successfully"));
     return true;
 }
 
@@ -193,7 +194,7 @@ bool BQ76920::initializeChip(const BQ76920_InitConfig &config) {
 bool BQ76920::updateConfiguration(const BQ76920_InitConfig &config) {
     // 验证电池串数有效性（但不修改已初始化的值）
     if (config.cell_count < 3 || config.cell_count > 5) {
-        Serial.println(F("BQ76920: Invalid cell count in update, must be 3-5"));
+        DBG.println(F("BQ76920: Invalid cell count in update, must be 3-5"));
         return false;
     }
     
@@ -204,31 +205,31 @@ bool BQ76920::updateConfiguration(const BQ76920_InitConfig &config) {
     uint8_t uvReg = calculateTripReg(config.cell_uv_threshold, bq_gain, bq_offset);
     
     if (!writeRegister(OV_TRIP_REG_ADDR, ovReg)) {
-        Serial.println(F("BQ76920: Failed to update over-voltage threshold"));
+        DBG.println(F("BQ76920: Failed to update over-voltage threshold"));
         success = false;
     }
     
     if (!writeRegister(UV_TRIP_REG_ADDR, uvReg)) {
-        Serial.println(F("BQ76920: Failed to update under-voltage threshold"));
+        DBG.println(F("BQ76920: Failed to update under-voltage threshold"));
         success = false;
     }
     
     // 2. 更新过压/欠压延时
     uint8_t protect3 = ((config.uv_delay & 0x03) << 6) | ((config.ov_delay & 0x03) << 4);
     if (!writeRegister(PROTECT3_REG_ADDR, protect3)) {
-        Serial.println(F("BQ76920: Failed to update voltage protection delay"));
+        DBG.println(F("BQ76920: Failed to update voltage protection delay"));
         success = false;
     }
     
     // 3. 更新过流/短路保护配置 (联合设置，共享 RSNS 位)
     if (!setOCDSCDProtection(config.max_discharge_current * RSENSE_VALUE, config.ocd_delay,
                              config.short_circuit_threshold * RSENSE_VALUE, config.scd_delay)) {
-        Serial.println(F("BQ76920: Failed to update over-current and short circuit protection"));
+        DBG.println(F("BQ76920: Failed to update over-current and short circuit protection"));
         success = false;
     }
     
     if (success) {
-        Serial.printf_P(PSTR("BQ76920: Configuration updated. Cells: %d, OV: %dmV, UV: %dmV, Max Current: %dmA\n"),
+        DBG.printf_P(PSTR("BQ76920: Configuration updated. Cells: %d, OV: %dmV, UV: %dmV, Max Current: %dmA\n"),
             config.cell_count, config.cell_ov_threshold, config.cell_uv_threshold, config.max_discharge_current);
     }
     
@@ -468,7 +469,7 @@ void BQ76920::calibrateCurrentZero() {
     if (readRegisterWord(CURRENT_REG_HIGH, &raw_word)) {
         // 直接转为有符号 16 位，因为 CC 是补码格式
         current_zero_drift = (int16_t)raw_word;
-        Serial.printf_P(PSTR("BQ76920: Current zero drift calibrated to %d\n"), current_zero_drift);
+        DBG.printf_P(PSTR("BQ76920: Current zero drift calibrated to %d\n"), current_zero_drift);
     }
 }
 int16_t BQ76920::getCurrent_mA() {
@@ -865,7 +866,7 @@ bool BQ76920::setCellBalance(uint8_t cellMask) {
     
     // 检查相邻电芯均衡警告
     if (hwBalanceMask & (hwBalanceMask << 1)) {
-        Serial.println(F("Warning: Adjacent cells balanced simultaneously!"));
+        DBG.println(F("Warning: Adjacent cells balanced simultaneously!"));
     }
     
     return writeRegister(CELL_BALANCE_REG_ADDR, hwBalanceMask);
@@ -978,18 +979,18 @@ void BQ76920::printRegisters() {
         "CC_CFG       (0x0B)"
     };
     
-    Serial.println(F("=== BQ76920 Register Dump ==="));
+    DBG.println(F("=== BQ76920 Register Dump ==="));
     
     for (int i = 0; i < 9; i++) {
         uint8_t value = 0;
         if (readRegister(registers[i], &value)) {
-            Serial.printf_P(PSTR("%s: 0x%02X (%03d)\r\n"), regNames[i], value, value);
+            DBG.printf_P(PSTR("%s: 0x%02X (%03d)\r\n"), regNames[i], value, value);
         } else {
-            Serial.printf_P(PSTR("%s: READ FAILED\r\n"), regNames[i]);
+            DBG.printf_P(PSTR("%s: READ FAILED\r\n"), regNames[i]);
         }
     }
     
-    Serial.println(F("==============================="));
+    DBG.println(F("==============================="));
 }
 
 // =============================================================================
@@ -1050,7 +1051,7 @@ bool BQ76920::readAllRegisters(uint8_t* values) {
     // 逐个读取寄存器
     for (int i = 0; i < num_registers; i++) {
         if (!readRegister(registers[i], &values[i])) {
-            Serial.printf_P(PSTR("BQ76920: Failed to read register 0x%02X\n"), registers[i]);
+            DBG.printf_P(PSTR("BQ76920: Failed to read register 0x%02X\n"), registers[i]);
             return false;
         }
     }

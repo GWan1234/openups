@@ -1,6 +1,7 @@
 #include "src/WiFiManager.h"
 #include <Arduino.h>
 #include "src/event_bus.h"
+#include "src/debug.h"
 
 WiFiManager::WiFiManager(HardwareInterface* hw) : hardware(hw), _lastConnectAttempt(0), _isAPMode(false), _lastTick(0) {
     memset(_ssid, 0, sizeof(_ssid));
@@ -23,8 +24,8 @@ void WiFiManager::begin(const Configuration* config) {
         return;
     }
 
-    Serial.print(F("WiFi: "));
-    Serial.println(_ssid);
+    DBG.print(F("WiFi: "));
+    DBG.println(_ssid);
     WiFi.mode(WIFI_STA);
     applyNetworkConfig(config);
 }
@@ -40,8 +41,8 @@ void WiFiManager::generateDeviceName(const char* identifier) {
 void WiFiManager::startAPMode(const char* apPassword) {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(_deviceName, apPassword);
-    Serial.print(F("AP: "));
-    Serial.println(WiFi.softAPIP());
+    DBG.print(F("AP: "));
+    DBG.println(WiFi.softAPIP());
     _isAPMode = true;
     updateLEDStatus();
 }
@@ -98,8 +99,8 @@ void WiFiManager::applyNetworkConfig(const Configuration* config) {
         WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
     }
 
-    Serial.print(F("Connect: "));
-    Serial.println(_ssid);
+    DBG.print(F("Connect: "));
+    DBG.println(_ssid);
     WiFi.setHostname(_deviceName);
     WiFi.begin(_ssid, _password);
     _lastConnectAttempt = millis();
@@ -128,7 +129,7 @@ void WiFiManager::onWiFiConfigChanged(EventType, void* param) {
 
     extern WiFiManager* wifiManager;
     if (wifiManager == nullptr) {
-        Serial.println(F("[EVENT] ERROR: Wifimanager is null"));
+        DBG.println(F("[EVENT] ERROR: Wifimanager is null"));
         return;
     }
 
@@ -144,11 +145,11 @@ void WiFiManager::handleWiFiConfigChange(const Configuration* newConfig) {
     bool passChanged = (strcmp(_password, newConfig->wifi_pass) != 0);
 
     if (!ssidChanged && !passChanged) {
-        Serial.println(F("[WiFiMgr] WiFi config unchanged, skip reconnect"));
+        DBG.println(F("[WiFiMgr] WiFi config unchanged, skip reconnect"));
         return;
     }
 
-    Serial.println(F("[WiFiMgr] WiFi config changed, applying new settings..."));
+    DBG.println(F("[WiFiMgr] WiFi config changed, applying new settings..."));
 
     // 复制新配置到本地缓冲区
     strlcpy(_ssid, newConfig->wifi_ssid, sizeof(_ssid));
@@ -159,14 +160,14 @@ void WiFiManager::handleWiFiConfigChange(const Configuration* newConfig) {
 
     // 如果 SSID 为空，切换到 AP 模式
     if (isSSIDEmpty()) {
-        Serial.println(F("[WiFiMgr] SSID is empty, switching to AP mode"));
+        DBG.println(F("[WiFiMgr] SSID is empty, switching to AP mode"));
         startAPMode();
         return;
     }
 
     // 先断开现有连接（延迟 500ms 清理资源）
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println(F("[WiFiMgr] Disconnecting from current WiFi..."));
+        DBG.println(F("[WiFiMgr] Disconnecting from current WiFi..."));
         WiFi.disconnect(true);
     }
 

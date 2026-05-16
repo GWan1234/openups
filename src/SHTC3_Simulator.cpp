@@ -5,31 +5,46 @@ SHTC3_Simulator *SHTC3_Simulator::_instance = nullptr;
 void SHTC3_Simulator::begin(TwoWire &wire, int sdaPin, int sclPin) {
     _wire = &wire;
     _instance = this;
+    rebuildBuffers();
     _wire->begin((uint8_t)SHTC3_I2C_ADDR, sdaPin, sclPin, 0);
     _wire->onReceive(SHTC3_Simulator::onReceive);
     _wire->onRequest(SHTC3_Simulator::onRequest);
 }
 
 void SHTC3_Simulator::cleanup() {
-    // 清除全局实例指针，防止悬空指针访问
     if (_instance == this) {
         _instance = nullptr;
     }
-    // 注意：ESP32 Wire 库不支持动态注销回调
-    // 但通过将 _instance 置 nullptr，回调函数中的安全检查会阻止访问已释放对象
 }
 
 void SHTC3_Simulator::setTemperature(float tempC) {
     _temperature = constrain(tempC, -40.0f, 125.0f);
+    rebuildBuffers();
 }
 
 void SHTC3_Simulator::setHumidity(float rhPercent) {
     _humidity = constrain(rhPercent, 0.0f, 100.0f);
+    rebuildBuffers();
 }
 
 void SHTC3_Simulator::setValues(float tempC, float rhPercent) {
-    setTemperature(tempC);
-    setHumidity(rhPercent);
+    _temperature = constrain(tempC, -40.0f, 125.0f);
+    _humidity = constrain(rhPercent, 0.0f, 100.0f);
+    rebuildBuffers();
+}
+
+void SHTC3_Simulator::rebuildBuffers() {
+    uint16_t rawT  = toRawTemp(_temperature);
+    uint16_t rawRH = toRawRH(_humidity);
+
+    uint8_t t[2]  = { (uint8_t)(rawT >> 8), (uint8_t)(rawT & 0xFF) };
+    uint8_t rh[2] = { (uint8_t)(rawRH >> 8), (uint8_t)(rawRH & 0xFF) };
+
+    _respTFirst[0] = t[0];  _respTFirst[1] = t[1];  _respTFirst[2] = crc8(t, 2);
+    _respTFirst[3] = rh[0]; _respTFirst[4] = rh[1]; _respTFirst[5] = crc8(rh, 2);
+
+    _respRHFirst[0] = rh[0]; _respRHFirst[1] = rh[1]; _respRHFirst[2] = crc8(rh, 2);
+    _respRHFirst[3] = t[0];  _respRHFirst[4] = t[1];  _respRHFirst[5] = crc8(t, 2);
 }
 
 void SHTC3_Simulator::update() {
@@ -37,8 +52,6 @@ void SHTC3_Simulator::update() {
 
 void SHTC3_Simulator::onReceive(int len) {
     if (!_instance || len < 2) return;
-
-    _instance->_txLen = 0;
 
     TwoWire *w = _instance->_wire;
     uint8_t hi = w->read();
@@ -50,7 +63,10 @@ void SHTC3_Simulator::onReceive(int len) {
 
 void SHTC3_Simulator::onRequest() {
     if (!_instance) return;
-    _instance->_wire->write(_instance->_txBuf, _instance->_txLen);
+
+    for (int i = 0; i < _instance->_txLen; i++) {
+        _instance->_wire->write(_instance->_txBuf[i]);
+    }
 }
 
 void SHTC3_Simulator::prepareResponse(uint16_t cmd) {
@@ -61,20 +77,7 @@ void SHTC3_Simulator::prepareResponse(uint16_t cmd) {
         case 0x609C: case 0x401A: {
             bool tFirst = (cmd == 0x7CA2 || cmd == 0x7866 ||
                            cmd == 0x6458 || cmd == 0x609C);
-
-            uint16_t rawT  = toRawTemp(_temperature);
-            uint16_t rawRH = toRawRH(_humidity);
-
-            uint8_t t[2]  = { (uint8_t)(rawT >> 8), (uint8_t)(rawT & 0xFF) };
-            uint8_t rh[2] = { (uint8_t)(rawRH >> 8), (uint8_t)(rawRH & 0xFF) };
-
-            if (tFirst) {
-                _txBuf[0] = t[0];  _txBuf[1] = t[1];  _txBuf[2] = crc8(t, 2);
-                _txBuf[3] = rh[0]; _txBuf[4] = rh[1]; _txBuf[5] = crc8(rh, 2);
-            } else {
-                _txBuf[0] = rh[0]; _txBuf[1] = rh[1]; _txBuf[2] = crc8(rh, 2);
-                _txBuf[3] = t[0];  _txBuf[4] = t[1];  _txBuf[5] = crc8(t, 2);
-            }
+            memcpy(_txBuf, tFirst ? _respTFirst : _respRHFirst, 6);
             _txLen = 6;
             break;
         }
@@ -87,12 +90,6 @@ void SHTC3_Simulator::prepareResponse(uint16_t cmd) {
             _txLen = 3;
             break;
         }
-
-        case 0x3517:
-        case 0xB098:
-        case 0x805D:
-            _txLen = 0;
-            break;
 
         default:
             _txLen = 0;

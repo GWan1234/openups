@@ -151,6 +151,9 @@ public:
     // 静置/活跃状态检测
     bool is_quiescent_;                      // 当前是否处于静置状态
     unsigned long quiescent_start_time_;     // 进入静置状态的开始时间
+
+    // 临时SOH压差阈值迟滞状态
+    bool temporary_soh_active_;              // 当前是否启用了临时SOH校正
     static const int QUIESCENT_CURRENT_THRESHOLD = 5;  // 静置电流阈值(mA)
     static const unsigned long QUIESCENT_TIME_THRESHOLD = 10000; // 静置时间阈值(ms)
     void updateQuiescentState(const BMS_State& bmsState);
@@ -206,7 +209,7 @@ public:
     inline void i2cPowerOn() {
         if (!i2c_power_enabled_) {
             digitalWrite(BQ76920_I2CVCC_PIN, HIGH);
-            delayMicroseconds(1200);
+            delayMicroseconds(900);
             i2c_power_enabled_ = true;
         }
     }

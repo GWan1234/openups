@@ -1,6 +1,7 @@
 #include "ups_hid_service.h"
 #include <Arduino.h>
 #include <tusb.h> 
+#include "debug.h"
 
 
 const uint8_t UPS_HID_Service::ups_hid_report_descriptor[] = {
@@ -19,7 +20,7 @@ const uint8_t UPS_HID_Service::ups_hid_report_descriptor[] = {
     0x79, 0x02, //     STRING INDEX (2)
     0xB1, 0x23, //     FEATURE (Constant, Variable, Absolute, No Wrap, Linear, No Preferred, No Null Position, Nonvolatile, Bitfield)
     0x85, HID_PD_SERIAL, //     REPORT_ID (2)
-    0x09, 0xFF, //     USAGE (iSerialNumber)
+    0x09, 0xFF, //     USAGE (iDBGNumber)
     0x79, 0x03, //  STRING INDEX (3)
     0xB1, 0x23, //     FEATURE (Constant, Variable, Absolute, No Wrap, Linear, No Preferred, No Null Position, Nonvolatile, Bitfield)
     0x85, HID_PD_MANUFACTURER, //     REPORT_ID (3)
@@ -199,7 +200,7 @@ bool UPS_HID_Service::begin() {
 
     if (initialized) return true;
 
-    Serial.println(F("[HID] Initializing..."));
+    DBG.println(F("[HID] Initializing..."));
 
     USB.VID(0x051D);
     USB.PID(0x0002);
@@ -261,7 +262,7 @@ bool UPS_HID_Service::isConnected() const {
 
 void UPS_HID_Service::end() {
     if (initialized) {
-        Serial.println(F("[HID] Stopping"));
+        DBG.println(F("[HID] Stopping"));
         initialized = false;
         connected   = false;
     }
@@ -276,40 +277,40 @@ void UPS_HID_Service::setBatteryConfig(uint8_t series_count, uint16_t nominal_vo
     battery_nominal_voltage = nominal_voltage_mV;
     battery_design_capacity = design_capacity_mAh;
     
-    Serial.printf("[HID] Battery config updated: %dS, %dmV, %dmAh\n", 
+    DBG.printf("[HID] Battery config updated: %dS, %dmV, %dmAh\n", 
                   series_count, nominal_voltage_mV, design_capacity_mAh);
 }
 
 void UPS_HID_Service::setCapacityMode(uint8_t mode) {
     if (mode > 2) {
-        Serial.printf("[HID] Invalid capacity mode: %d, using default (mWh)\n", mode);
+        DBG.printf("[HID] Invalid capacity mode: %d, using default (mWh)\n", mode);
         capacity_mode = 1;
     } else {
         capacity_mode = mode;
     }
     // 立即更新静态 featureReport，确保主机获取到最新值
     featureReport.capacity_mode = capacity_mode;
-    Serial.printf("[HID] CapacityMode set to: %d (0=mAh, 1=mWh, 2=%%)\n", capacity_mode);
-    Serial.printf("[HID] featureReport.capacity_mode = %d\n", featureReport.capacity_mode);
+    DBG.printf("[HID] CapacityMode set to: %d (0=mAh, 1=mWh, 2=%%)\n", capacity_mode);
+    DBG.printf("[HID] featureReport.capacity_mode = %d\n", featureReport.capacity_mode);
 }
 
 void UPS_HID_Service::setDefaultSOH(float soh) {
     if (soh < 0.0f || soh > 100.0f) {
-        Serial.printf(F("[HID] Invalid SOH value: %.1f%%, clamped to [0, 100]\n"), soh);
+        DBG.printf(F("[HID] Invalid SOH value: %.1f%%, clamped to [0, 100]\n"), soh);
         default_soh = constrain(soh, 0.0f, 100.0f);
     } else {
         default_soh = soh;
     }
-    Serial.printf(F("[HID] Default SOH set to: %.1f%%\n"), default_soh);
+    DBG.printf(F("[HID] Default SOH set to: %.1f%%\n"), default_soh);
 }
 
 void UPS_HID_Service::setDeviceIdentifier(const char* identifier) {
     if (identifier && strlen(identifier) == 4) {
         device_identifier = identifier;
-        Serial.printf(F("[HID] Device identifier set to: %s\n"), device_identifier);
+        DBG.printf(F("[HID] Device identifier set to: %s\n"), device_identifier);
     } else {
         device_identifier = "0000";
-        Serial.println(F("[HID] Invalid identifier, using default: 0000"));
+        DBG.println(F("[HID] Invalid identifier, using default: 0000"));
     }
 }
 
@@ -593,10 +594,10 @@ void UPS_HID_Service::handleConnectionStatus() {
 
     if (connected != was) {
         if (connected) {
-            Serial.println(F("[HID] +++ CONNECTED"));
+            DBG.println(F("[HID] +++ CONNECTED"));
             lastReportTime = 0;
         } else {
-            Serial.println(F("[HID] --- DISCONNECTED"));
+            DBG.println(F("[HID] --- DISCONNECTED"));
         }
     }
 }
@@ -609,7 +610,7 @@ void UPS_HID_Service::onHidConfigChanged(EventType type, void* param) {
     (void)type;  // 未使用参数
     extern UPS_HID_Service* upsHidService;
     if (upsHidService  == nullptr) {
-        Serial.println(F("[HID] Error: Global instance pointer is null"));
+        DBG.println(F("[HID] Error: Global instance pointer is null"));
         return;
     }
 
@@ -626,7 +627,7 @@ void UPS_HID_Service::handleConfigChange(const Configuration* newConfig) {
         return;
     }
     
-    Serial.println(F("[HID] Configuration changed event received"));
+    DBG.println(F("[HID] Configuration changed event received"));
     
 
     // 更新容量模式
@@ -636,12 +637,12 @@ void UPS_HID_Service::handleConfigChange(const Configuration* newConfig) {
     // 暂不支持热更新，最好重启设备。也不支持热关闭，直接重启咯。
     // 目前保持现有的电池配置不变
     
-    Serial.printf(F("[HID] Config updated: identifier=%s, mode=%d\n"), 
+    DBG.printf(F("[HID] Config updated: identifier=%s, mode=%d\n"), 
                   newConfig->identifier, newConfig->hid_report_mode);
     
     // 标记需要软重启
     pendingRestart = true;
-    Serial.println(F("[HID] USB hot restart requested"));
+    DBG.println(F("[HID] USB hot restart requested"));
 }
 
 // =============================================================================
@@ -651,7 +652,7 @@ void UPS_HID_Service::handleConfigChange(const Configuration* newConfig) {
 void UPS_HID_Service::handleUsbHotRestart() {
     // 阶段 1: 检测是否需要断开 USB
     if (pendingRestart) {
-        Serial.println(F("[HID] Disconnecting USB..."));
+        DBG.println(F("[HID] Disconnecting USB..."));
         tud_disconnect();
         usbStopTime = millis();
         needReconnect = true;
@@ -662,7 +663,7 @@ void UPS_HID_Service::handleUsbHotRestart() {
     
     // 阶段 2: 检测是否需要重新连接 USB
     if (needReconnect && (millis() - usbStopTime >= 1000)) {
-        Serial.println(F("[HID] Reconnecting USB..."));
+        DBG.println(F("[HID] Reconnecting USB..."));
         
         // 重置状态
         initialized = false;
@@ -673,6 +674,6 @@ void UPS_HID_Service::handleUsbHotRestart() {
         needReconnect = false;
         initialized = true;
         
-        Serial.println(F("[HID] USB reconnected successfully"));
+        DBG.println(F("[HID] USB reconnected successfully"));
     }
 }

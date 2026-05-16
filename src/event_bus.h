@@ -2,6 +2,7 @@
 #pragma once
 
 #include "event_types.h"
+#include "debug.h"
 
 // 事件回调函数类型定义
 typedef void (*EventCallback)(EventType type, void* param);
@@ -39,7 +40,7 @@ public:
         
         // 如果空间不足，这里可以选择覆盖最后一个或忽略，这里选择忽略并打印警告
         #ifdef ARDUINO
-        Serial.printf("[EventBus] Warning: Subscriber list full for event %d\n", type);
+        DBG.printf("[EventBus] Warning: Subscriber list full for event %d\n", type);
         #endif
         return false;
     }

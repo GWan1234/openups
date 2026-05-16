@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include "event_bus.h"
 #include "time_utils.h"
+#include "debug.h"
 
 // 定义并初始化静态指针
 BMS* BMS::instancePtr = nullptr;
@@ -26,13 +27,14 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       charge_soh_tracking_(false), charge_soc_start_(0.0f), charge_cc_raw_start_(0.0f),
       partial_cycles_(0.0f),
       config_update_pending_(false),
-      is_quiescent_(false), quiescent_start_time_(0) {
+      is_quiescent_(false), quiescent_start_time_(0),
+      temporary_soh_active_(false) {
     
     memset(&stats_, 0, sizeof(BMS_Statistics_t));
     memset(cell_balance_timer, 0, sizeof(cell_balance_timer));
     
     preferences_.begin(BMS_PREFS_NAMESPACE, false);
-    Serial.println(F("BMS: Constructor done"));
+    DBG.println(F("BMS: Constructor done"));
 }
 
 BMS_Config_t BMS::getDefaultConfig(uint8_t cell_count) {
@@ -53,19 +55,19 @@ BMS_Config_t BMS::getDefaultConfig(uint8_t cell_count) {
 }
 
 bool BMS::begin() {
-    Serial.println(F("BMS: Initializing..."));
+    DBG.println(F("BMS: Initializing..."));
     
     // [关键] 将当前实例保存到静态变量
     instancePtr = this;
     
     if (!validateConfig(config_)) {
-        Serial.println(F("BMS: Invalid config"));
+        DBG.println(F("BMS: Invalid config"));
         return false;
     }
     
     i2cPowerOn();
     if (!bq76920_.isConnected()) {
-        Serial.println(F("BMS: BQ76920 not connected"));
+        DBG.println(F("BMS: BQ76920 not connected"));
         available_ = false;
         initialized_ = true;
         return true;
@@ -73,7 +75,7 @@ bool BMS::begin() {
     
     BQ76920_InitConfig chip_config = generateChipConfig(config_);
     if (!bq76920_.initializeChip(chip_config)) {
-        Serial.println(F("BMS: Chip config failed"));
+        DBG.println(F("BMS: Chip config failed"));
         available_ = false;
         return true;
     }
@@ -82,17 +84,17 @@ bool BMS::begin() {
     
     if (stats_.soh <= 0 || stats_.soh > 100) {
         stats_.soh = 100.0f;
-        Serial.println(F("BMS: SOH reset to 100%"));
+        DBG.println(F("BMS: SOH reset to 100%"));
     }
     
     // 恢复之前保存的剩余容量，而不是重置为-1
     float q_max = getAvailableCapacity();
     if (current_remaining_capacity > 0 && current_remaining_capacity <= q_max) {
-        Serial.printf_P(PSTR("BMS: Restored capacity: %.1f mAh (%.1f%%)\n"),
+        DBG.printf_P(PSTR("BMS: Restored capacity: %.1f mAh (%.1f%%)\n"),
             current_remaining_capacity, (current_remaining_capacity / q_max) * 100.0f);
     } else {
         current_remaining_capacity = -1.0f;
-        Serial.println(F("BMS: No valid stored capacity, will init from OCV"));
+        DBG.println(F("BMS: No valid stored capacity, will init from OCV"));
     }
     
     soc_initialized_ = false;
@@ -103,7 +105,7 @@ bool BMS::begin() {
     full_charge_calibrated_ = false;
     empty_discharge_calibrated_ = false;
     
-    Serial.printf_P(PSTR("BMS: SOH=%.1f%%, waiting for OCV init\n"), stats_.soh);
+    DBG.printf_P(PSTR("BMS: SOH=%.1f%%, waiting for OCV init\n"), stats_.soh);
     
  
     // [修改] 订阅事件回调
@@ -121,7 +123,7 @@ bool BMS::begin() {
     bq76920_.setMOS(1, 1);
     discharge_enabled_ = true;
     charge_enabled_ = true;
-    Serial.println(F("BMS: Init complete, charge/discharge enabled"));
+    DBG.println(F("BMS: Init complete, charge/discharge enabled"));
     
     return true;
 }
@@ -247,7 +249,7 @@ bool BMS::disableDischarge() {
     i2cPowerOn();
     bq76920_.setMOS(charge_enabled_ ? 1 : 0, 0);
     discharge_enabled_ = false;
-    Serial.println(F("BMS: DFET disabled"));
+    DBG.println(F("BMS: DFET disabled"));
     return true;
 }
 
@@ -256,7 +258,7 @@ bool BMS::enableDischarge() {
     i2cPowerOn();
     bq76920_.setMOS(charge_enabled_ ? 1 : 0, 1);
     discharge_enabled_ = true;
-    Serial.println(F("BMS: DFET enabled"));
+    DBG.println(F("BMS: DFET enabled"));
     return true;
 }
 
@@ -265,7 +267,7 @@ bool BMS::disableCharge() {
     i2cPowerOn();
     bq76920_.setMOS(0, discharge_enabled_ ? 1 : 0);
     charge_enabled_ = false;
-    Serial.println(F("BMS: CFET disabled"));
+    DBG.println(F("BMS: CFET disabled"));
     return true;
 }
 
@@ -274,7 +276,7 @@ bool BMS::enableCharge() {
     i2cPowerOn();
     bq76920_.setMOS(1, discharge_enabled_ ? 1 : 0);
     charge_enabled_ = true;
-    Serial.println(F("BMS: CFET enabled"));
+    DBG.println(F("BMS: CFET enabled"));
     return true;
 }
 
@@ -284,7 +286,7 @@ bool BMS::enterShipMode() {
     bool success = bq76920_.enterShipMode();
     if (success) {
         discharge_enabled_ = charge_enabled_ = false;
-        Serial.println(F("BMS: Ship mode entered"));
+        DBG.println(F("BMS: Ship mode entered"));
     }
     return success;
 }
@@ -486,7 +488,7 @@ bool BMS::emergencyShutdown() {
     if (!initialized_) return false;
     i2cPowerOn();
     bq76920_.setMOS(0, 0);
-    Serial.println(F("BMS: Emergency shutdown"));
+    DBG.println(F("BMS: Emergency shutdown"));
     return true;
 }
 
@@ -541,7 +543,7 @@ void BMS::compensateSelfDischarge(unsigned long delta_time_ms) {
     if (current_remaining_capacity < 0) current_remaining_capacity = 0;
     
     if (loss_mah > 1.0f) {
-        Serial.printf_P(PSTR("BMS: Self-discharge %.2fmAh over %.2f days\n"), loss_mah, days);
+        DBG.printf_P(PSTR("BMS: Self-discharge %.2fmAh over %.2f days\n"), loss_mah, days);
     }
 }
 
@@ -599,10 +601,19 @@ float BMS::calculateSOC_FromVoltage(uint16_t voltage_mv) {
 void BMS::updateTemporarySOH(BMS_State& bmsState) {
     uint16_t voltage_diff = bmsState.cell_voltage_max - bmsState.cell_voltage_min;
 
-    // 压差小于50mV时，不启用临时SOH
-    if (voltage_diff < 50) {
-        bmsState.temporary_soh = stats_.soh;
-        return;
+    // 压差迟滞：进入阈值50mV，退出阈值40mV，避免在临界点反复切换
+    if (temporary_soh_active_) {
+        if (voltage_diff < 40) {
+            temporary_soh_active_ = false;
+            bmsState.temporary_soh = stats_.soh;
+            return;
+        }
+    } else {
+        if (voltage_diff < 50) {
+            bmsState.temporary_soh = stats_.soh;
+            return;
+        }
+        temporary_soh_active_ = true;
     }
 
     float soc_min = calculateSOC_FromVoltage(bmsState.cell_voltage_min);
@@ -636,7 +647,7 @@ bool BMS::applyNewConfig(const BMS_Config_t& config) {
     pending_config_ = config;
     config_update_pending_ = true;
     
-    Serial.println(F("BMS: Config update marked, will apply in next update cycle"));
+    DBG.println(F("BMS: Config update marked, will apply in next update cycle"));
     return true;
 }
 
@@ -651,13 +662,13 @@ void BMS::applyPendingConfig() {
             // 硬件配置更新成功，更新内部配置并清除标记
             config_ = pending_config_;
             config_update_pending_ = false;
-            Serial.println(F("BMS: Pending config applied to chip successfully"));
+            DBG.println(F("BMS: Pending config applied to chip successfully"));
         } else {
-            Serial.println(F("BMS: WARNING - Failed to update chip config, will retry"));
+            DBG.println(F("BMS: WARNING - Failed to update chip config, will retry"));
             // 注意：不清除标记，下次循环继续尝试
         }
     } else {
-        Serial.println(F("BMS: WARNING - Chip not connected, config saved but not applied to chip"));
+        DBG.println(F("BMS: WARNING - Chip not connected, config saved but not applied to chip"));
         // 芯片未连接时，仍然更新内部配置并清除标记（避免无限重试）
         config_ = pending_config_;
         config_update_pending_ = false;
@@ -687,7 +698,7 @@ void BMS::updateSOC(BMS_State& bmsState) {
     
     // ========== SOC 初始化 ==========
     if (!soc_initialized_) {
-        Serial.println(F("BMS: SOC init starting..."));
+        DBG.println(F("BMS: SOC init starting..."));
         
         // 优先使用已恢复的存储容量
         if (current_remaining_capacity > 0 && current_remaining_capacity <= q_max) {
@@ -695,7 +706,7 @@ void BMS::updateSOC(BMS_State& bmsState) {
             soc_initialized_ = true;
             soc_waiting_for_stable_ = false;
             bmsState.soc = constrain(last_stable_soc_, 0.0f, 100.0f);
-            Serial.printf_P(PSTR("BMS: SOC init from stored capacity: %.1f%%\n"), bmsState.soc);
+            DBG.printf_P(PSTR("BMS: SOC init from stored capacity: %.1f%%\n"), bmsState.soc);
             return;
         }
         
@@ -707,7 +718,7 @@ void BMS::updateSOC(BMS_State& bmsState) {
             soc_waiting_for_stable_ = true;
             soc_stable_start_time_ = current_time;
             bmsState.soc = 50.0f;
-            Serial.println(F("BMS: SOC init 50% (high current, waiting for stable)"));
+            DBG.println(F("BMS: SOC init 50% (high current, waiting for stable)"));
             return;
         }
         
@@ -717,18 +728,18 @@ void BMS::updateSOC(BMS_State& bmsState) {
             current_remaining_capacity = q_max * (soc_ocv / 100.0f);
             last_stable_soc_ = soc_ocv;
             soc_waiting_for_stable_ = false;
-            Serial.printf_P(PSTR("BMS: SOC init by OCV: %.1f%%\n"), soc_ocv);
+            DBG.printf_P(PSTR("BMS: SOC init by OCV: %.1f%%\n"), soc_ocv);
         } else {
             // OCV不可用，默认50%
             current_remaining_capacity = q_max * 0.5f;
             last_stable_soc_ = 50.0f;
             soc_waiting_for_stable_ = false;
-            Serial.println(F("BMS: SOC init default 50% (OCV unavailable)"));
+            DBG.println(F("BMS: SOC init default 50% (OCV unavailable)"));
         }
         
         soc_initialized_ = true;
         bmsState.soc = constrain(last_stable_soc_, 0.0f, 100.0f);
-        Serial.printf_P(PSTR("BMS: SOC init done: %.1f%%\n"), bmsState.soc);
+        DBG.printf_P(PSTR("BMS: SOC init done: %.1f%%\n"), bmsState.soc);
         return;
     }
     
@@ -740,7 +751,7 @@ void BMS::updateSOC(BMS_State& bmsState) {
                 if (soc_ocv > 0 && soc_ocv < 100) {
                     current_remaining_capacity = q_max * (soc_ocv / 100.0f);
                     last_stable_soc_ = soc_ocv;
-                    Serial.printf_P(PSTR("BMS: SOC recalibrated by OCV: %.1f%%\n"), soc_ocv);
+                    DBG.printf_P(PSTR("BMS: SOC recalibrated by OCV: %.1f%%\n"), soc_ocv);
                 }
                 soc_waiting_for_stable_ = false;
             }
@@ -759,14 +770,14 @@ void BMS::updateSOC(BMS_State& bmsState) {
         bmsState.current < cutoff_current) {
         current_remaining_capacity = q_max;
         last_stable_soc_ = 100.0f;
-        Serial.println(F("BMS: SOC anchored to 100% (CV taper)"));
+        DBG.println(F("BMS: SOC anchored to 100% (CV taper)"));
     }
     // 放空锚定：低压 + 小电流放电
     else if (bmsState.cell_voltage_min < 3000 && bmsState.current < 0 && 
              abs(bmsState.current) < cutoff_current) {
         current_remaining_capacity = 0;
         last_stable_soc_ = 0.0f;
-        Serial.println(F("BMS: SOC anchored to 0% (cutoff)"));
+        DBG.println(F("BMS: SOC anchored to 0% (cutoff)"));
     }
     // 低电流时用电压收敛
     else if (abs(bmsState.current) < cutoff_current && soc_voltage > 0) {
@@ -791,7 +802,7 @@ void BMS::updateSOC(BMS_State& bmsState) {
 
     if (soc_delta >= 1.0f) {
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
-        Serial.printf_P(PSTR("BMS: SOC %.1f%% (delta=%.1f%%)\n"), bmsState.soc, soc_delta);
+        DBG.printf_P(PSTR("BMS: SOC %.1f%% (delta=%.1f%%)\n"), bmsState.soc, soc_delta);
     }
 }
 
@@ -811,7 +822,7 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
             // 记录原始库仑计累积值，而不是SOH修正后的值
             soh_learning_ctx_.ah_start = cc_accumulated_raw_mAh_;
             soh_learning_ctx_.learning_start_time = millis();
-            Serial.printf_P(PSTR("BMS: SOH learning started at SOC=%.1f%%\n"), current_soc);
+            DBG.printf_P(PSTR("BMS: SOH learning started at SOC=%.1f%%\n"), current_soc);
         }
     } else {
         // 学习进行中
@@ -831,7 +842,7 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
                     float soh_new = 0.95f * stats_.soh + 0.05f * soh_calc;
                     soh_new = constrain(soh_new, 40.0f, 100.0f);
                     
-                    Serial.printf_P(PSTR("BMS: SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
+                    DBG.printf_P(PSTR("BMS: SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
                         "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
                         delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
                     
@@ -848,7 +859,7 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
             soh_learning_ctx_.is_learning = false;
             soh_learning_ctx_.learning_start_time = millis();
             cc_accumulated_raw_mAh_ = 0.0f;
-            Serial.println(F("BMS: SOH learning cancelled (current changed)"));
+            DBG.println(F("BMS: SOH learning cancelled (current changed)"));
         }
     }
 }
@@ -878,7 +889,7 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
                 float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
                 soh_new = constrain(soh_new, 40.0f, 100.0f);
                 
-                Serial.printf_P(PSTR("BMS: Charge SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
+                DBG.printf_P(PSTR("BMS: Charge SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
                     "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
                     delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
                 
@@ -902,7 +913,7 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
         
         saveToStorage();
         
-        Serial.printf_P(PSTR("BMS: FULL CHARGE calibration: %.1f%% -> 100%% (cap=%.1fmAh)\n"),
+        DBG.printf_P(PSTR("BMS: FULL CHARGE calibration: %.1f%% -> 100%% (cap=%.1fmAh)\n"),
             old_soc, q_max);
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
     }
@@ -932,7 +943,7 @@ void BMS::detectEmptyDischargeCalibration(BMS_State& bmsState) {
         
         saveToStorage();
         
-        Serial.printf_P(PSTR("BMS: EMPTY calibration: %.1f%% -> 0%%\n"), old_soc);
+        DBG.printf_P(PSTR("BMS: EMPTY calibration: %.1f%% -> 0%%\n"), old_soc);
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
     }
 }
@@ -948,7 +959,7 @@ void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
             charge_soc_start_ = bmsState.soc;
             cc_accumulated_raw_mAh_ = 0.0f;
             charge_cc_raw_start_ = 0.0f;
-            Serial.printf_P(PSTR("BMS: Charge SOH tracking started at SOC=%.1f%%\n"), charge_soc_start_);
+            DBG.printf_P(PSTR("BMS: Charge SOH tracking started at SOC=%.1f%%\n"), charge_soc_start_);
         }
     } else if (bmsState.current <= 0) {
         // 充电停止：完成SOH计算（不再依赖满充）
@@ -963,7 +974,7 @@ void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
                 float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
                 soh_new = constrain(soh_new, 40.0f, 100.0f);
 
-                Serial.printf_P(PSTR("BMS: Charge SOH learned (end): dSOC=%.1f%% dAh_raw=%.1f "
+                DBG.printf_P(PSTR("BMS: Charge SOH learned (end): dSOC=%.1f%% dAh_raw=%.1f "
                     "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
                     delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
 
@@ -971,7 +982,7 @@ void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
                 bmsState.soh = stats_.soh;
                 saveToStorage();
             } else {
-                Serial.printf_P(PSTR("BMS: Charge SOH skipped (dSOC=%.1f%%, dAh=%.1f)\n"),
+                DBG.printf_P(PSTR("BMS: Charge SOH skipped (dSOC=%.1f%%, dAh=%.1f)\n"),
                     delta_soc, delta_ah_raw);
             }
 
@@ -992,7 +1003,7 @@ void BMS::updateQuiescentState(const BMS_State& bmsState) {
             } else if (current_time - quiescent_start_time_ >= QUIESCENT_TIME_THRESHOLD) {
                 // 持续10秒后进入静置状态
                 is_quiescent_ = true;
-                Serial.println(F("BMS: Entered quiescent state"));
+                DBG.println(F("BMS: Entered quiescent state"));
             }
         }
     } else {
@@ -1000,7 +1011,7 @@ void BMS::updateQuiescentState(const BMS_State& bmsState) {
         if (is_quiescent_) {
             is_quiescent_ = false;
             quiescent_start_time_ = 0;
-            Serial.printf_P(PSTR("BMS: Entered active state (current=%dmA)\n"), bmsState.current);
+            DBG.printf_P(PSTR("BMS: Entered active state (current=%dmA)\n"), bmsState.current);
         } else {
             quiescent_start_time_ = 0; // 重置计时器
         }
@@ -1062,7 +1073,7 @@ void BMS::updateFaultLogic(BMS_State& bmsState) {
         
         if (bmsState.fault_type == BMS_FAULT_NONE) {
             bmsState.bms_mode = BMS_MODE_NORMAL;
-            Serial.println(F("BMS: Fault cleared"));
+            DBG.println(F("BMS: Fault cleared"));
         } else {
             bmsState.bms_mode = BMS_MODE_FAULT;
         }
@@ -1099,6 +1110,8 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
     
     int16_t current = bq76920_.getCurrent_mA();
     if (current != -32768) {
+        // 零飘死区处理：-5~5mA视为0
+        if (current >= -5 && current <= 5) current = 0;
         bmsState.current = current;
     } else {
         read_success = false;
@@ -1121,7 +1134,7 @@ bool BMS::processCoulombCounterData() {
     
     int16_t raw_cc_value = 0;
     if (!bq76920_.readCoulombCounterRaw(raw_cc_value)) {
-        Serial.println(F("BMS: CC read failed"));
+        DBG.println(F("BMS: CC read failed"));
         cc_ready_pending_ = false;
         return false;
     }
@@ -1167,7 +1180,7 @@ void BMS::accumulatePartialCycle(float delta_mah) {
     while (partial_cycles_ >= 1.0f) {
         stats_.total_cycles++;
         partial_cycles_ -= 1.0f;
-        Serial.printf_P(PSTR("BMS: Cycle count incremented to %u (partial=%.3f)\n"),
+        DBG.printf_P(PSTR("BMS: Cycle count incremented to %u (partial=%.3f)\n"),
             stats_.total_cycles, partial_cycles_);
         saveToStorage();
     }
@@ -1211,7 +1224,7 @@ bool BMS::saveToStorage() {
     preferences_.putFloat(PREFS_KEY_CHG_SOH_SOC, charge_soc_start_);
     preferences_.putFloat(PREFS_KEY_CHG_SOH_CC, charge_cc_raw_start_);
     
-    Serial.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
+    DBG.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
         stats_.soh, current_remaining_capacity, accumulated_charge_mAh, accumulated_discharge_mAh);
     return true;
 }
@@ -1252,10 +1265,13 @@ bool BMS::resetBatteryData() {
     full_charge_calibrated_ = false;
     empty_discharge_calibrated_ = false;
 
+    // 重置临时SOH迟滞状态
+    temporary_soh_active_ = false;
+
     // 持久化到NVS
     bool result = saveToStorage();
 
-    Serial.println(F("[BMS] 电池数据已重置"));
+    DBG.println(F("[BMS] 电池数据已重置"));
     return result;
 }
 

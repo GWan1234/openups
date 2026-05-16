@@ -7,6 +7,7 @@
 #include <time.h>
 #include <esp_task_wdt.h>
 
+#include "src/debug.h"
 #include "src/data_structures.h"
 #include "src/pins_config.h"
 #include "src/config_manager.h"
@@ -58,9 +59,9 @@ MQTTService* mqttService = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.2";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.4";
   strcpy(FIRMWARE_ID_TAG, version);
-  Serial.println(F("Checking for factory reset button..."));
+  DBG.println(F("Checking for factory reset button..."));
   
   const unsigned long detectionTimeout = 3000;
   const unsigned long minPressDuration = 2500;
@@ -73,46 +74,55 @@ bool checkFactoryReset() {
       if (!buttonPressed) {
         pressStartTime = millis();
         buttonPressed = true;
-        Serial.println(F("Reset button pressed, timing..."));
+        DBG.println(F("Reset button pressed, timing..."));
       }
       if (millis() - pressStartTime >= minPressDuration) {
-        Serial.println(F("Factory Reset Triggered!"));
+        DBG.println(F("Factory Reset Triggered!"));
         return true;
       }
     } else if (buttonPressed) {
-      Serial.println(F("Button released too early (< 2.5s)"));
+      DBG.println(F("Button released too early (< 2.5s)"));
       buttonPressed = false;
     }
     delay(1);
   }
   
-  Serial.println(F("Normal Boot"));
+  DBG.println(F("Normal Boot"));
   return false;
 }
 
-// 板型检测: GPIO47新板有硬件上拉，旧板浮空
+// 板型检测: GPIO47新板有外部上拉或下拉，旧板浮空
+// 浮空: PULLUP读HIGH, PULLDOWN读LOW (跟随内部电阻)
+// 有外部上下拉: 内部电阻被外部覆盖，两个读值不会同时满足浮空特征
 bool detectBoardRevision() {
+    pinMode(XIAOMI_SDA_PIN, INPUT_PULLUP);
+    delay(2);
+    bool valUp = digitalRead(XIAOMI_SDA_PIN);
+
     pinMode(XIAOMI_SDA_PIN, INPUT_PULLDOWN);
-    delay(10);
-    bool pinState = digitalRead(XIAOMI_SDA_PIN);
+    delay(2);
+    bool valDown = digitalRead(XIAOMI_SDA_PIN);
+
     pinMode(XIAOMI_SDA_PIN, INPUT);
-    Serial.printf_P(PSTR("Board: GPIO47=%s -> %s board\n"),
-                   pinState ? "HIGH" : "LOW",
-                   pinState ? "NEW" : "OLD");
-    return pinState;
+
+    bool isFloating = valUp && !valDown;
+    bool isNew = !isFloating;
+    DBG.printf_P(PSTR("Board: PULLUP=%d PULLDOWN=%d -> %s board\n"),
+                   valUp, valDown, isNew ? "NEW" : "OLD");
+    return isNew;
 }
 
 template<typename T>
 bool initModule(T*& module, const char* name) {
   unsigned long startTime = millis();
-  Serial.printf_P(PSTR("%s::begin() started\n"), name);
+  DBG.printf_P(PSTR("%s::begin() started\n"), name);
   
   if (!module->begin()) {
-    Serial.printf_P(PSTR("%s::begin() failed after %lu ms\n"), name, millis() - startTime);
+    DBG.printf_P(PSTR("%s::begin() failed after %lu ms\n"), name, millis() - startTime);
     return false;
   }
   
-  Serial.printf_P(PSTR("%s::begin() completed in %lu ms\n"), name, millis() - startTime);
+  DBG.printf_P(PSTR("%s::begin() completed in %lu ms\n"), name, millis() - startTime);
   return true;
 }
 
@@ -121,13 +131,13 @@ bool initModule(T*& module, const char* name) {
 // =============================================================================
 
 bool initializeSystemModules() {
-  Serial.println(F("=== Starting System Module Initialization ==="));
+  DBG.println(F("=== Starting System Module Initialization ==="));
   
   // Step 1: ConfigManager
-  Serial.println(F("Step 1: Initializing ConfigManager..."));
+  DBG.println(F("Step 1: Initializing ConfigManager..."));
   configManager.begin();
   bool needsConfig = configManager.loadConfiguration(g_force_factory_reset);
-  Serial.println(needsConfig ? F("ConfigManager: CONFIG MODE") : F("ConfigManager: NORMAL MODE"));
+  DBG.println(needsConfig ? F("ConfigManager: CONFIG MODE") : F("ConfigManager: NORMAL MODE"));
   delay(1);
   
   systemConfig = configManager.getSystemConfig();
@@ -135,12 +145,12 @@ bool initializeSystemModules() {
   powerConfig = configManager.getPowerConfig();
   
   if (!systemConfig || !bmsConfig || !powerConfig) {
-    Serial.println(F("ERROR: Failed to get configuration pointers"));
+    DBG.println(F("ERROR: Failed to get configuration pointers"));
     return false;
   }
   
   // Step 2: HardwareInterface
-  Serial.println(F("Step 2: Initializing HardwareInterface..."));
+  DBG.println(F("Step 2: Initializing HardwareInterface..."));
   hardware = new HardwareInterface(*systemConfig, !g_is_new_board);
   if (!initModule(hardware, "HardwareInterface")) {
     delete hardware;
@@ -155,31 +165,31 @@ bool initializeSystemModules() {
   
   // Config mode: skip heavy modules
   if (needsConfig) {
-    Serial.println(F("=== CONFIG MODE: Skipping BMS/Power/System modules ==="));
+    DBG.println(F("=== CONFIG MODE: Skipping BMS/Power/System modules ==="));
     bms = nullptr;
     powerManagement = nullptr;
     systemManager = nullptr;
     
-    Serial.println(F("Step 6: Initializing WebServer (CONFIG MODE)..."));
+    DBG.println(F("Step 6: Initializing WebServer (CONFIG MODE)..."));
     webServer = new WebServer(&configManager, nullptr, 80);
     
-    Serial.println(F("Step 7: Initializing WiFiManager..."));
+    DBG.println(F("Step 7: Initializing WiFiManager..."));
     wifiManager = new WiFiManager(hardware);
     delay(1);
     
     hardware->setLED(POWER_LED_PIN, LED_MODE_BLINK_SLOW);
     hardware->setRGBLED(RGB_MODE_BREATHING, {0, 0, 255});
-    Serial.println(F("=== CONFIG MODE Initialization Complete ==="));
+    DBG.println(F("=== CONFIG MODE Initialization Complete ==="));
     return true;
   }
   
   // Normal mode: full initialization
   // Step 3: BMS
-  Serial.println(F("Step 3: Initializing BMS..."));
+  DBG.println(F("Step 3: Initializing BMS..."));
   bms = new BMS(hardware->getI2CInterface(), *bmsConfig);
   
   if (!initModule(bms, "BMS")) {
-    Serial.println(F("WARNING: BMS not found, running in limited mode"));
+    DBG.println(F("WARNING: BMS not found, running in limited mode"));
     delete bms;
     bms = nullptr;
   }
@@ -187,18 +197,18 @@ bool initializeSystemModules() {
   delay(1);
   
   // Step 4: PowerManagement
-  Serial.println(F("Step 4: Initializing PowerManagement..."));
-  Serial.printf_P(PSTR("PowerManagement: BMS pointer is %s\n"), bms ? "valid" : "nullptr");
+  DBG.println(F("Step 4: Initializing PowerManagement..."));
+  DBG.printf_P(PSTR("PowerManagement: BMS pointer is %s\n"), bms ? "valid" : "nullptr");
   powerManagement = new PowerManagement(*powerConfig, *hardware);
   if (!initModule(powerManagement, "PowerManagement")) {
-    Serial.println(F("WARNING: PowerManagement not found, running without charging control"));
+    DBG.println(F("WARNING: PowerManagement not found, running without charging control"));
     delete powerManagement;
     powerManagement = nullptr;
   }
   delay(1);
   
   // Step 5: UPS HID Service (conditional based on config)
-  Serial.println(F("Step 5: Initializing UPS HID Service..."));
+  DBG.println(F("Step 5: Initializing UPS HID Service..."));
   if (systemConfig->hid_enabled) {
     upsHidService = new UPS_HID_Service();
     upsHidService->setDeviceIdentifier(systemConfig->identifier);
@@ -206,7 +216,7 @@ bool initializeSystemModules() {
     upsHidService->setBatteryConfig(bmsConfig->cell_count, 3700, bmsConfig->nominal_capacity_mAh);
     //暂不启动，等待系统启动稳定后启动
   } else {
-    Serial.println(F("UPS HID Service disabled in configuration"));
+    DBG.println(F("UPS HID Service disabled in configuration"));
     upsHidService = nullptr;
   }
   delay(1);
@@ -214,20 +224,20 @@ bool initializeSystemModules() {
   // Step 5.5: Xiaomi Sensor Bridge (仅新板, 条件创建, 延迟启动)
   XiaomiSensorBridge* xiaomiBridge = nullptr;
   if (g_is_new_board && systemConfig->xiaomi_sensor_enabled) {
-      Serial.println(F("Step 5.5: Xiaomi Sensor Bridge (will start delayed)..."));
+      DBG.println(F("Step 5.5: Xiaomi Sensor Bridge (will start delayed)..."));
       xiaomiBridge = new XiaomiSensorBridge();
       xiaomiBridge->setConfig(systemConfig);
   } else {
       if (!g_is_new_board) {
-          Serial.println(F("Xiaomi Sensor Bridge: skipped (old board)"));
+          DBG.println(F("Xiaomi Sensor Bridge: skipped (old board)"));
       } else {
-          Serial.println(F("Xiaomi Sensor Bridge: disabled in config"));
+          DBG.println(F("Xiaomi Sensor Bridge: disabled in config"));
       }
   }
   delay(1);
 
   // Step 6: SystemManagement
-  Serial.println(F("Step 6: Initializing SystemManagement..."));
+  DBG.println(F("Step 6: Initializing SystemManagement..."));
   // MQTT Service initialization (conditional based on config)
   if (systemConfig->mqtt_broker[0] != 0 && systemConfig->mqtt_port > 0) {
     mqttService = new MQTTService();
@@ -236,25 +246,25 @@ bool initializeSystemModules() {
   // SystemManagement with optional MQTT service
   systemManager = new SystemManagement(*hardware, bms, powerManagement, configManager, upsHidService, mqttService, xiaomiBridge);
   if (!systemManager->initialize()) {
-    Serial.println(F("ERROR: Failed to initialize SystemManagement"));
+    DBG.println(F("ERROR: Failed to initialize SystemManagement"));
     delete systemManager;
     systemManager = nullptr;
     return false;
   }
-  Serial.println(F("SystemManagement initialized successfully"));
+  DBG.println(F("SystemManagement initialized successfully"));
   delay(1);
   
   // Step 7: WebServer
-  Serial.println(F("Step 7: Initializing WebServer..."));
+  DBG.println(F("Step 7: Initializing WebServer..."));
   webServer = new WebServer(&configManager, systemManager, 80);
   delay(1);
   
   // Step 8: WiFiManager
-  Serial.println(F("Step 8: Initializing WiFiManager..."));
+  DBG.println(F("Step 8: Initializing WiFiManager..."));
   wifiManager = new WiFiManager(hardware);
   delay(1);
   
-  Serial.println(F("=== All System Modules Initialized Successfully ==="));
+  DBG.println(F("=== All System Modules Initialized Successfully ==="));
   return true;
 }
 
@@ -263,31 +273,31 @@ bool initializeSystemModules() {
 // =============================================================================
 
 void setup() {
-  Serial.begin(115200);
+  DBG.begin(115200);
 
   g_force_factory_reset = checkFactoryReset();
   g_is_new_board = detectBoardRevision();
 
-  Serial.println(F("=== UPS Control System Starting ==="));
-  Serial.printf_P(PSTR("Build: %s %s\n"), __DATE__, __TIME__);
+  DBG.println(F("=== UPS Control System Starting ==="));
+  DBG.printf_P(PSTR("Build: %s %s\n"), __DATE__, __TIME__);
 
   if (!initializeSystemModules()) {
-    Serial.println(F("FATAL Error: System initialization failed"));
-    Serial.println(F("System will restart automatically..."));
+    DBG.println(F("FATAL Error: System initialization failed"));
+    DBG.println(F("System will restart automatically..."));
     delay(100);
     while (1) delay(1000);
   }
   
   // WiFi setup - 统一使用begin()处理所有情况
-  Serial.println(F("Initializing WiFi Manager..."));
+  DBG.println(F("Initializing WiFi Manager..."));
   wifiManager->begin(systemConfig);
   
-  Serial.println(F("Starting WebServer..."));
+  DBG.println(F("Starting WebServer..."));
   webServer->begin();
   
   initTimeSystem(28800, systemConfig->ntp_server); 
   
-  Serial.println(F("=== System Setup Complete ==="));
+  DBG.println(F("=== System Setup Complete ==="));
 }
 
 // =============================================================================

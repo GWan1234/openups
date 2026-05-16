@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <time.h>
 #include <WiFi.h>
+#include "debug.h"
 
 // 【核心技巧】内部静态对象
 // 这个对象只在当前 .cpp 文件中可见，外部无法访问，保证了封装性
@@ -20,7 +21,7 @@ public:
         server = srv;
         configTime(gmtOffset, 0, server);
         lastAttempt = millis();
-        Serial.println("[Time] System initialized.");
+        DBG.println("[Time] System initialized.");
     }
 
     void loop() {
@@ -43,7 +44,7 @@ public:
             if (getLocalTime(&timeinfo)) {
                 char buf[64];
                 strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
-                Serial.printf("[Time] Synced: %s\n", buf);
+                DBG.printf("[Time] Synced: %s\n", buf);
             }
         } else {
             // 可选：重新触发 configTime 以强制重试，视 ESP32 核心版本而定

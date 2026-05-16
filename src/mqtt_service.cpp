@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include "event_bus.h"
 #include "event_types.h"
+#include "debug.h"
 
 
 // =============================================================================
@@ -90,7 +91,9 @@ void MQTTService::setBrokerCredentials(const char* username, const char* passwor
 
 void MQTTService::setStaticInstance(MQTTService* instance) { s_instance = instance; }
 
-void MQTTService::loop() {
+void MQTTService::loop(System_Global_State& state) {
+    m_state = &state;
+    
     if (!m_configured) {
         return;
     }
@@ -169,7 +172,7 @@ void MQTTService::disconnect() {
 // AsyncMqttClient 回调
 // =============================================================================
 void MQTTService::onMqttConnect(bool sessionPresent) {
-    Serial.printf("[MQTT] onConnect: sessionPresent=%s\n", sessionPresent ? "true" : "false");
+    DBG.printf("[MQTT] onConnect: sessionPresent=%s\n", sessionPresent ? "true" : "false");
     if (s_instance) {
         s_instance->m_connected = true;
         s_instance->subscribeCommandTopics();
@@ -178,7 +181,7 @@ void MQTTService::onMqttConnect(bool sessionPresent) {
 }
 
 void MQTTService::onMqttDisconnect(int reason) {
-    Serial.printf("[MQTT] onDisconnect: reason=%d\n", reason);
+    DBG.printf("[MQTT] onDisconnect: reason=%d\n", reason);
     if (s_instance) {
         s_instance->m_connected = false;
     }
@@ -597,11 +600,11 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
     char payload_str[64];
     strncpy(payload_str, payload, length < 63 ? length : 63);
     payload_str[length < 63 ? length : 63] = '\0';
-    Serial.printf("[MQTT] Cmd: %s = %s\n", cmd, payload_str);
+    DBG.printf("[MQTT] Cmd: %s = %s\n", cmd, payload_str);
     
     // 检查配置指针有效性
     if (!m_config) {
-        Serial.println("[MQTT] Config not available, command ignored");
+        DBG.println("[MQTT] Config not available, command ignored");
         return;
     }
     
@@ -626,7 +629,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
             // 尝试解析为数字（向后兼容）
             new_mode = (uint8_t)atoi(payload_str);
             if (new_mode > 2) {
-                Serial.printf("[MQTT] Invalid hid_report_mode value: %s\n", payload_str);
+                DBG.printf("[MQTT] Invalid hid_report_mode value: %s\n", payload_str);
                 return;
             }
         }
@@ -635,7 +638,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
         if (m_config->hid_report_mode != new_mode) {
             config_copy.hid_report_mode = new_mode;
             config_changed = true;
-            Serial.printf("[MQTT] hid_report_mode change requested: %d (%s)\n", new_mode, payload_str);
+            DBG.printf("[MQTT] hid_report_mode change requested: %d (%s)\n", new_mode, payload_str);
             
             // 立即发布新状态以确认更改
             publishStateToTopic("state/config/hid_report_mode", getHidReportModeString(new_mode));
@@ -646,7 +649,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
         
         // 验证范围 (0-100)
         if (new_volume > 100) {
-            Serial.printf("[MQTT] Invalid buzzer_volume value: %s (must be 0-100)\n", payload_str);
+            DBG.printf("[MQTT] Invalid buzzer_volume value: %s (must be 0-100)\n", payload_str);
             return;
         }
         
@@ -654,7 +657,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
         if (m_config->buzzer_volume != new_volume) {
             config_copy.buzzer_volume = new_volume;
             config_changed = true;
-            Serial.printf("[MQTT] buzzer_volume change requested: %d\n", new_volume);
+            DBG.printf("[MQTT] buzzer_volume change requested: %d\n", new_volume);
             
             // 立即发布新状态以确认更改
             publishStateValue("state/config/buzzer_volume", new_volume);
@@ -665,7 +668,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
         
         // 验证范围 (0-100)
         if (new_brightness > 100) {
-            Serial.printf("[MQTT] Invalid led_brightness value: %s (must be 0-100)\n", payload_str);
+            DBG.printf("[MQTT] Invalid led_brightness value: %s (must be 0-100)\n", payload_str);
             return;
         }
         
@@ -673,7 +676,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
         if (m_config->led_brightness != new_brightness) {
             config_copy.led_brightness = new_brightness;
             config_changed = true;
-            Serial.printf("[MQTT] led_brightness change requested: %d\n", new_brightness);
+            DBG.printf("[MQTT] led_brightness change requested: %d\n", new_brightness);
             
             // 立即发布新状态以确认更改
             publishStateValue("state/config/led_brightness", new_brightness);
@@ -681,7 +684,7 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
     }
     else {
         // 未知命令
-        Serial.printf("[MQTT] Unknown command: %s\n", cmd);
+        DBG.printf("[MQTT] Unknown command: %s\n", cmd);
         return;
     }
     

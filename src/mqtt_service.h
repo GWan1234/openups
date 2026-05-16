@@ -25,7 +25,7 @@ public:
     bool begin(Configuration* config, System_Global_State* state);
 
     // 主循环调用
-    void loop();
+    void loop(System_Global_State& state);
 
     // 连接状态
     bool isConnected();

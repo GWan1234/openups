@@ -22,13 +22,10 @@ private:
     Configuration* config_;
     bool initialized_;  // 标记是否已成功初始化
 
-    float lastBatteryTemp_;
-    float lastBoardTemp_;
-    float lastSOC_;
     uint32_t lastUpdateTime_;  // 上次更新时间戳（毫秒）
 
-    void updateSOCOutput(float soc);
-    static uint8_t socToDAC(float soc);
+    void updateSOHOutput(float soh);
+    static uint8_t sohToDAC(float soh);
 };
 
 #endif

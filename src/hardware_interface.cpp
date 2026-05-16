@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <FastLED.h>
 #include <math.h>
+#include "debug.h"
 
 static HardwareInterface* g_hardware_instance = nullptr;
 
@@ -31,7 +32,7 @@ HardwareInterface::HardwareInterface(uint8_t led_brightness, uint8_t buzzer_volu
     
     g_hardware_instance = this;
     
-    Serial.printf_P(PSTR("HW: brightness=%u%%->%u, volume=%u%%->%u, enabled=%s\n"),
+    DBG.printf_P(PSTR("HW: brightness=%u%%->%u, volume=%u%%->%u, enabled=%s\n"),
                    min(led_brightness, (uint8_t)100), led_brightness_,
                    min(buzzer_volume, (uint8_t)100), buzzer_volume_,
                    buzzer_enabled_ ? "yes" : "no");
@@ -41,12 +42,12 @@ HardwareInterface::HardwareInterface(const Configuration& config, bool init_rgb)
     : HardwareInterface(config.led_brightness, config.buzzer_volume, config.buzzer_enabled, init_rgb) {}
 
 bool HardwareInterface::begin() {
-    Serial.println(F("HW: Initializing..."));
+    DBG.println(F("HW: Initializing..."));
     
     initGPIOs();
 
     if (!i2cInterface_.initialize(I2C_SDA_PIN, I2C_SCL_PIN, 100000)) {
-        Serial.println(F("HW: I2C init failed"));
+        DBG.println(F("HW: I2C init failed"));
         return false;
     }
 
@@ -61,12 +62,12 @@ bool HardwareInterface::begin() {
     // Initialize ADC calibration from Preferences
     initADCCalibration();
     
-    Serial.println(F("HW: Init complete"));
+    DBG.println(F("HW: Init complete"));
     return true;
 }
 
 void HardwareInterface::initADCCalibration() {
-    Serial.println(F("HW: Loading ADC calibration from Preferences..."));
+    DBG.println(F("HW: Loading ADC calibration from Preferences..."));
     bool any_loaded = false;
     
     for (uint8_t i = 0; i < ADC_CAL_PIN_COUNT; i++) {
@@ -77,15 +78,15 @@ void HardwareInterface::initADCCalibration() {
         if (cal_value >= ADC_CAL_MIN_VALUE && cal_value <= ADC_CAL_MAX_VALUE) {
             adc_calibration_[i] = (uint8_t)cal_value;
             any_loaded = true;
-            Serial.printf_P(PSTR("HW: ADC cal pin %u -> %u (%.2fx)\n"),
+            DBG.printf_P(PSTR("HW: ADC cal pin %u -> %u (%.2fx)\n"),
                            ADC_CAL_PINS[i], adc_calibration_[i], adc_calibration_[i] / 100.0f);
         }
     }
     
     if (any_loaded) {
-        Serial.println(F("HW: ADC calibration loaded from Preferences"));
+        DBG.println(F("HW: ADC calibration loaded from Preferences"));
     } else {
-        Serial.println(F("HW: No valid ADC calibration found, using defaults"));
+        DBG.println(F("HW: No valid ADC calibration found, using defaults"));
     }
 }
 
@@ -114,23 +115,23 @@ void HardwareInterface::initGPIOs() {
         FastLED.addLeds<WS2812, RGB_LED_PIN, GRB>(leds_, 1);
         FastLED.setBrightness(led_brightness_);
     } else {
-        Serial.println(F("HW: RGB LED skipped (slave I2C mode)"));
+        DBG.println(F("HW: RGB LED skipped (slave I2C mode)"));
     } 
     
     analogSetAttenuation(ADC_11db); 
     analogReadResolution(12);
     
-    Serial.println(F("HW: GPIOs configured"));
+    DBG.println(F("HW: GPIOs configured"));
 }
 
 void HardwareInterface::syncInitialState() {
-    Serial.println(F("HW: Syncing states..."));
+    DBG.println(F("HW: Syncing states..."));
     
     bool acok_state = digitalRead(BQ24780S_ACOK_PIN);
     bool prochot_state = digitalRead(BQ24780S_PROCHOT_PIN);
     bool tbstat_state = digitalRead(BQ24780S_TBSTAT_PIN);
     
-    Serial.printf_P(PSTR("States - ACOK:%d PROCHOT:%d TBSTAT:%d\n"),
+    DBG.printf_P(PSTR("States - ACOK:%d PROCHOT:%d TBSTAT:%d\n"),
                    acok_state, prochot_state, tbstat_state);
     
     last_acok_state_ = acok_state;
@@ -222,7 +223,7 @@ void HardwareInterface::setADCCalibration(uint8_t pin, uint8_t coefficient) {
     
     int8_t idx = findCalibrationIndex(pin);
     if (idx < 0) {
-        Serial.printf_P(PSTR("HW: Warning - pin %u is not a calibratable ADC pin\n"), pin);
+        DBG.printf_P(PSTR("HW: Warning - pin %u is not a calibratable ADC pin\n"), pin);
         return;
     }
     
@@ -233,7 +234,7 @@ void HardwareInterface::setADCCalibration(uint8_t pin, uint8_t coefficient) {
     snprintf(key, sizeof(key), "pin_%u", pin);
     adc_cal_preferences_.putUInt(key, coefficient);
     
-    Serial.printf_P(PSTR("HW: ADC cal pin %u -> %u (%.2fx) saved\n"),
+    DBG.printf_P(PSTR("HW: ADC cal pin %u -> %u (%.2fx) saved\n"),
                    pin, coefficient, coefficient / 100.0f);
 }
 
@@ -314,15 +315,15 @@ void HardwareInterface::processButtonLogic() {
                 unsigned long duration = current_time - button_press_start_time_;
                 if (duration >= 3000) {
                     EventBus::getInstance().publish(EVT_BTN_LONG_PRESS, nullptr);
-                    Serial.println(F("[BTN] Long press"));
+                    DBG.println(F("[BTN] Long press"));
                 } else if (duration >= 50) {
                     EventBus::getInstance().publish(EVT_BTN_SHORT_PRESS, nullptr);
-                    Serial.println(F("[BTN] Short press"));
+                    DBG.println(F("[BTN] Short press"));
                 }
                 button_state_ = BTN_WAITING_RELEASE;
             } else if (current_time - button_press_start_time_ >= 3000) {
                 EventBus::getInstance().publish(EVT_BTN_LONG_PRESS, nullptr);
-                Serial.println(F("[BTN] Long hold"));
+                DBG.println(F("[BTN] Long hold"));
                 button_state_ = BTN_WAITING_RELEASE;
             }
             break;
@@ -362,7 +363,7 @@ void HardwareInterface::setLEDBrightness(uint8_t brightness) {
     if (init_rgb_) {
         FastLED.setBrightness(led_brightness_);
     }
-    Serial.printf_P(PSTR("[HW] LED Brightness: %u%% -> %u\n"), brightness, led_brightness_);
+    DBG.printf_P(PSTR("[HW] LED Brightness: %u%% -> %u\n"), brightness, led_brightness_);
 }
 
 void HardwareInterface::setBuzzerVolume(uint8_t volume) {
@@ -371,12 +372,12 @@ void HardwareInterface::setBuzzerVolume(uint8_t volume) {
     if (buzzer_mode_ != BUZZER_MODE_OFF && buzzer_enabled_) {
         analogWrite(BUZZER_PIN, buzzer_volume_);
     }
-    Serial.printf_P(PSTR("[HW] Buzzer Volume: %u%% -> %u\n"), volume, buzzer_volume_);
+    DBG.printf_P(PSTR("[HW] Buzzer Volume: %u%% -> %u\n"), volume, buzzer_volume_);
 }
 
 void HardwareInterface::setBuzzerEnabled(bool enabled) {
     buzzer_enabled_ = enabled;
-    Serial.printf_P(PSTR("HW: Buzzer %s\n"), enabled ? "enabled" : "disabled");
+    DBG.printf_P(PSTR("HW: Buzzer %s\n"), enabled ? "enabled" : "disabled");
     if (!enabled && buzzer_mode_ != BUZZER_MODE_OFF) {
         analogWrite(BUZZER_PIN, 0);
         buzzer_mode_ = BUZZER_MODE_OFF;
@@ -510,7 +511,7 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_last_time_ = current_time;
                 analogWrite(BUZZER_PIN, buzzer_volume_);
-            } else if (current_time - buzzer_last_time_ >= 300) {
+            } else if (current_time - buzzer_last_time_ >= 200) {
                 buzzer_mode_ = BUZZER_MODE_OFF;
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
@@ -526,7 +527,7 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 1;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
                 buzzer_last_time_ = current_time;
@@ -535,7 +536,7 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 2;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_mode_ = BUZZER_MODE_OFF;
                 buzzer_beep_count_ = 0;
@@ -549,7 +550,7 @@ void HardwareInterface::updateBuzzer() {
                 buzzer_beep_on_ = true;
                 buzzer_beep_count_ = 1;
                 buzzer_last_time_ = current_time;
-            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 300) {
+            } else if (buzzer_beep_on_ && current_time - buzzer_last_time_ >= 200) {
                 analogWrite(BUZZER_PIN, 0);
                 buzzer_beep_on_ = false;
                 buzzer_last_time_ = current_time;

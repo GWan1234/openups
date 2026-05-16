@@ -18,11 +18,15 @@ public:
 
 private:
     TwoWire *_wire;
-    float _temperature = 25.0f;
-    float _humidity = 50.0f;
+    float _temperature = 20.0f;
+    float _humidity = 70.0f;
 
     uint8_t _txBuf[6];
     uint8_t _txLen = 0;
+
+    // 预计算的两份完整响应（含CRC），温度在前 / 湿度在前
+    uint8_t _respTFirst[6];
+    uint8_t _respRHFirst[6];
 
     static SHTC3_Simulator *_instance;
 
@@ -30,6 +34,7 @@ private:
     static void onRequest();
 
     void prepareResponse(uint16_t cmd);
+    void rebuildBuffers();
 
     static uint8_t crc8(const uint8_t *data, uint8_t len);
     uint16_t toRawTemp(float c);
