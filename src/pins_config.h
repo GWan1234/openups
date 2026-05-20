@@ -42,6 +42,6 @@
 // ==================== 小米传感器桥接引脚定义 (新板) ====================
 #define XIAOMI_SDA_PIN        47  // 从机I2C数据线 (新板, 有硬件上拉)
 #define XIAOMI_SCL_PIN        48  // 从机I2C时钟线 (新板, 与RGB_LED_PIN复用)
-#define XIAOMI_POWER_PIN      10  // SOC电量输出控制引脚 (DAC/LEDC)
+#define XIAOMI_POWER_PIN      10  // 小米传感器电源控制引脚 (Digital)
 
 #endif

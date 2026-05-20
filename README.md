@@ -1,6 +1,6 @@
 # OpenUPS-ESP32S3
 
-基于 ESP32-S3 的智能锂电池 UPS 控制系统，使用 BQ24780S 充电管理芯片与 BQ76920 电池监控芯片，支持 3-5 串锂离子/磷酸铁锂电池，12-19V 宽电压输入。
+基于 ESP32-S3 的智能锂电池 UPS 控制系统，使用 BQ24780S/BQ24800 充电管理芯片与 BQ76920 电池监控芯片，支持 3-5 串锂离子/磷酸铁锂电池，12-19V 宽电压输入。
 
 > **为什么不用铅酸 UPS？** 铅酸 UPS 待机功耗 10W+，体积笨重。本项目面向小功率主机、NAS、软路由、网络设备等场景，锂电池方案更小巧、更省电、更安静。
 
@@ -9,7 +9,7 @@
 ### 核心功能
 
 - **USB HID UPS** — ESP32-S3 原生 USB 接口，Windows/macOS/Linux 自动识别为标准 UPS 设备，支持低电量安全关机
-- **充放电管理** — BQ24780S 充电控制，支持自适应充电电流、定时充电窗口（5 组周计划）、混合供电模式
+- **充放电管理** — BQ24780S/BQ24800 充电控制，支持自适应充电电流、定时充电窗口（5 组周计划）、混合供电模式
 - **电池管理** — BQ76920 电池监控，库仑计 SOC 计算、SOH 学习、自动均衡、多重保护（OV/UV/OCD/SCD/OT）
 - **Web 仪表盘** — SPA 单页应用，macOS 风格 UI，实时 WebSocket 数据推送（3 秒间隔）
 - **OTA 固件更新** — 网页拖拽上传固件，带签名校验，双分区安全升级
@@ -63,7 +63,7 @@ CN6 位置也可以直接把插件 NTC 电阻焊上去，不用那个插座。
 | 参数 | 值 |
 |---|---|
 | 输入电压 | 12-19V DC |
-| 充电电流 | 最高 8128mA（BQ24780S） |
+| 充电电流 | 最高 8128mA（BQ24780S/BQ24800） |
 | 放电电流 | 最高 20A |
 | 输入电流 | 最高 8064mA |
 | 电池类型 | 3-5 串 Li-ion / LiFePO4 |
@@ -121,7 +121,7 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 | **I2C** | | |
 | I2C_SDA | 11 | I2C 数据线 |
 | I2C_SCL | 12 | I2C 时钟线 |
-| **BQ24780S** | | |
+| **BQ24780S/BQ24800** | | |
 | ACOK | 13 | 电源适配器接入检测 |
 | PROCHOT# | 14 | 芯片报警状态 |
 | TB_STAT# | 15 | 混合供电状态 |
@@ -249,7 +249,7 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 
 - **状态总览** — SOC 进度条、电压/电流/温度、5 节电池电压（高亮最大/最小值）、均衡状态、充放电模式
 - **BMS 状态** — 详细电池信息、电池电压统计、BQ76920 寄存器转储
-- **电源状态** — 输入/输出功率、充电控制状态、BQ24780S 寄存器转储
+- **电源状态** — 输入/输出功率、充电控制状态、BQ24780S/BQ24800 寄存器转储
 - **系统配置** — WiFi、BMS 参数、充放电管理、定时充电窗口、硬件控制
 - **ADC 校准** — 各 ADC 通道独立校准系数
 - **固件升级** — OTA 在线更新
@@ -277,7 +277,8 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 │              (FSM: INIT → NORMAL → WARNING → CRITICAL)  │
 ├──────────┬──────────┬──────────┬──────────┬─────────────┤
 │   BMS    │  Power   │ Hardware │ WebServer│  WiFiManager│
-│ (BQ76920)│(BQ24780S)│Interface │ + OTA    │   STA/AP    │
+│ (BQ76920)│(BQ24780S/│Interface │ + OTA    │   STA/AP    │
+│          │ BQ24800) │          │          │             │
 ├──────────┴──────────┴──────────┴──────────┴─────────────┤
 │                     EventBus (Pub/Sub)                   │
 ├─────────────────────────────────────────────────────────┤
@@ -285,7 +286,7 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 │         System_Global_State (all telemetry)              │
 ├─────────────────────────────────────────────────────────┤
 │            Driver Layer (I2C + CRC)                      │
-│         BQ24780S Driver  |  BQ76920 Driver               │
+│      BQ24780S/BQ24800 Driver |  BQ76920 Driver           │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -308,34 +309,55 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 ## 目录结构
 
 ```
-├── sketch_jan14a.ino          # 主程序入口
-├── partitions.csv             # 分区表
+├── sketch_jan14a.ino              # 主程序入口
+├── partitions.csv                 # 分区表
 ├── src/
-│   ├── bq24780s.h/.cpp        # BQ24780S 充电芯片驱动
-│   ├── bq76920.h/.cpp         # BQ76920 电池监控驱动
-│   ├── i2c_interface.h/.cpp   # I2C 通信（含 CRC）
-│   ├── pins_config.h          # 引脚定义
-│   ├── data_structures.h      # 数据结构定义
+│   ├── bq24780s.h/.cpp            # BQ24780S/BQ24800 充电芯片驱动
+│   ├── bq76920.h/.cpp             # BQ76920 电池监控驱动
+│   ├── i2c_interface.h/.cpp       # I2C 通信（含 CRC）
+│   ├── pins_config.h              # 引脚定义
+│   ├── data_structures.h          # 数据结构定义
 │   ├── hardware_interface.h/.cpp  # GPIO/ADC/LED/蜂鸣器/按键
-│   ├── bms.h/.cpp             # 电池管理系统
+│   ├── bms.h/.cpp                 # 电池管理系统
 │   ├── power_management.h/.cpp    # 充放电管理
 │   ├── system_management.h/.cpp   # 系统状态机
-│   ├── config_manager.h/.cpp  # NVS 配置管理
-│   ├── web_server.h/.cpp      # HTTP/WebSocket/Prometheus/OTA
-│   ├── WiFiManager.h/.cpp     # WiFi 管理
-│   ├── event_bus.h            # 事件总线
-│   ├── event_types.h          # 事件类型定义
-│   ├── ups_hid_service.h/.cpp # USB HID UPS 服务
-│   ├── mqtt_service.h/.cpp    # MQTT + HA 自动发现
-│   ├── time_utils.h/.cpp      # NTP 时间管理
-│   ├── utils.h/.cpp           # 工具函数
-│   └── templates/             # Web UI 模板
-│       ├── css_templates.h
-│       ├── js_templates.h
-│       └── page_templates.h
+│   ├── config_manager.h/.cpp      # NVS 配置管理
+│   ├── web_server.h/.cpp          # HTTP/WebSocket/Prometheus/OTA
+│   ├── WiFiManager.h/.cpp         # WiFi 管理
+│   ├── event_bus.h                # 事件总线
+│   ├── event_types.h              # 事件类型定义
+│   ├── ups_hid_service.h/.cpp     # USB HID UPS 服务
+│   ├── mqtt_service.h/.cpp        # MQTT + HA 自动发现
+│   ├── time_utils.h/.cpp          # NTP 时间管理
+│   ├── utils.h/.cpp               # 工具函数
+│   ├── debug.h/.cpp               # 调试日志输出
+│   ├── SHTC3_Simulator.h/.cpp     # SHTC3 温湿度传感器模拟（I2C Slave）
+│   ├── XiaomiSensorBridge.h/.cpp  # 米家温湿度计数据桥接
+│   └── templates/                 # Web UI 模板
+│       ├── html_templates.h       # HTML 页面结构
+│       ├── css_templates.h        # 样式表
+│       ├── js_templates.h         # JavaScript 逻辑
+│       └── page_templates.h       # 页面模板片段
 ├── hardware/
-│   └── ups.eprj2              # EasyEDA Pro 硬件设计文件
-└── doc/                       # 芯片寄存器文档
+│   ├── openups_hardware.epro2     # 硬件工程文件(v1)
+│   ├── openups_gerber.zip         # Gerber 生产文件
+│   └── v2/                        # v2 版本硬件文件
+│       ├── openups_all.epro2      # v2 硬件工程文件
+│       ├── openups_v2_原理图.pdf   # v2 原理图
+│       ├── PCB_4层非开发板版本.pdf # v2 PCB 图
+│       ├── Gerber_4层非开发板版本_openups.zip  # v2 Gerber 生产文件
+│       ├── BOM_4层非开发板版本_openups.xlsx    # v2 物料清单
+│       └── readme.txt             # v2 版本说明
+└── doc/                           # 芯片寄存器文档
+    ├── bq24780s.pdf               # BQ24780S 数据手册
+    ├── bq24780s寄存器解释.md       # BQ24780S 寄存器说明
+    ├── bq24800.pdf                # BQ24800 数据手册
+    ├── bq24800寄存器解释.md        # BQ24800 寄存器说明
+    ├── bq76920.pdf                # BQ76920 数据手册
+    ├── bq76920寄存器解释.md        # BQ76920 寄存器说明
+    ├── Datasheet_SHTC3.pdf        # SHTC3 温湿度传感器数据手册
+    ├── iso1540.pdf                # ISO1540 I2C 隔离芯片数据手册
+    └── iso1640.pdf                # ISO1640 I2C 隔离芯片数据手册
 ```
 
 ## 已知限制

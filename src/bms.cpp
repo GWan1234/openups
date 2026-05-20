@@ -28,10 +28,10 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       partial_cycles_(0.0f),
       config_update_pending_(false),
       is_quiescent_(false), quiescent_start_time_(0),
-      temporary_soh_active_(false) {
+      temporary_soh_active_(false),
+      pending_fet_action_(FET_ACTION_NONE) {
     
     memset(&stats_, 0, sizeof(BMS_Statistics_t));
-    memset(cell_balance_timer, 0, sizeof(cell_balance_timer));
     
     preferences_.begin(BMS_PREFS_NAMESPACE, false);
     DBG.println(F("BMS: Constructor done"));
@@ -164,15 +164,24 @@ void BMS::update(System_Global_State& globalState) {
     if (last_fast_update_ == 0) {
         last_medium_update_ = last_slow_update_ = last_periodic_update_ = last_day_update_ = current_time;
     }
-    
-    // 根据静置状态动态调整更新周期
+
+    // 预计算本轮需要执行的定时任务
     unsigned long fast_interval = is_quiescent_ ? 2000 : 500;
     unsigned long medium_interval = is_quiescent_ ? 4000 : 1000;
     unsigned long slow_interval = is_quiescent_ ? 30000 : 10000;
-    
-    if (current_time - last_fast_update_ >= fast_interval) {
+
+    bool do_fast = (current_time - last_fast_update_ >= fast_interval);
+    bool do_medium = (current_time - last_medium_update_ >= medium_interval);
+    bool do_slow = (current_time - last_slow_update_ >= slow_interval);
+    bool do_periodic = (current_time - last_periodic_update_ >= 60000);
+    bool do_day = (current_time - last_day_update_ >= 86400000);
+
+    // ========== I2C 阶段 ==========
+
+    // Fast: 电压、电流、温度、故障检查、静置判断
+    if (do_fast) {
         bool read_success = updateBasicInfo(bmsState);
-        
+
         if (read_success) {
             i2c_failure_count_ = 0;
             if (bmsState.fault_type == BMS_FAULT_CHIP_ERROR) {
@@ -182,63 +191,72 @@ void BMS::update(System_Global_State& globalState) {
             bmsState.last_update_time = millis();
             checkCriticalFaults(bmsState);
             bmsState.is_connected = true;
-            
-            // 更新静置/活跃状态
             updateQuiescentState(bmsState);
         } else {
             handleCommunicationLoss(bmsState);
         }
         last_fast_update_ = current_time;
     }
-    
-    if (current_time - last_medium_update_ >= medium_interval) {
+
+    // Medium: 故障状态读取
+    if (do_medium) {
         if (i2c_failure_count_ < 10) {
             updateFaultLogic(bmsState);
+        }
+    }
+
+    // 60s轮: 读取所有寄存器 + 均衡（合并原slow的readAllRegisters到periodic）
+    if (do_periodic) {
+        if (i2c_failure_count_ < 10) {
+            i2cPowerOn();
+            bq76920_.readAllRegisters(bmsState.bq76920_registers);
+            evaluateAndExecuteBalancing(bmsState);
+        }
+    }
+
+    // 处理外部排队的FET操作（在I2C关闭前执行）
+    processPendingFETAction();
+
+    // 关闭 I2C（充电时保持开启以保证测量稳定）
+    if (bmsState.current < 50) {
+        i2cPowerOff();
+    }
+
+    // ========== 纯计算阶段 ==========
+
+    // Medium: SOC计算、SOH跟踪、满充/放空校准检测
+    if (do_medium) {
+        if (i2c_failure_count_ < 10) {
             updateSOC(bmsState);
-            
-            // 充电SOH跟踪检测（必须在满充校准之前，避免锚定后重新开始跟踪）
             detectChargeSOHLearning(bmsState);
-            // 满充/放空校准检测（每秒检查）
             detectFullChargeCalibration(bmsState);
             detectEmptyDischargeCalibration(bmsState);
         }
         last_medium_update_ = current_time;
     }
-    
-    if (current_time - last_slow_update_ >= slow_interval) {
+
+    // Slow: SOH学习、状态解码
+    if (do_slow) {
         updateSOHLearning(bmsState);
         bmsState.soh = stats_.soh;
         bmsState.cycle_count = stats_.total_cycles;
-        
-        i2cPowerOn();
-        bq76920_.readAllRegisters(bmsState.bq76920_registers);
         last_slow_update_ = current_time;
     }
 
-    if (current_time - last_periodic_update_ >= 60000) {
-        evaluateAndExecuteBalancing(bmsState);
-        
-        // 从 stats_.balancing_events 解码均衡统计数据到 bmsState
-        // 高14bit (bit50-63): 总均衡次数
+    // 60s轮: 均衡统计解码
+    if (do_periodic) {
         bmsState.balancing_events_total = (stats_.balancing_events >> 50) & 0x3FFF;
-        
-        // 低50bit (bit0-49): 每个电芯10bit，共5个电芯
         for (uint8_t i = 0; i < config_.cell_count && i < 5; i++) {
             uint8_t cell_shift = i * 10;
             bmsState.cell_balancing_count[i] = (stats_.balancing_events >> cell_shift) & 0x3FF;
         }
-        
         last_periodic_update_ = current_time;
     }
 
-    if (current_time - last_day_update_ >= 86400000) {
+    // 每天: 持久化
+    if (do_day) {
         saveToStorage();
         last_day_update_ = current_time;
-    }
-    
-    //充电时候不关闭i2c电源，保证测量的稳定
-    if(bmsState.current  < 50) {
-        i2cPowerOff();
     }
 
     
@@ -246,49 +264,32 @@ void BMS::update(System_Global_State& globalState) {
 
 bool BMS::disableDischarge() {
     if (!initialized_ || !available_) return false;
-    i2cPowerOn();
-    bq76920_.setMOS(charge_enabled_ ? 1 : 0, 0);
-    discharge_enabled_ = false;
-    DBG.println(F("BMS: DFET disabled"));
+    pending_fet_action_ = FET_ACTION_DISABLE_DISCHARGE;
     return true;
 }
 
 bool BMS::enableDischarge() {
     if (!initialized_ || !available_) return false;
-    i2cPowerOn();
-    bq76920_.setMOS(charge_enabled_ ? 1 : 0, 1);
-    discharge_enabled_ = true;
-    DBG.println(F("BMS: DFET enabled"));
+    pending_fet_action_ = FET_ACTION_ENABLE_DISCHARGE;
     return true;
 }
 
 bool BMS::disableCharge() {
     if (!initialized_ || !available_) return false;
-    i2cPowerOn();
-    bq76920_.setMOS(0, discharge_enabled_ ? 1 : 0);
-    charge_enabled_ = false;
-    DBG.println(F("BMS: CFET disabled"));
+    pending_fet_action_ = FET_ACTION_DISABLE_CHARGE;
     return true;
 }
 
 bool BMS::enableCharge() {
     if (!initialized_ || !available_) return false;
-    i2cPowerOn();
-    bq76920_.setMOS(1, discharge_enabled_ ? 1 : 0);
-    charge_enabled_ = true;
-    DBG.println(F("BMS: CFET enabled"));
+    pending_fet_action_ = FET_ACTION_ENABLE_CHARGE;
     return true;
 }
 
 bool BMS::enterShipMode() {
     if (!initialized_ || !available_) return false;
-    i2cPowerOn();
-    bool success = bq76920_.enterShipMode();
-    if (success) {
-        discharge_enabled_ = charge_enabled_ = false;
-        DBG.println(F("BMS: Ship mode entered"));
-    }
-    return success;
+    pending_fet_action_ = FET_ACTION_ENTER_SHIP_MODE;
+    return true;
 }
 
 void BMS::processAlertStatus(uint8_t fault_reg) {
@@ -357,38 +358,47 @@ bool BMS::startBalancing(BMS_State& bmsState) {
     i2cPowerOn();
             
     if (bq76920_.setCellBalance(balance_mask)) {
-        unsigned long current_time = millis();
-        bool should_count_total = false;
-        
-        for (uint8_t i = 0; i < config_.cell_count; i++) {
-            if (balance_mask & (1 << i)) {
-                if (current_time - cell_balance_timer[i] >= BALANCE_COUNT_INTERVAL) {
-                    uint8_t cell_shift = i * 10;
-                    uint8_t cell_count = (stats_.balancing_events >> cell_shift) & 0x3FF;
-                    cell_count++;
-                    
-                    int64_t clear_mask = ~(((int64_t)0x3FF) << cell_shift);
-                    stats_.balancing_events &= clear_mask;
-                    stats_.balancing_events |= ((int64_t)cell_count << cell_shift);
-                    cell_balance_timer[i] = current_time;
-                    should_count_total = true;
+        // 只有从停止状态变为启动状态时才计数
+        if (!bmsState.balancing_active) {
+            unsigned long current_time = millis();
+            bool should_count = false;
+
+            if (last_balancing_stop_time_ != 0) {
+                // 经历过停止，检查冷却期
+                if (current_time - last_balancing_stop_time_ >= BALANCE_COUNT_INTERVAL) {
+                    should_count = true;
                 }
+                last_balancing_stop_time_ = 0;
+            } else {
+                // 首次开始
+                should_count = true;
             }
-        }
-        
-        if (should_count_total) {
-            int64_t current_total = (stats_.balancing_events >> 50) & 0x3FFF;
-            current_total++;
-            int64_t clear_mask = ~(((int64_t)0x3FFF) << 50);
-            stats_.balancing_events &= clear_mask;
-            stats_.balancing_events |= (current_total << 50);
+
+            if (should_count) {
+                for (uint8_t i = 0; i < config_.cell_count; i++) {
+                    if (balance_mask & (1 << i)) {
+                        uint8_t cell_shift = i * 10;
+                        uint8_t cell_count = (stats_.balancing_events >> cell_shift) & 0x3FF;
+                        cell_count++;
+                        int64_t clear_mask = ~(((int64_t)0x3FF) << cell_shift);
+                        stats_.balancing_events &= clear_mask;
+                        stats_.balancing_events |= ((int64_t)cell_count << cell_shift);
+                    }
+                }
+                int64_t current_total = (stats_.balancing_events >> 50) & 0x3FFF;
+                current_total++;
+                int64_t clear_mask = ~(((int64_t)0x3FFF) << 50);
+                stats_.balancing_events &= clear_mask;
+                stats_.balancing_events |= (current_total << 50);
+            }
         }
 
         bmsState.balance_mask = balance_mask;
-        
-        if(!bmsState.balancing_active) {
-           EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
+
+        if (!bmsState.balancing_active) {
+            EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
         }
+        bmsState.balancing_active = true;
         return true;
     }
     return false;
@@ -398,11 +408,10 @@ bool BMS::stopBalancing(BMS_State& bmsState) {
     if (!initialized_) return false;
     i2cPowerOn();
     if (bq76920_.setCellBalance(0)) {
-        if (bmsState.balancing_active)
-        {
+        if (bmsState.balancing_active) {
             EventBus::getInstance().publish(EVT_BMS_BALANCING_STOPPED, nullptr);
+            last_balancing_stop_time_ = millis();
         }
-        
         return true;
     }
     return false;
@@ -470,9 +479,7 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     }
 
     // 启动均衡并更新状态
-    if (startBalancing(bmsState)) {
-        bmsState.balancing_active = true;
-    } else {
+    if (!startBalancing(bmsState)) {
         bmsState.balancing_active = false;
         bmsState.balance_mask = 0;
     }
@@ -486,10 +493,52 @@ bool BMS::clearFault() {
 
 bool BMS::emergencyShutdown() {
     if (!initialized_) return false;
-    i2cPowerOn();
-    bq76920_.setMOS(0, 0);
-    DBG.println(F("BMS: Emergency shutdown"));
+    pending_fet_action_ = FET_ACTION_EMERGENCY_SHUTDOWN;
     return true;
+}
+
+void BMS::processPendingFETAction() {
+    PendingFETAction action = pending_fet_action_;
+    if (action == FET_ACTION_NONE) return;
+
+    pending_fet_action_ = FET_ACTION_NONE;
+    i2cPowerOn();
+
+    switch (action) {
+        case FET_ACTION_DISABLE_DISCHARGE:
+            bq76920_.setMOS(charge_enabled_ ? 1 : 0, 0);
+            discharge_enabled_ = false;
+            DBG.println(F("BMS: DFET disabled"));
+            break;
+        case FET_ACTION_ENABLE_DISCHARGE:
+            bq76920_.setMOS(charge_enabled_ ? 1 : 0, 1);
+            discharge_enabled_ = true;
+            DBG.println(F("BMS: DFET enabled"));
+            break;
+        case FET_ACTION_DISABLE_CHARGE:
+            bq76920_.setMOS(0, discharge_enabled_ ? 1 : 0);
+            charge_enabled_ = false;
+            DBG.println(F("BMS: CFET disabled"));
+            break;
+        case FET_ACTION_ENABLE_CHARGE:
+            bq76920_.setMOS(1, discharge_enabled_ ? 1 : 0);
+            charge_enabled_ = true;
+            DBG.println(F("BMS: CFET enabled"));
+            break;
+        case FET_ACTION_ENTER_SHIP_MODE:
+            if (bq76920_.enterShipMode()) {
+                discharge_enabled_ = charge_enabled_ = false;
+                DBG.println(F("BMS: Ship mode entered"));
+            }
+            break;
+        case FET_ACTION_EMERGENCY_SHUTDOWN:
+            bq76920_.setMOS(0, 0);
+            discharge_enabled_ = charge_enabled_ = false;
+            DBG.println(F("BMS: Emergency shutdown"));
+            break;
+        default:
+            break;
+    }
 }
 
 float BMS::getAvailableCapacity() const {

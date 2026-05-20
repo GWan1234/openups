@@ -194,7 +194,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </fieldset>
 <fieldset class="fs" id="xiaomiSection" style="display:%XIAOMI_SECTION_DISPLAY%">
 <legend class="lg">小米传感器桥接</legend>
-<p style="color:#aaa;font-size:12px;margin-bottom:8px">通过I2C从机模拟SHTC3传感器，供米家温湿度计2读取UPS数据。仅新版PCB支持。电池温度→温度，板载温度→湿度，SOC→电量显示。(配置后需要重启生效)</p>
+<p style="color:#aaa;font-size:12px;margin-bottom:8px">通过I2C从机模拟SHTC3传感器，供米家温湿度计2读取UPS数据。仅新版PCB支持。电池温度→温度，SOC→湿度。(配置后需要重启生效)</p>
 <div class="fg"><label>传感器桥接:</label><label class="cl"><input type="checkbox" id="xiaomi_en" %XIAOMI_CHECKED%><span style="margin-left:8px">启用</span></label></div>
 </fieldset>
 </div>

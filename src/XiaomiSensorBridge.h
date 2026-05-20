@@ -23,9 +23,6 @@ private:
     bool initialized_;  // 标记是否已成功初始化
 
     uint32_t lastUpdateTime_;  // 上次更新时间戳（毫秒）
-
-    void updateSOHOutput(float soh);
-    static uint8_t sohToDAC(float soh);
 };
 
 #endif

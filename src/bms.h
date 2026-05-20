@@ -75,6 +75,17 @@ typedef struct {
     float balancing_voltage_diff;
 } BMS_Config_t;
 
+// FET操作队列（解决I2C电源关闭时外部调用的竞态问题）
+enum PendingFETAction {
+    FET_ACTION_NONE = 0,
+    FET_ACTION_DISABLE_DISCHARGE,
+    FET_ACTION_ENABLE_DISCHARGE,
+    FET_ACTION_DISABLE_CHARGE,
+    FET_ACTION_ENABLE_CHARGE,
+    FET_ACTION_ENTER_SHIP_MODE,
+    FET_ACTION_EMERGENCY_SHUTDOWN,
+};
+
 class BMS {
 public:
     explicit BMS(I2CInterface& i2c_interface, const BMS_Config_t& config);
@@ -178,6 +189,10 @@ public:
     // 异步配置更新标记
     bool config_update_pending_;
     BMS_Config_t pending_config_;
+
+    // FET操作队列
+    volatile PendingFETAction pending_fet_action_;
+    void processPendingFETAction();
     
     void updateSOC(BMS_State& bmsState);
     void updateFaultLogic(BMS_State& bmsState);
@@ -220,7 +235,7 @@ public:
         }
     }
 
-    unsigned long cell_balance_timer[5];
+    unsigned long last_balancing_stop_time_ = 0;  // 上次停止均衡的时间，0表示不在冷却期
     static const unsigned long BALANCE_COUNT_INTERVAL = 600000;
 };
 

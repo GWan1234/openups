@@ -1109,6 +1109,14 @@ void SystemManagement::checkBQ24780sRegisters() {
 
     Power_Config_t* config = configManager->getPowerConfig();
     uint16_t* regs = globalState.power.bq24780s_registers;
+
+    // 寄存器数据一次性读取，任一为0x0000说明整批数据无效，跳过比对
+    if (regs[9] == 0x0000 || regs[10] == 0x0000) {
+        regMismatchCountBQ24780s = 0;
+        bq24780sRegWarning = false;
+        return;
+    }
+
     bool mismatch = false;
 
     int reg_discharge = Utils::parseBQ24780sDischargeCurrent(regs[9]);
@@ -1148,6 +1156,15 @@ void SystemManagement::checkBQ76920Registers() {
 
     BMS_Config_t* config = configManager->getBMSConfig();
     uint8_t* regs = globalState.bms.bq76920_registers;
+
+    // 寄存器数据一次性读取，任一为0x00说明整批数据无效，跳过比对
+    if (regs[4] == 0x00 || regs[5] == 0x00 || regs[7] == 0x00 ||
+        regs[8] == 0x00 || regs[10] == 0x00 || regs[11] == 0x00) {
+        regMismatchCountBQ76920 = 0;
+        bq76920RegWarning = false;
+        return;
+    }
+
     bool mismatch = false;
 
     int reg_scd = Utils::parseBQ76920Protect1(regs[4]);

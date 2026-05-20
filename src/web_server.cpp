@@ -613,9 +613,13 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# TYPE ups_power_fault_type gauge\n";
   metrics += "ups_power_fault_type " + String(state.power.fault_type) + "\n\n";
   
-  metrics += "# HELP ups_power_bq24780s_connected BQ24780S chip connection status (0=disconnected, 1=connected)\n";
+  metrics += "# HELP ups_power_bq24780s_connected BQ24780S/BQ24800 chip connection status (0=disconnected, 1=connected)\n";
   metrics += "# TYPE ups_power_bq24780s_connected gauge\n";
   metrics += "ups_power_bq24780s_connected " + String(state.power.bq24780s_connected ? 1 : 0) + "\n\n";
+
+  metrics += "# HELP ups_power_chip_variant Charger chip variant (0=BQ24780S, 1=BQ24800)\n";
+  metrics += "# TYPE ups_power_chip_variant gauge\n";
+  metrics += "ups_power_chip_variant " + String(state.power.chip_variant) + "\n\n";
   
   metrics += "# HELP ups_power_prochot_status PROCHOT pin status (0=normal, 1=triggered)\n";
   metrics += "# TYPE ups_power_prochot_status gauge\n";
