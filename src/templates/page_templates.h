@@ -136,7 +136,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row"><span class="lb">TBSTAT</span><span class="vl" id="p_tb">--</span></div>
 </div>
 </div>
-<div class="card-t" style="margin:20px 0 12px;font-size:14px;font-weight:600">BQ24780S 寄存器状态</div>
+<div class="card-t" id="regTitle" style="margin:20px 0 12px;font-size:14px;font-weight:600">BQ24780S 寄存器状态</div>
 <div id="r24" class="grid"></div>
 </div>
 

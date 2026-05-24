@@ -100,7 +100,7 @@ var tips=d.tips||[];var tb=$('tipBar');
 if(tips.length>0){var th='';for(var ti=0;ti<tips.length;ti++){var t=tips[ti];th+='<div class="tip-item"><span class="tip-time">'+(t.msg||'')+'</span></div>'}tb.innerHTML='<div class="tip-list">'+th+'</div><button class="tip-close" onclick="clearTips()">&times;</button>';tb.classList.add('has-tips')}else{tb.innerHTML='';tb.classList.remove('has-tips')}
 // Regs
 var r2=p.bq24780s_registers||[],r7=b.bq76920_registers||[];
-var cv=p.chip_variant||0;
+var cv=p.chip_variant||0;$('regTitle').textContent=(cv===1?'BQ24800':'BQ24780S')+' 寄存器状态';
 var a2=['0x12','0x3B','0x38','0x37','0x3C','0x3D','0x3A','0x14','0x15','0x39','0x3F'];
 var n2=['CHARGE_OPTION0','CHARGE_OPTION1','CHARGE_OPTION2','CHARGE_OPTION3','PROCHOT_OPTION0','PROCHOT_OPTION1','PROCHOT_STATUS','CHARGE_CURRENT','CHARGE_VOLTAGE','DISCHARGE_CURRENT','INPUT_CURRENT'];
 if(cv===1){a2.push('0x3E');n2.push('VSYS_MIN')}

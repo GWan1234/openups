@@ -343,10 +343,10 @@ bool BMS::startBalancing(BMS_State& bmsState) {
 
     uint8_t balance_mask = 0;
     const uint16_t* cell_voltages = bmsState.cell_voltages;
-    uint16_t avg_voltage = bmsState.cell_voltage_avg;
-    
+    uint16_t threshold_voltage = bmsState.cell_voltage_min + config_.balancing_voltage_diff;
+
     for (uint8_t i = 0; i < config_.cell_count; i++) {
-        bool should_balance = (cell_voltages[i] > avg_voltage + config_.balancing_voltage_diff);
+        bool should_balance = (cell_voltages[i] > threshold_voltage);
         if (should_balance && i > 0 && (balance_mask & (1 << (i - 1)))) {
             should_balance = false;
         }
@@ -411,6 +411,8 @@ bool BMS::stopBalancing(BMS_State& bmsState) {
         if (bmsState.balancing_active) {
             EventBus::getInstance().publish(EVT_BMS_BALANCING_STOPPED, nullptr);
             last_balancing_stop_time_ = millis();
+            bmsState.balancing_active = false;
+            bmsState.balance_mask = 0;
         }
         return true;
     }
@@ -420,8 +422,6 @@ bool BMS::stopBalancing(BMS_State& bmsState) {
 void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) {
         if (initialized_) stopBalancing(bmsState);
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
         return;
     }
 
@@ -429,8 +429,6 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     bool is_current_suitable = (bmsState.current >= -5 && bmsState.current <= BALANCING_MAX_CURRENT_MA);
     if (!is_current_suitable) {
         stopBalancing(bmsState);
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
         return;
     }
 
@@ -443,16 +441,12 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
     }
     if (!valid_reading) {
         stopBalancing(bmsState);
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
         return;
     }
 
     uint16_t voltage_diff = bmsState.cell_voltage_max - bmsState.cell_voltage_min;
     if (voltage_diff < config_.balancing_voltage_diff) {
         stopBalancing(bmsState);
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
         return;
     }
 
@@ -473,15 +467,18 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
 
     if (bmsState.soc < min_balancing_soc) {
         stopBalancing(bmsState);
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
         return;
     }
 
     // 启动均衡并更新状态
     if (!startBalancing(bmsState)) {
-        bmsState.balancing_active = false;
-        bmsState.balance_mask = 0;
+        // startBalancing失败（如无电芯需要均衡），如果之前在均衡状态则停止
+        if (bmsState.balancing_active) {
+            stopBalancing(bmsState);
+        } else {
+            bmsState.balancing_active = false;
+            bmsState.balance_mask = 0;
+        }
     }
 }
 
