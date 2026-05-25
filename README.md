@@ -111,6 +111,8 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 - **I2C 隔离芯片** — PCB 设计使用 ISO1640BDR，也可以更换为 ISO1540DR。虽然 ISO1640 标称支持热拔插而 ISO1540 不支持，但实测 ISO1540DR 同样可以正常工作
 - **SW_activate 按键** — 电池刚接入或 BQ76920 进入运输模式后，需要按下此按键一次激活芯片
 - **SW_reset 按键** — 长按数秒进入 WiFi AP 模式（重置网络）；开机时持续按住则重新进入配置模式
+- SW_boot 按键 -- 贴片esp32s3版本用于切换启动模式
+- SW_reboot 按键 --贴片esp32s3用于重启的按键
 - **H6、H7 跳线** — 使用 3S 电池需短接 H6，4S 电池需短接 H7（取决于电池串数），**请务必仔细确认后再上电**
 - **LDO 焊接顺序（v2）** — 焊接板子时，LDO 5V→3.3V **先不要焊**，先确认 5V 供电正常后再焊上去，以免损坏芯片
 - **v1 飞线** — 电池正极与下方的 R010 检流电阻之间需要额外焊接一根导线，用于扩充导电能力，背面的 PCB 走线负载能力不够
@@ -171,7 +173,6 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 | ArduinoJson | JSON 序列化 |
 | FastLED | WS2812B RGB LED |
 | Preferences | NVS Flash 存储 |
-| esp_task_wdt | 看门狗定时器 |
 | **AsyncMQTT_ESP32** | MQTT 客户端（作者 khoih-prog，**请务必安装此版本**） |
 
 > **注意**：MQTT 库请安装 **AsyncMQTT_ESP32**（作者 khoih-prog），不要安装其他 MQTT 库，API 不兼容。
@@ -389,23 +390,39 @@ v1 使用 **ESP32-S3 N16R8** 版本的开发板（16MB Flash / 8MB PSRAM）。�
 
 AI 时代，人人都是高级程序员。无论是代码优化、Bug 修复、功能增强还是文档改进，都欢迎参与。
 
-![webpage](./hardware/webpage.png)
 
-![HomeAssistant](./hardware/HomeAssistant.png)
 
-![PCB_正面](./hardware/PCB_正面.png)
+这是V1版本，用esp32s3开发板完成之后的成品。
 
-![PCB_背面](./hardware/PCB_背面.png)
+<img src="./hardware/实物.png" alt="实物" style="zoom: 67%;" />
 
-![实物](./hardware/实物.png)
 
-![实物1](./hardware/实物1.png)
 
-![v1与v2](./hardware/v2/v1与v2.png)
+这是v2版本，用esp32s3贴片版本完成的成品，屏幕是米家温湿度计pro2自带的，如果不要这个，在3d文件中删除掉这个位置的挖空。请忽略3d打印的不完美，没涂好胶棒。
 
-![v2实物](./hardware/v2/v2实物.png)
+<img src="./hardware/v2/实物图.png" style="zoom:50%;" />
 
-![历史版本](./hardware/历史版本.png)
+
+
+这里v1版本的电路板以及对应的电池夹与电池pcb。v2也是用的这个电池夹，但是电池pcb缩小了，也可以不用这个pcb，自己焊线。
+
+<img src="./hardware/实物1.png" alt="实物1" style="zoom: 33%;" />
+
+<img src="./hardware/v2/v1与v2.png" alt="v1与v2" style="zoom: 33%;" />
+
+<img src="./hardware/v2/v2实物.png" alt="v2实物" style="zoom: 33%;" />
+
+
+
+
+
+
+
+## 这是v1版本的上一个版本，大体是一样的。要注意的是，电池正极与下面那个R010旁边要加一根线辅助供电。另一个是输出的端子是放到<u>背面</u>的，因为正负极缘故。
+
+
+
+<img src="./hardware/历史版本.png" alt="历史版本" style="zoom:50%;" />
 
 ## 致谢
 
@@ -421,6 +438,10 @@ AI 时代，人人都是高级程序员。无论是代码优化、Bug 修复、�
 感谢 **嘉立创 EDA** 和 **嘉立创集团**。没有这样免费的软件、免费的打板、方便的器件购买，是无法低成本完成这件事情的。整个过程除去时间成本（这是乐趣，不能算成本）外，其实也才几百元。无法想象。感谢中国的产业链！
 
 AI 时代，人人都是高级程序员。
+
+
+
+如果有兴趣或者哪里不明白，随时提issue。
 
 ## 许可证
 
