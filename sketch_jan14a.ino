@@ -59,7 +59,7 @@ MQTTService* mqttService = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.4";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.5";
   strcpy(FIRMWARE_ID_TAG, version);
   DBG.println(F("Checking for factory reset button..."));
   
