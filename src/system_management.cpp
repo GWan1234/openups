@@ -1567,7 +1567,7 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, SCAnalysisResult& 
         uint32_t prev_ts = 0;
 
         const int CHUNK = 100;
-        RawSample buf[CHUNK];
+        static RawSample buf[CHUNK];
 
         while (f.available() >= (int)sizeof(RawSample)) {
             int to_read = min(CHUNK, (int)(f.available() / sizeof(RawSample)));
