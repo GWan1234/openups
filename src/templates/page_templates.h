@@ -73,6 +73,14 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row"><span class="lb">运行模式</span><span class="vl" id="pwrMd">--</span></div>
 <div class="row"><span class="lb">板温</span><span class="vl" id="brdT">-- °C</span></div>
 <div class="row"><span class="lb">环境温度</span><span class="vl" id="envT">-- °C</span></div>
+<div class="row"><span class="lb">SHTC3温度</span><span class="vl" id="shtT">-- °C</span></div>
+<div class="row"><span class="lb">SHTC3湿度</span><span class="vl" id="shtH">-- %</span></div>
+</div>
+<div class="card"><div class="card-t">系统自消耗</div>
+<div class="row"><span class="lb">消耗电流</span><span class="vl" id="sc_mA">-- mA</span></div>
+<div class="row"><span class="lb">置信度</span><span class="vl" id="sc_conf">-- %</span></div>
+<div class="row"><span class="lb">合格段数</span><span class="vl" id="sc_seg">--</span></div>
+<div class="row"><span class="lb">最后更新</span><span class="vl" id="sc_time">--</span></div>
 </div>
 </div>
 </div>

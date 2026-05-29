@@ -1,4 +1,5 @@
 #include "SHTC3_Simulator.h"
+#include "utils.h"
 
 SHTC3_Simulator *SHTC3_Simulator::_instance = nullptr;
 
@@ -40,11 +41,11 @@ void SHTC3_Simulator::rebuildBuffers() {
     uint8_t t[2]  = { (uint8_t)(rawT >> 8), (uint8_t)(rawT & 0xFF) };
     uint8_t rh[2] = { (uint8_t)(rawRH >> 8), (uint8_t)(rawRH & 0xFF) };
 
-    _respTFirst[0] = t[0];  _respTFirst[1] = t[1];  _respTFirst[2] = crc8(t, 2);
-    _respTFirst[3] = rh[0]; _respTFirst[4] = rh[1]; _respTFirst[5] = crc8(rh, 2);
+    _respTFirst[0] = t[0];  _respTFirst[1] = t[1];  _respTFirst[2] = Utils::shtc3Crc8(t, 2);
+    _respTFirst[3] = rh[0]; _respTFirst[4] = rh[1]; _respTFirst[5] = Utils::shtc3Crc8(rh, 2);
 
-    _respRHFirst[0] = rh[0]; _respRHFirst[1] = rh[1]; _respRHFirst[2] = crc8(rh, 2);
-    _respRHFirst[3] = t[0];  _respRHFirst[4] = t[1];  _respRHFirst[5] = crc8(t, 2);
+    _respRHFirst[0] = rh[0]; _respRHFirst[1] = rh[1]; _respRHFirst[2] = Utils::shtc3Crc8(rh, 2);
+    _respRHFirst[3] = t[0];  _respRHFirst[4] = t[1];  _respRHFirst[5] = Utils::shtc3Crc8(t, 2);
 }
 
 void SHTC3_Simulator::update() {
@@ -86,7 +87,7 @@ void SHTC3_Simulator::prepareResponse(uint16_t cmd) {
             uint8_t id[2] = { 0x08, 0x07 };
             _txBuf[0] = id[0];
             _txBuf[1] = id[1];
-            _txBuf[2] = crc8(id, 2);
+            _txBuf[2] = Utils::shtc3Crc8(id, 2);
             _txLen = 3;
             break;
         }
@@ -95,17 +96,6 @@ void SHTC3_Simulator::prepareResponse(uint16_t cmd) {
             _txLen = 0;
             break;
     }
-}
-
-uint8_t SHTC3_Simulator::crc8(const uint8_t *data, uint8_t len) {
-    uint8_t crc = 0xFF;
-    for (uint8_t i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (uint8_t bit = 0; bit < 8; bit++) {
-            crc = (crc & 0x80) ? (crc << 1) ^ 0x31 : (crc << 1);
-        }
-    }
-    return crc;
 }
 
 uint16_t SHTC3_Simulator::toRawTemp(float c) {

@@ -250,8 +250,8 @@ void WebServer::notifyClients() {
   if (ws.count() == 0) return;
   
   const System_Global_State& state = systemManager->getGlobalState();
-  StaticJsonDocument<3072> doc;
-  
+  DynamicJsonDocument doc(3584);
+
   doc["status"] = "connected";
   doc["timestamp"] = millis();
   doc["overall_status"] = state.overall_status;
@@ -270,7 +270,7 @@ void WebServer::notifyClients() {
       }
     }
   }
-  
+
   // BMS data - 完整数据
   JsonObject bms = doc.createNestedObject("bms");
   bms["soc"] = state.bms.soc;
@@ -285,14 +285,14 @@ void WebServer::notifyClients() {
   bms["fault_type"] = state.bms.fault_type;
   bms["balancing_active"] = state.bms.balancing_active;
   bms["balance_mask"] = state.bms.balance_mask;
-  
+
   // 均衡统计数据
   bms["balancing_events_total"] = state.bms.balancing_events_total;
   JsonArray cellBalCounts = bms.createNestedArray("cell_balancing_count");
   for (int i = 0; i < 5; i++) {
     cellBalCounts.add(state.bms.cell_balancing_count[i]);
   }
-  
+
   // 单体电压数组
   JsonArray cells = bms.createNestedArray("cell_voltages");
   for (int i = 0; i < 5; i++) {
@@ -301,13 +301,13 @@ void WebServer::notifyClients() {
   bms["cell_voltage_min"] = state.bms.cell_voltage_min;
   bms["cell_voltage_max"] = state.bms.cell_voltage_max;
   bms["cell_voltage_avg"] = state.bms.cell_voltage_avg;
-  
+
   // BQ76920 寄存器数组
   JsonArray bq76920_regs = bms.createNestedArray("bq76920_registers");
   for (int i = 0; i < 12; i++) {
     bq76920_regs.add(state.bms.bq76920_registers[i]);
   }
-  
+
   // Power data - 完整数据
   JsonObject power = doc.createNestedObject("power");
   power["input_voltage"] = state.power.input_voltage;
@@ -329,7 +329,7 @@ void WebServer::notifyClients() {
   for (int i = 0; i < 12; i++) {
     bq24780s_regs.add(state.power.bq24780s_registers[i]);
   }
-  
+
   // System data - 完整数据
   JsonObject system = doc.createNestedObject("system");
   system["uptime"] = state.system.uptime;
@@ -338,11 +338,19 @@ void WebServer::notifyClients() {
   system["wifi_rssi"] = state.system.wifi_rssi;
   system["board_temperature"] = state.system.board_temperature;
   system["environment_temperature"] = state.system.environment_temperature;
+  system["board_temperature_sht"] = state.system.board_temperature_sht;
+  system["board_humidity"] = state.system.board_humidity;
   system["firmware_version"] = state.system.firmware_version;
-  
-  char jsonBuffer[3072];
-  serializeJson(doc, jsonBuffer);
-  ws.textAll(jsonBuffer);
+
+  // 自消耗计算数据
+  doc["self_consumption_mA"] = serialized(String(state.self_consumption_mA, 2));
+  doc["sc_segment_count"] = state.sc_segment_count;
+  doc["sc_confidence"] = state.sc_confidence;
+  doc["sc_last_update"] = state.sc_last_update;
+
+  String json;
+  serializeJson(doc, json);
+  ws.textAll(json);
 }
 
 // =============================================================================
@@ -395,6 +403,14 @@ void WebServer::buildStatusResponse(DynamicJsonDocument& doc, const System_Globa
   system["wifi_connected"] = state.system.wifi_connected;
   system["wifi_rssi"] = state.system.wifi_rssi;
   system["board_temperature"] = state.system.board_temperature;
+  system["board_temperature_sht"] = state.system.board_temperature_sht;
+  system["board_humidity"] = state.system.board_humidity;
+
+  // 自消耗计算
+  doc["self_consumption_mA"] = state.self_consumption_mA;
+  doc["sc_segment_count"] = state.sc_segment_count;
+  doc["sc_confidence"] = state.sc_confidence;
+  doc["sc_last_update"] = state.sc_last_update;
 }
 
 void WebServer::buildBmsResponse(DynamicJsonDocument& doc, const System_Global_State& state) {
@@ -482,6 +498,14 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# HELP ups_system_environment_temperature Environment temperature in Celsius\n";
   metrics += "# TYPE ups_system_environment_temperature gauge\n";
   metrics += "ups_system_environment_temperature " + String(state.system.environment_temperature, 2) + "\n\n";
+
+  metrics += "# HELP ups_system_board_temperature_sht SHTC3 board temperature in Celsius\n";
+  metrics += "# TYPE ups_system_board_temperature_sht gauge\n";
+  metrics += "ups_system_board_temperature_sht " + String(state.system.board_temperature_sht, 2) + "\n\n";
+
+  metrics += "# HELP ups_system_board_humidity SHTC3 board humidity in percent\n";
+  metrics += "# TYPE ups_system_board_humidity gauge\n";
+  metrics += "ups_system_board_humidity " + String(state.system.board_humidity, 2) + "\n\n";
   
   metrics += "# HELP ups_system_wifi_connected WiFi connection status (0=disconnected, 1=connected)\n";
   metrics += "# TYPE ups_system_wifi_connected gauge\n";
@@ -641,7 +665,20 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# HELP ups_protection_short_circuit Short-circuit protection status (0=normal, 1=triggered)\n";
   metrics += "# TYPE ups_protection_short_circuit gauge\n";
   metrics += "ups_protection_short_circuit " + String(state.short_circuit_protection ? 1 : 0) + "\n\n";
-  
+
+  // Self-consumption metrics
+  metrics += "# HELP ups_self_consumption_mA System self-consumption current in mA (0=not calculated)\n";
+  metrics += "# TYPE ups_self_consumption_mA gauge\n";
+  metrics += "ups_self_consumption_mA " + String(state.self_consumption_mA, 2) + "\n\n";
+
+  metrics += "# HELP ups_sc_confidence Self-consumption calculation confidence (0-100)\n";
+  metrics += "# TYPE ups_sc_confidence gauge\n";
+  metrics += "ups_sc_confidence " + String(state.sc_confidence) + "\n\n";
+
+  metrics += "# HELP ups_sc_segment_count Number of valid quiescent segments used\n";
+  metrics += "# TYPE ups_sc_segment_count gauge\n";
+  metrics += "ups_sc_segment_count " + String(state.sc_segment_count) + "\n\n";
+
   request->send(200, "text/plain; version=0.0.4; charset=utf-8", metrics);
 }
 

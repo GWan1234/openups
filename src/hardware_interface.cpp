@@ -337,7 +337,7 @@ void HardwareInterface::processButtonLogic() {
 float HardwareInterface::readBoardTemperature() {
     digitalWrite(TEMP_POWER_PIN, HIGH);
     delayMicroseconds(1000);
-    float temp = readNTCTemperature(BOARD_TEMP_PIN, NTC_TEMP_TABLE_BOARD, 
+    float temp = readNTCTemperature(BOARD_TEMP_PIN, NTC_TEMP_TABLE_BOARD,
                                     sizeof(NTC_TEMP_TABLE_BOARD) / sizeof(NTC_TEMP_TABLE_BOARD[0]));
     digitalWrite(TEMP_POWER_PIN, LOW);
     return temp;
@@ -350,6 +350,16 @@ float HardwareInterface::readEnvironmentTemperature() {
                                     sizeof(NTC_TEMP_TABLE_SYS) / sizeof(NTC_TEMP_TABLE_SYS[0]));
     digitalWrite(TEMP_POWER_PIN, LOW);
     return temp;
+}
+
+void HardwareInterface::readAllTemperatures(float& board_temp, float& env_temp) {
+    digitalWrite(TEMP_POWER_PIN, HIGH);
+    delayMicroseconds(1000);
+    board_temp = readNTCTemperature(BOARD_TEMP_PIN, NTC_TEMP_TABLE_BOARD,
+                                    sizeof(NTC_TEMP_TABLE_BOARD) / sizeof(NTC_TEMP_TABLE_BOARD[0]));
+    env_temp = readNTCTemperature(ENVIRONMENT_TEMP_PIN, NTC_TEMP_TABLE_SYS,
+                                  sizeof(NTC_TEMP_TABLE_SYS) / sizeof(NTC_TEMP_TABLE_SYS[0]));
+    digitalWrite(TEMP_POWER_PIN, LOW);
 }
 
 void HardwareInterface::setLED(uint8_t pin, LED_Mode_t mode) {

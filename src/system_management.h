@@ -13,6 +13,14 @@
 #include "data_structures.h"
 #include "event_bus.h"
 
+// 自消耗分析任务参数
+struct SCAnalysisResult {
+    float self_consumption_mA;
+    uint8_t segment_count;
+    uint8_t confidence;
+    bool valid;
+};
+
 // Forward declarations
 class HardwareInterface;
 class BMS;
@@ -21,6 +29,7 @@ class ConfigManager;
 class UPS_HID_Service;
 class MQTTService;
 class XiaomiSensorBridge;
+class SHTC3;
 
 class SystemManagement {
 public:
@@ -42,7 +51,8 @@ public:
         ConfigManager& cm,
         UPS_HID_Service* upsHid = nullptr,
         MQTTService* mqtt = nullptr,
-        XiaomiSensorBridge* xiaomi = nullptr
+        XiaomiSensorBridge* xiaomi = nullptr,
+        SHTC3* shtc = nullptr
     );
 
     // Destructor
@@ -73,6 +83,9 @@ public:
     // 持久化所有模块数据（OTA前调用）
     void saveAllData();
 
+    // 自消耗分析
+    void startSelfConsumptionAnalysis();
+
     // 清除所有系统提示
     void clearTips();
 
@@ -90,6 +103,7 @@ private:
     UPS_HID_Service* upsHidService;         // UPS HID服务
     MQTTService* mqttService;
     XiaomiSensorBridge* xiaomiBridge;       // 小米传感器桥接
+    SHTC3* shtc3;                          // SHTC3 温湿度传感器
     
     // =============================================================================
     // 核心状态管理
@@ -138,6 +152,10 @@ private:
     unsigned long delayedStartTime_;      // 延迟启动的基准时间（首次调用 update 时记录）
     unsigned long delayedStartDelay_;     // 延迟时间（毫秒），默认值可配置
     bool delayedStartExecuted_;           // 标记延迟启动是否已执行
+
+    // 自消耗分析
+    TaskHandle_t sc_analysis_task_handle_;
+    uint32_t last_sc_analysis_time_;
     
     // =============================================================================
     // FSM 配置常量
@@ -318,6 +336,13 @@ private:
 
     // BMS 重置电池数据处理（成员函数）
     void handleBmsResetBatteryData();
+
+    // 自消耗分析
+    static void scAnalysisTask(void* param);
+    void runSelfConsumptionAnalysis();
+    bool findQuiescentSegments(const uint32_t cutoff_ts, SCAnalysisResult& result);
+    float linearRegressionSlope(const float* voltages, const uint32_t* timestamps, int count);
+    float getOcvSlope(float soc_start, float soc_end);
 
     // 充电事件回调
     static void onChargeStarted(EventType type, void* param);

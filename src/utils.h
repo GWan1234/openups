@@ -46,6 +46,15 @@ public:
      */
     static uint8_t applyGammaMapping(uint8_t percent, uint8_t max_value);
 
+    /**
+     * @brief CRC-8 校验 (Sensirion 标准)
+     * polynomial 0x31, init 0xFF
+     * @param data 输入数据
+     * @param len 数据长度
+     * @return CRC-8 值
+     */
+    static uint8_t shtc3Crc8(const uint8_t* data, uint8_t len);
+
     // ============================================================
     // BQ24780S 寄存器解析函数 (16位寄存器)
     // ============================================================

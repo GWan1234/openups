@@ -154,6 +154,10 @@ typedef struct {
     char hardware_version[16];      // 硬件版本
     
     uint32_t last_update_time;      // 最后更新时间戳 (ms)
+
+    // SHTC3 温湿度传感器
+    float board_temperature_sht;    // SHTC3 温度 (°C)
+    float board_humidity;           // SHTC3 湿度 (%RH)
 } System_Info;
 
 // =============================================================================
@@ -167,6 +171,20 @@ typedef struct {
     uint32_t timestamp;                     // 时间戳 (Unix 秒)
     char message[SYSTEM_TIP_MAX_LEN];       // 格式化消息，如 "[1月1日 18:26]BMS过压芯片配置不一致"
 } System_Tip;
+
+// =============================================================================
+// 自消耗计算 - 原始采样结构体 (24 bytes)
+// =============================================================================
+
+typedef struct __attribute__((packed)) {
+    uint32_t timestamp;         // 4 - Unix 时间戳 (秒)
+    uint16_t voltage_mV;        // 2 - 总电压 (mV)
+    int16_t  current_mA;        // 2 - 带符号电流 (mA)
+    uint8_t  soc_pct;           // 1 - SOC 0-100
+    int8_t   temperature;       // 1 - °C，有符号
+    uint16_t cell_mv[5];        // 10 - 每节电压 (mV)
+    int32_t  cc_raw;            // 4 - BQ76920 库仑计原始累加值
+} RawSample;                    // 合计 24 bytes
 
 // =============================================================================
 // 主设备数据结构 - 系统全局"黑板"
@@ -191,6 +209,12 @@ typedef struct {
     System_Tip tips[SYSTEM_TIPS_MAX];
     uint8_t tip_count;              // 当前有效提示数 (0-SYSTEM_TIPS_MAX)
     uint8_t tip_index;              // 下一条写入位置 (环形索引)
+
+    // 自消耗计算结果
+    float    self_consumption_mA;    // 当前值 (mA)，0=未计算
+    uint8_t  sc_segment_count;       // 合格静置段数
+    uint8_t  sc_confidence;          // 置信度 0-100
+    uint32_t sc_last_update;         // 最后计算时间 (Unix)
 } System_Global_State;
 
 // =============================================================================

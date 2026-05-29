@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
 #include "event_bus.h"
 #include "time_utils.h"
 #include "debug.h"
@@ -235,11 +236,16 @@ void BMS::update(System_Global_State& globalState) {
         last_medium_update_ = current_time;
     }
 
-    // Slow: SOH学习、状态解码
+    // Slow: SOH学习、状态解码、原始采样
     if (do_slow) {
         updateSOHLearning(bmsState);
         bmsState.soh = stats_.soh;
         bmsState.cycle_count = stats_.total_cycles;
+        collectRawSample(bmsState);
+
+        // 同步自消耗值到 globalState（通过外部指针访问）
+        // 注意：这里只能更新 bmsState，globalState 的同步在 SystemManager 中完成
+
         last_slow_update_ = current_time;
     }
 
@@ -580,17 +586,149 @@ float BMS::getTemperatureCompensatedCapacity(float temperature) const {
 
 void BMS::compensateSelfDischarge(unsigned long delta_time_ms) {
     if (delta_time_ms == 0) return;
-    
+
     float days = (float)delta_time_ms / (1000.0f * 3600.0f * 24.0f);
     float q_max = getAvailableCapacity();
-    float loss_mah = q_max * self_discharge_rate_per_day_ * days;
-    
+
+    // 使用计算值或默认值
+    float sc_rate;
+    if (self_consumption_mA_ > 0) {
+        sc_rate = self_consumption_mA_ * 24.0f / q_max;
+    } else {
+        sc_rate = self_discharge_rate_per_day_;
+    }
+
+    float loss_mah = q_max * sc_rate * days;
+
     current_remaining_capacity -= loss_mah;
     if (current_remaining_capacity < 0) current_remaining_capacity = 0;
-    
+
     if (loss_mah > 1.0f) {
-        DBG.printf_P(PSTR("BMS: Self-discharge %.2fmAh over %.2f days\n"), loss_mah, days);
+        DBG.printf_P(PSTR("BMS: Self-discharge %.2fmAh over %.2f days (rate=%.4f)\n"), loss_mah, days, sc_rate);
     }
+}
+
+// =============================================================================
+// 自消耗计算 - 原始数据采集
+// =============================================================================
+
+void BMS::collectRawSample(const BMS_State& bmsState) {
+    uint32_t now = getTimestamp();
+    if (now < 1000000000) return;  // NTP 未同步，跳过
+    if (now - last_raw_sample_time_ < 60) return;  // 1分钟间隔
+
+    RawSample& s = raw_buffer_[raw_buffer_idx_];
+    s.timestamp = now;
+    s.voltage_mV = bmsState.voltage;
+    s.current_mA = bmsState.current;
+    s.soc_pct = (uint8_t)constrain(bmsState.soc, 0.0f, 100.0f);
+    s.temperature = (int8_t)constrain(bmsState.temperature, -127.0f, 127.0f);
+    for (uint8_t i = 0; i < 5; i++) {
+        s.cell_mv[i] = bmsState.cell_voltages[i];
+    }
+    // 读取库仑计原始累加值（需要 I2C，但此时可能已关闭）
+    // 使用内部累积值代替，它在 processCoulombCounterData 中已维护
+    s.cc_raw = (int32_t)cc_accumulated_raw_mAh_;
+
+    raw_buffer_idx_++;
+    last_raw_sample_time_ = now;
+
+    if (raw_buffer_idx_ >= RAW_BUFFER_SIZE) {
+        flushRawBuffer();
+    }
+}
+
+extern SemaphoreHandle_t g_spiffs_mutex;
+
+void BMS::flushRawBuffer() {
+    if (raw_buffer_idx_ == 0) return;
+
+    // 获取日期字符串 YYYYMMDD
+    time_t now;
+    time(&now);
+    struct tm* tm_info = localtime(&now);
+    char filename[32];
+    snprintf(filename, sizeof(filename), "/raw/%04d%02d%02d.bin",
+             tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
+
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+    // 以追加模式写入
+    File file = SPIFFS.open(filename, FILE_APPEND);
+    if (!file) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        DBG.printf_P(PSTR("BMS: SPIFFS write failed: %s\n"), filename);
+        raw_buffer_idx_ = 0;  // 丢弃数据，避免内存积压
+        return;
+    }
+
+    size_t bytes = file.write((uint8_t*)raw_buffer_, raw_buffer_idx_ * sizeof(RawSample));
+    file.close();
+
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+    DBG.printf_P(PSTR("BMS: Flushed %d samples (%d bytes) to %s\n"),
+                 raw_buffer_idx_, bytes, filename);
+
+    raw_buffer_idx_ = 0;
+
+    // 清理超过 7 天的旧文件
+    cleanupOldRawFiles();
+}
+
+void BMS::cleanupOldRawFiles() {
+    uint32_t now = getTimestamp();
+    if (now < 1000000000) return;
+
+    // 计算 7 天前的时间戳
+    uint32_t cutoff = now - (7 * 86400);
+
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+    File root = SPIFFS.open("/raw");
+    if (!root || !root.isDirectory()) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return;
+    }
+
+    File file = root.openNextFile();
+    while (file) {
+        // 文件名格式: /raw/YYYYMMDD.bin
+        const char* name = file.name();
+        // 解析日期
+        int year = 0, month = 0, day = 0;
+        if (sscanf(name, "/raw/%04d%02d%02d.bin", &year, &month, &day) == 3) {
+            struct tm tm_info = {};
+            tm_info.tm_year = year - 1900;
+            tm_info.tm_mon = month - 1;
+            tm_info.tm_mday = day;
+            time_t file_time = mktime(&tm_info);
+
+            if (file_time < (time_t)cutoff) {
+                char path[32];
+                snprintf(path, sizeof(path), "/raw/%04d%02d%02d.bin", year, month, day);
+                SPIFFS.remove(path);
+                DBG.printf_P(PSTR("BMS: Removed old raw file: %s\n"), path);
+            }
+        }
+        file = root.openNextFile();
+    }
+
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+}
+
+void BMS::loadSelfConsumption() {
+    self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 0.0f);
+    sc_segment_count_ = preferences_.getUInt(PREFS_KEY_SC_SEG_COUNT, 0);
+    sc_confidence_ = preferences_.getUInt(PREFS_KEY_SC_CONFIDENCE, 0);
+    sc_last_update_ = preferences_.getUInt(PREFS_KEY_SC_LAST_UPD, 0);
+}
+
+void BMS::saveSelfConsumption() {
+    preferences_.putFloat(PREFS_KEY_SELF_CONSUMP, self_consumption_mA_);
+    preferences_.putUInt(PREFS_KEY_SC_SEG_COUNT, sc_segment_count_);
+    preferences_.putUInt(PREFS_KEY_SC_CONFIDENCE, sc_confidence_);
+    preferences_.putUInt(PREFS_KEY_SC_LAST_UPD, sc_last_update_);
 }
 
 float BMS::calculateSOC_Voltage(const BMS_State& bmsState) {
@@ -1272,6 +1410,10 @@ bool BMS::saveToStorage() {
     
     DBG.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
         stats_.soh, current_remaining_capacity, accumulated_charge_mAh, accumulated_discharge_mAh);
+
+    // 保存自消耗计算结果
+    saveSelfConsumption();
+
     return true;
 }
 
@@ -1347,6 +1489,10 @@ bool BMS::loadFromStorage() {
     charge_cc_raw_start_ = preferences_.getFloat(PREFS_KEY_CHG_SOH_CC, 0.0f);
     
     if (stats_.soh < 0 || stats_.soh > 100) stats_.soh = 100.0f;
+
+    // 恢复自消耗计算结果
+    loadSelfConsumption();
+
     return true;
 }
 

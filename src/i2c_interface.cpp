@@ -50,8 +50,7 @@ void I2CInterface::scanI2CBus() {
 
 bool I2CInterface::readRegisterByte(uint8_t deviceAddr, uint8_t reg, uint8_t *value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->endTransmission(false);
@@ -65,8 +64,7 @@ bool I2CInterface::readRegisterByte(uint8_t deviceAddr, uint8_t reg, uint8_t *va
 
 bool I2CInterface::writeRegisterByte(uint8_t deviceAddr, uint8_t reg, uint8_t value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->write(value);
@@ -75,8 +73,7 @@ bool I2CInterface::writeRegisterByte(uint8_t deviceAddr, uint8_t reg, uint8_t va
 
 bool I2CInterface::readRegisterWord(uint8_t deviceAddr, uint8_t reg, uint16_t *value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->endTransmission(false);
@@ -92,8 +89,7 @@ bool I2CInterface::readRegisterWord(uint8_t deviceAddr, uint8_t reg, uint16_t *v
 
 bool I2CInterface::writeRegisterWord(uint8_t deviceAddr, uint8_t reg, uint16_t value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->write(value & 0xFF);        // LSB
@@ -114,8 +110,7 @@ uint8_t I2CInterface::CRC8(const uint8_t *ptr, uint8_t len) {
 
 bool I2CInterface::readRegisterByteCRC(uint8_t deviceAddr, uint8_t reg, uint8_t *value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->endTransmission(false);
@@ -137,8 +132,7 @@ bool I2CInterface::readRegisterByteCRC(uint8_t deviceAddr, uint8_t reg, uint8_t 
 }
 bool I2CInterface::readRegisterWordCRC(uint8_t deviceAddr, uint8_t reg, uint16_t *value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->endTransmission(false);
@@ -168,17 +162,71 @@ bool I2CInterface::readRegisterWordCRC(uint8_t deviceAddr, uint8_t reg, uint16_t
     return true;
 }
 
+bool I2CInterface::readRegistersWordCRC(uint8_t deviceAddr, uint8_t startReg, uint16_t *values, uint8_t count) {
+    if (!checkInitialized() || values == nullptr || count == 0) return false;
+
+    i2cBus->beginTransmission(deviceAddr);
+    i2cBus->write(startReg);
+    i2cBus->endTransmission(false);
+
+    uint8_t totalBytes = count * 4; // 每个 word: dataH + crcH + dataL + crcL
+    i2cBus->requestFrom(deviceAddr, totalBytes);
+    if (i2cBus->available() != totalBytes) return false;
+
+    uint8_t readAddr = (deviceAddr << 1) | 0x01;
+    uint8_t prevCrc = 0;
+
+    for (uint8_t i = 0; i < count; i++) {
+        uint8_t dataH = i2cBus->read();
+        uint8_t crcH = i2cBus->read();
+        uint8_t dataL = i2cBus->read();
+        uint8_t crcL = i2cBus->read();
+
+        // CRC 校验 — 与 readRegisterWordCRC 保持一致
+        // 高字节: 首字节用 readAddr，后续字节用上一个 CRC
+        uint8_t bufH[2] = { (i == 0) ? readAddr : prevCrc, dataH };
+        if (CRC8(bufH, 2) != crcH) return false;
+        prevCrc = crcH;
+
+        // 低字节: 仅对 dataL 计算 CRC (与 readRegisterWordCRC 一致)
+        uint8_t bufL[1] = { dataL };
+        if (CRC8(bufL, 1) != crcL) return false;
+
+        values[i] = ((uint16_t)dataH << 8) | dataL;
+    }
+    return true;
+}
+
 
 bool I2CInterface::writeRegisterByteCRC(uint8_t deviceAddr, uint8_t reg, uint8_t value) {
     if (!checkInitialized()) return false;
-    if (!isDeviceConnected(deviceAddr)) return false;
-    
+
     uint8_t buf[3] = { (uint8_t)(deviceAddr << 1), reg, value };
     uint8_t crc = CRC8(buf, 3);
-    
+
     i2cBus->beginTransmission(deviceAddr);
     i2cBus->write(reg);
     i2cBus->write(value);
     i2cBus->write(crc);
     return i2cBus->endTransmission() == 0;
+}
+
+bool I2CInterface::writeCommand(uint8_t deviceAddr, const uint8_t* data, uint8_t len) {
+    if (!checkInitialized()) return false;
+
+    i2cBus->beginTransmission(deviceAddr);
+    i2cBus->write(data, len);
+    return i2cBus->endTransmission() == 0;
+}
+
+bool I2CInterface::readRaw(uint8_t deviceAddr, uint8_t* data, uint8_t len) {
+    if (!checkInitialized()) return false;
+
+    i2cBus->requestFrom(deviceAddr, len);
+    if (i2cBus->available() < len) return false;
+
+    for (uint8_t i = 0; i < len; i++) {
+        data[i] = i2cBus->read();
+    }
+    return true;
 }

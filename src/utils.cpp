@@ -267,17 +267,28 @@ float Utils::parseBQ76920OvTrip(uint8_t reg_value, uint8_t gain_reg, uint8_t off
 float Utils::parseBQ76920UvTrip(uint8_t reg_value, uint8_t gain_reg, uint8_t offset_reg) {
     // gain_reg 已经是组合后的5位值 (0-31)，bq_gain = 365 + gain_reg (μV/LSB)
     float bq_gain_uv = 365.0f + gain_reg;  // 保持为 μV/LSB
-    
+
     // offset_reg 为 8-bit 有符号数 (mV)
     int bq_offset = static_cast<int8_t>(offset_reg);
-    
+
     // 构造完整的 ADC 值 (参考 getUVThreshold 实现)
     // fullAdc = (reg_value << 4) | 0x1000
     uint16_t fullAdc = ((uint16_t)reg_value << 4);
     fullAdc |= 0x1000;  // 设置高2位为 01
-    
+
     // 计算电压: voltage_mV = (fullAdc * bq_gain_uv) / 1000.0f + bq_offset
     float voltage_mV = (fullAdc * bq_gain_uv) / 1000.0f + bq_offset;
-    
+
     return voltage_mV;
+}
+
+uint8_t Utils::shtc3Crc8(const uint8_t* data, uint8_t len) {
+    uint8_t crc = 0xFF;
+    for (uint8_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x80) ? (crc << 1) ^ 0x31 : (crc << 1);
+        }
+    }
+    return crc;
 }

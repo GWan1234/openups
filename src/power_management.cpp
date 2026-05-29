@@ -282,9 +282,8 @@ void PowerManagement::updateStatisticalData(System_Global_State& globalState) {
         
         globalState.power.battery_voltage = hal_->readVoltage(BATTERY_VOLTAGE_PIN, 10.1f);
 
-        globalState.system.board_temperature = hal_->readBoardTemperature();
-
-        globalState.system.environment_temperature = hal_->readEnvironmentTemperature();
+        hal_->readAllTemperatures(globalState.system.board_temperature,
+                                   globalState.system.environment_temperature);
     }
     
     // 过温保护检查（在温度数据读取后执行）

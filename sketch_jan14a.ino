@@ -21,9 +21,11 @@
 #include "src/system_management.h"
 #include "src/WiFiManager.h"
 #include "src/time_utils.h"
+#include <SPIFFS.h>
 #include "src/ups_hid_service.h"
 #include "src/mqtt_service.h"
 #include "src/XiaomiSensorBridge.h"
+#include "src/shtc3.h"
 
 // =============================================================================
 // OTA 固件特征标签
@@ -52,6 +54,7 @@ bool g_force_factory_reset = false;
 bool g_is_new_board = false;
 UPS_HID_Service* upsHidService = nullptr;
 MQTTService* mqttService = nullptr;
+SHTC3* shtc3 = nullptr;
 
 // =============================================================================
 // Helper Functions
@@ -59,7 +62,7 @@ MQTTService* mqttService = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.5";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.6";
   strcpy(FIRMWARE_ID_TAG, version);
   DBG.println(F("Checking for factory reset button..."));
   
@@ -193,9 +196,17 @@ bool initializeSystemModules() {
     delete bms;
     bms = nullptr;
   }
-  
+
+  // Step 3.5: SHTC3 温湿度传感器（可选，共用 BMS 的 I2C 总线）
+  DBG.println(F("Step 3.5: Initializing SHTC3..."));
+  shtc3 = new SHTC3(hardware->getI2CInterface());
+  if (!shtc3->begin()) {
+    DBG.println(F("WARNING: SHTC3 not found, skipping"));
+    delete shtc3;
+    shtc3 = nullptr;
+  }
   delay(1);
-  
+
   // Step 4: PowerManagement
   DBG.println(F("Step 4: Initializing PowerManagement..."));
   DBG.printf_P(PSTR("PowerManagement: BMS pointer is %s\n"), bms ? "valid" : "nullptr");
@@ -244,11 +255,13 @@ bool initializeSystemModules() {
   }
 
   // SystemManagement with optional MQTT service
-  systemManager = new SystemManagement(*hardware, bms, powerManagement, configManager, upsHidService, mqttService, xiaomiBridge);
+  systemManager = new SystemManagement(*hardware, bms, powerManagement, configManager, upsHidService, mqttService, xiaomiBridge, shtc3);
   if (!systemManager->initialize()) {
     DBG.println(F("ERROR: Failed to initialize SystemManagement"));
     delete systemManager;
     systemManager = nullptr;
+    delete shtc3;
+    shtc3 = nullptr;
     return false;
   }
   DBG.println(F("SystemManagement initialized successfully"));
@@ -274,6 +287,13 @@ bool initializeSystemModules() {
 
 void setup() {
   DBG.begin(115200);
+
+  // 初始化 SPIFFS 文件系统
+  if (!SPIFFS.begin(true)) {
+    DBG.println(F("SPIFFS: Mount failed, formatting..."));
+  } else {
+    DBG.println(F("SPIFFS: Mounted OK"));
+  }
 
   g_force_factory_reset = checkFactoryReset();
   g_is_new_board = detectBoardRevision();

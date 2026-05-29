@@ -10,6 +10,8 @@
 #include "event_types.h"
 #include "pins_config.h"
 
+#define RAW_BUFFER_SIZE 60
+
 #define BMS_PREFS_NAMESPACE     "bms_data"
 #define PREFS_KEY_SOH           "soh"
 #define PREFS_KEY_CYCLES        "cycles"
@@ -29,13 +31,58 @@
 #define PREFS_KEY_CHG_SOH_SOC   "bms_chg_ss"
 #define PREFS_KEY_CHG_SOH_CC    "bms_chg_cc"
 
-// OCV-SOC lookup table (NCM)
-const uint16_t OCV_SOC_TABLE[21][2] = {
-    {4200, 100}, {4150, 96}, {4100, 91}, {4050, 87}, {4000, 82},
-    {3950, 78},  {3900, 73}, {3850, 68}, {3810, 63}, {3780, 58},
-    {3750, 52},  {3720, 47}, {3690, 41}, {3660, 35}, {3630, 28},
-    {3590, 21},  {3540, 15}, {3480, 10}, {3350, 5},  {3150, 2},
-    {3000, 0}
+// 自消耗计算 NVS keys
+#define PREFS_KEY_SELF_CONSUMP  "sc_mA"
+#define PREFS_KEY_SC_SEG_COUNT  "sc_seg_cnt"
+#define PREFS_KEY_SC_CONFIDENCE "sc_conf"
+#define PREFS_KEY_SC_LAST_UPD   "sc_last_up"
+
+// OCV-SOC lookup table (NCM, 密集采样)
+// 基于实际NCM电池放电曲线，中段(20-80%)每3-5%一个点，底部加密
+const uint16_t OCV_SOC_TABLE[][2] = {
+    //  mV     SOC%
+    {4200, 100},
+    {4185,  98},
+    {4170,  97},
+    {4150,  96},
+    {4125,  93},
+    {4100,  91},
+    {4075,  89},
+    {4050,  87},
+    {4025,  84},
+    {4000,  82},
+    {3975,  79},
+    {3950,  78},
+    {3925,  75},
+    {3900,  73},
+    {3875,  70},
+    {3850,  68},
+    {3830,  65},
+    {3810,  63},
+    {3795,  60},
+    {3780,  58},
+    {3765,  55},
+    {3750,  52},
+    {3735,  49},
+    {3720,  47},
+    {3705,  44},
+    {3690,  41},
+    {3675,  38},
+    {3660,  35},
+    {3645,  31},
+    {3630,  28},
+    {3610,  24},
+    {3590,  21},
+    {3565,  18},
+    {3540,  15},
+    {3510,  12},
+    {3480,  10},
+    {3415,   7},
+    {3350,   5},
+    {3250,   3},
+    {3150,   2},
+    {3060,   1},
+    {3000,   0}
 };
 const int OCV_TABLE_SIZE = sizeof(OCV_SOC_TABLE) / sizeof(OCV_SOC_TABLE[0]);
 
@@ -120,6 +167,21 @@ public:
     bool loadFromStorage();
     bool resetBatteryData();
     static BMS_Config_t getDefaultConfig(uint8_t cell_count);
+
+    // 自消耗计算结果 getter
+    float getSelfConsumption_mA() const { return self_consumption_mA_; }
+    uint8_t getSCSegmentCount() const { return sc_segment_count_; }
+    uint8_t getSCConfidence() const { return sc_confidence_; }
+    uint32_t getSCLastUpdate() const { return sc_last_update_; }
+
+    // 自消耗计算结果 setter（由 SystemManager 分析任务调用）
+    void updateSelfConsumption(float mA, uint8_t seg_count, uint8_t confidence, uint32_t update_time) {
+        self_consumption_mA_ = mA;
+        sc_segment_count_ = seg_count;
+        sc_confidence_ = confidence;
+        sc_last_update_ = update_time;
+        saveSelfConsumption();
+    }
     bool applyNewConfig(const BMS_Config_t& config);
     void applyPendingConfig();
 
@@ -237,6 +299,21 @@ public:
 
     unsigned long last_balancing_stop_time_ = 0;  // 上次停止均衡的时间，0表示不在冷却期
     static const unsigned long BALANCE_COUNT_INTERVAL = 600000;
+
+    // 自消耗计算 - 原始采样缓冲区
+    RawSample raw_buffer_[RAW_BUFFER_SIZE];
+    uint8_t raw_buffer_idx_ = 0;
+    uint32_t last_raw_sample_time_ = 0;
+    float self_consumption_mA_ = 0.0f;       // 当前自消耗值 (0=未计算)
+    uint8_t sc_segment_count_ = 0;            // 合格段数
+    uint8_t sc_confidence_ = 0;               // 置信度
+    uint32_t sc_last_update_ = 0;             // 最后计算时间
+
+    void collectRawSample(const BMS_State& bmsState);
+    void flushRawBuffer();
+    void cleanupOldRawFiles();
+    void loadSelfConsumption();
+    void saveSelfConsumption();
 };
 
 #endif

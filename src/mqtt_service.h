@@ -11,6 +11,7 @@ class AsyncMqttClient;
 
 #define MQTT_KEEPALIVE 60
 static const char* TOPIC_AVAILABILITY = "availability";
+static const char* TOPIC_STATE = "state";
 
 // =============================================================================
 // MQTT 服务类
@@ -61,25 +62,29 @@ public:
     // 传感器 Discovery
     bool publishSensorDiscovery(const char* entity_id, const char* name,
                                 const char* device_class, const char* state_class,
-                                const char* unit, const char* state_topic);
+                                const char* unit, const char* value_template);
 
     // 二进制传感器 Discovery
     bool publishBinarySensorDiscovery(const char* entity_id, const char* name,
-                                      const char* device_class, const char* state_topic);
+                                      const char* device_class, const char* value_template,
+                                      bool is_fault_sensor = false);
 
     // 开关 Discovery
     bool publishSwitchDiscovery(const char* entity_id, const char* name,
-                                const char* command_topic, const char* state_topic);
+                                const char* command_topic,
+                                const char* value_template = nullptr);
 
     // 数值控制 Discovery
     bool publishNumberDiscovery(const char* entity_id, const char* name,
-                                const char* command_topic, const char* state_topic,
-                                int min, int max, int step, const char* unit);
+                                const char* command_topic,
+                                int min, int max, int step, const char* unit,
+                                const char* value_template = nullptr);
 
     // 选择控制 Discovery
     bool publishSelectDiscovery(const char* entity_id, const char* name,
-                                const char* command_topic, const char* state_topic,
-                                const char* options);
+                                const char* command_topic,
+                                const char* options,
+                                const char* value_template = nullptr);
 
 private:
     // 静态实例指针（用于静态回调）
@@ -123,29 +128,18 @@ private:
     // 发布辅助
     bool publishPayload(const char* topic, const uint8_t* payload, size_t length, uint8_t qos, bool retain);
 
-    // 发布状态值 (简化为常用类型)
-    bool publishStateValue(const char* topic, float value);
-    bool publishStateValue(const char* topic, int value);
-    bool publishStateValue(const char* topic, bool value);
-    bool publishStateValue(const char* topic, const char* value);
-    bool publishStateValue(const char* topic, uint16_t value);
-
-    // 发布状态到路径 (自动构建完整主题)
-    bool publishStateToTopic(const char* path, float value);
-    bool publishStateToTopic(const char* path, int value);
-    bool publishStateToTopic(const char* path, bool value);
-    bool publishStateToTopic(const char* path, const char* value);
-    bool publishStateToTopic(const char* path, uint16_t value);
-    bool publishStateToTopic(const char* path, uint32_t value);
-
     bool publishAvailability(bool online);
     bool checkWifiConnected();
 
     // 设置设备的 configuration_url
     void setupDeviceConfigUrl(JsonObject device);
     
-    // 辅助方法：将 hid_report_mode 数字值转换为字符串
+    // 辅助方法：将数字值转换为可读字符串
     const char* getHidReportModeString(uint8_t mode) const;
+    const char* getBmsFaultString(uint8_t fault) const;
+    const char* getPowerFaultString(uint8_t fault) const;
+    const char* getPowerModeString(uint8_t mode) const;
+    const char* getOverallStatusString(uint8_t status) const;
 };
 
 #endif // MQTT_SERVICE_H

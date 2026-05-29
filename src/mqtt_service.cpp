@@ -236,91 +236,106 @@ bool MQTTService::publishDiscoveryConfig() {
 
     // 电池传感器
     publishSensorDiscovery("bms_soc", "UPS Battery SOC", "battery", "measurement", "%",
-                          "state/bms/soc");
+                          "{{ value_json.bms.soc }}");
     publishSensorDiscovery("bms_soh", "UPS Battery SOH", "battery", "measurement", "%",
-                          "state/bms/soh");
+                          "{{ value_json.bms.soh }}");
     publishSensorDiscovery("bms_voltage", "UPS Battery Voltage", "voltage", "measurement", "mV",
-                          "state/bms/voltage");
+                          "{{ value_json.bms.voltage }}");
     publishSensorDiscovery("bms_current", "UPS Battery Current", "current", "measurement", "mA",
-                          "state/bms/current");
+                          "{{ value_json.bms.current }}");
     publishSensorDiscovery("bms_temperature", "UPS Battery Temperature", "temperature", "measurement", "°C",
-                          "state/bms/temperature");
+                          "{{ value_json.bms.temperature }}");
     publishSensorDiscovery("bms_capacity_remaining", "UPS Battery Capacity Remaining", "battery_capacity", "measurement", "mAh",
-                          "state/bms/capacity_remaining");
+                          "{{ value_json.bms.capacity_remaining }}");
     publishSensorDiscovery("bms_cycle_count", "UPS Battery Cycle Count", nullptr, "measurement", nullptr,
-                          "state/bms/cycle_count");
+                          "{{ value_json.bms.cycle_count }}");
+    publishSensorDiscovery("bms_self_consumption", "UPS Self Consumption Current", "current", "measurement", "mA",
+                          "{{ value_json.bms.self_consumption }}");
 
     // 单体电压 (Cell 1-5)
     publishSensorDiscovery("bms_cell_1", "UPS Cell 1 Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_1");
+                          "{{ value_json.bms.cell_1 }}");
     publishSensorDiscovery("bms_cell_2", "UPS Cell 2 Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_2");
+                          "{{ value_json.bms.cell_2 }}");
     publishSensorDiscovery("bms_cell_3", "UPS Cell 3 Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_3");
+                          "{{ value_json.bms.cell_3 }}");
     publishSensorDiscovery("bms_cell_4", "UPS Cell 4 Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_4");
+                          "{{ value_json.bms.cell_4 }}");
     publishSensorDiscovery("bms_cell_5", "UPS Cell 5 Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_5");
+                          "{{ value_json.bms.cell_5 }}");
     publishSensorDiscovery("bms_cell_min", "UPS Cell Min Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_min");
+                          "{{ value_json.bms.cell_min }}");
     publishSensorDiscovery("bms_cell_max", "UPS Cell Max Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_max");
+                          "{{ value_json.bms.cell_max }}");
     publishSensorDiscovery("bms_cell_avg", "UPS Cell Avg Voltage", "voltage", "measurement", "mV",
-                          "state/bms/cell_avg");
+                          "{{ value_json.bms.cell_avg }}");
 
     // 电源传感器
     publishSensorDiscovery("power_input_voltage", "UPS Input Voltage", "voltage", "measurement", "mV",
-                          "state/power/input_voltage");
+                          "{{ value_json.power.input_voltage }}");
     publishSensorDiscovery("power_input_current", "UPS Input Current", "current", "measurement", "mA",
-                          "state/power/input_current");
+                          "{{ value_json.power.input_current }}");
     publishSensorDiscovery("power_output_power", "UPS Output Power", "power", "measurement", "W",
-                          "state/power/output_power");
+                          "{{ value_json.power.output_power }}");
     publishSensorDiscovery("power_battery_voltage", "UPS Battery Voltage(adc)", "voltage", "measurement", "mV",
-                          "state/power/battery_voltage");
+                          "{{ value_json.power.battery_voltage }}");
     publishSensorDiscovery("power_battery_current", "UPS Battery Current(adc)", "current", "measurement", "mA",
-                          "state/power/battery_current");
+                          "{{ value_json.power.battery_current }}");
 
-    // 二进制传感器 - 电源状态
-    publishBinarySensorDiscovery("ac_present", "UPS AC Power", "power", "state/power/ac_present");
-    publishBinarySensorDiscovery("charger_enabled", "UPS Charger Enabled", "plug", "state/power/charger_enabled");
-    publishBinarySensorDiscovery("balancing_active", "UPS Balancing Active", "problem", "state/bms/balancing_active");
-    publishBinarySensorDiscovery("wifi_connected", "UPS WiFi Connected", "connectivity", "state/system/wifi_connected");
-    publishBinarySensorDiscovery("bms_fault", "UPS BMS Fault", "problem", "state/bms/fault_type");
-    publishBinarySensorDiscovery("power_fault", "UPS Power Fault", "problem", "state/power/fault_type");
-    publishBinarySensorDiscovery("emergency_shutdown", "UPS Emergency Shutdown", "problem", "state/system/emergency_shutdown");
-    publishBinarySensorDiscovery("protection_over_current", "UPS Over Current Protection", "problem", "state/protection/over_current");
-    publishBinarySensorDiscovery("protection_over_temp", "UPS Over Temperature Protection", "problem", "state/protection/over_temp");
-    publishBinarySensorDiscovery("protection_short_circuit", "UPS Short Circuit Protection", "problem", "state/protection/short_circuit");
+    // 二进制传感器
+    publishBinarySensorDiscovery("ac_present", "UPS AC Power", "power",
+                          "{{ 'true' if value_json.power.ac_present == true else 'false' }}");
+    publishBinarySensorDiscovery("charger_enabled", "UPS Charger Enabled", "plug",
+                          "{{ 'true' if value_json.power.charger_enabled == true else 'false' }}");
+    publishBinarySensorDiscovery("balancing_active", "UPS Balancing Active", "running",
+                          "{{ 'true' if value_json.bms.balancing_active == true else 'false' }}");
+    publishBinarySensorDiscovery("wifi_connected", "UPS WiFi Connected", "connectivity",
+                          "{{ 'true' if value_json.system.wifi_connected == true else 'false' }}");
+    publishBinarySensorDiscovery("bms_fault", "UPS BMS Fault", "problem",
+                          "{{ 'fault' if value_json.bms.fault_type != 'None' else 'None' }}", true);
+    publishBinarySensorDiscovery("power_fault", "UPS Power Fault", "problem",
+                          "{{ 'fault' if value_json.power.fault_type != 'None' else 'None' }}", true);
+    publishBinarySensorDiscovery("emergency_shutdown", "UPS Emergency Shutdown", "problem",
+                          "{{ 'true' if value_json.system.emergency_shutdown == true else 'false' }}");
+    publishBinarySensorDiscovery("protection_over_current", "UPS Over Current Protection", "problem",
+                          "{{ 'true' if value_json.protection.over_current == true else 'false' }}");
+    publishBinarySensorDiscovery("protection_over_temp", "UPS Over Temperature Protection", "problem",
+                          "{{ 'true' if value_json.protection.over_temp == true else 'false' }}");
+    publishBinarySensorDiscovery("protection_short_circuit", "UPS Short Circuit Protection", "problem",
+                          "{{ 'true' if value_json.protection.short_circuit == true else 'false' }}");
 
     // 系统传感器
     publishSensorDiscovery("system_uptime", "UPS System Uptime", "duration", "measurement", "s",
-                          "state/system/uptime");
+                          "{{ value_json.system.uptime }}");
     publishSensorDiscovery("system_board_temperature", "UPS Board Temperature", "temperature", "measurement", "°C",
-                          "state/system/board_temperature");
+                          "{{ value_json.system.board_temperature }}");
     publishSensorDiscovery("system_environment_temperature", "UPS Environment Temperature", "temperature", "measurement", "°C",
-                          "state/system/environment_temperature");
+                          "{{ value_json.system.environment_temperature }}");
+    publishSensorDiscovery("system_board_temperature_sht", "UPS SHTC3 Temperature", "temperature", "measurement", "°C",
+                          "{{ value_json.system.board_temperature_sht }}");
+    publishSensorDiscovery("system_board_humidity", "UPS SHTC3 Humidity", "humidity", "measurement", "%",
+                          "{{ value_json.system.board_humidity }}");
     publishSensorDiscovery("system_wifi_rssi", "UPS WiFi RSSI", "signal_strength", "measurement", "dBm",
-                          "state/system/wifi_rssi");
-    // Note: state_class should NOT be set for string/non-numeric sensors
+                          "{{ value_json.system.wifi_rssi }}");
     publishSensorDiscovery("system_firmware_version", "UPS Firmware Version", nullptr, nullptr, nullptr,
-                          "state/system/firmware_version");
+                          "{{ value_json.system.firmware_version }}");
     publishSensorDiscovery("system_power_mode", "UPS Power Mode", nullptr, nullptr, nullptr,
-                          "state/system/power_mode");
+                          "{{ value_json.system.power_mode }}");
     publishSensorDiscovery("system_overall_status", "UPS Overall Status", nullptr, nullptr, nullptr,
-                          "state/system/overall_status");
+                          "{{ value_json.system.overall_status }}");
     publishSensorDiscovery("system_wifi_ssid", "UPS WiFi SSID", nullptr, nullptr, nullptr,
-                          "state/system/wifi_ssid");
+                          "{{ value_json.system.wifi_ssid }}");
 
     // 控制实体
     publishNumberDiscovery("led_brightness", "UPS LED Brightness",
-                          "command/led_brightness/set", "state/config/led_brightness",
-                          0, 100, 1, "%");
+                          "command/led_brightness/set", 0, 100, 1, "%",
+                          "{{ value_json.config.led_brightness }}");
     publishNumberDiscovery("buzzer_volume", "UPS Buzzer Volume",
-                          "command/buzzer_volume/set", "state/config/buzzer_volume",
-                          0, 100, 1, "%");
+                          "command/buzzer_volume/set", 0, 100, 1, "%",
+                          "{{ value_json.config.buzzer_volume }}");
     publishSelectDiscovery("hid_report_mode", "UPS HID Report Mode",
-                          "command/hid_report_mode/set", "state/config/hid_report_mode",
-                          "mAh,mWh,%");
+                          "command/hid_report_mode/set", "mAh,mWh,%",
+                          "{{ value_json.config.hid_report_mode }}");
     return true;
 }
 
@@ -330,7 +345,7 @@ bool MQTTService::publishDiscoveryConfig() {
 // =============================================================================
 bool MQTTService::publishSensorDiscovery(const char* entity_id, const char* name,
                                          const char* device_class, const char* state_class,
-                                         const char* unit, const char* state_topic) {
+                                         const char* unit, const char* value_template) {
     if (!m_connected) {
         return false;
     }
@@ -341,11 +356,11 @@ bool MQTTService::publishSensorDiscovery(const char* entity_id, const char* name
     if (device_class) doc["device_class"] = device_class;
     if (state_class) doc["state_class"] = state_class;
     if (unit) doc["unit_of_measurement"] = unit;
-    doc["value_template"] = "{{ value_json.value }}";
+    doc["value_template"] = value_template ? value_template : "{{ value_json.value }}";
 
-    char state_topic_full[96];
-    snprintf(state_topic_full, sizeof(state_topic_full), "%s/%s", m_topic_base, state_topic);
-    doc["state_topic"] = state_topic_full;
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    doc["state_topic"] = state_topic;
 
     char unique_id[64];
     snprintf(unique_id, sizeof(unique_id), "%s-%s", m_device_id, entity_id);
@@ -365,22 +380,31 @@ bool MQTTService::publishSensorDiscovery(const char* entity_id, const char* name
     if (len >= sizeof(buf) - 1) {
         return false;
     }
-    bool result = publishPayload(topic, (const uint8_t*)buf, len, 0, true);
-    return result;
+    return publishPayload(topic, (const uint8_t*)buf, len, 0, true);
 }
 
 bool MQTTService::publishBinarySensorDiscovery(const char* entity_id, const char* name,
-                                               const char* device_class, const char* state_topic) {
+                                               const char* device_class, const char* value_template,
+                                               bool is_fault_sensor) {
     if (!m_connected) {
         return false;
     }
     StaticJsonDocument<512> doc;
     if (name) doc["name"] = name;
     if (device_class) doc["device_class"] = device_class;
-    doc["payload_on"] = true; doc["payload_off"] = false;
-    doc["value_template"] = "{{ value_json.value }}";
-    char t[96]; snprintf(t, sizeof(t), "%s/%s", m_topic_base, state_topic);
-    doc["state_topic"] = t;
+
+    if (is_fault_sensor) {
+        doc["payload_on"] = "fault";
+        doc["payload_off"] = "None";
+    } else {
+        doc["payload_on"] = "true";
+        doc["payload_off"] = "false";
+    }
+    doc["value_template"] = value_template ? value_template : "{{ value_json.value }}";
+
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    doc["state_topic"] = state_topic;
     char uid[64]; snprintf(uid, sizeof(uid), "%s-%s", m_device_id, entity_id);
     doc["unique_id"] = uid;
     JsonObject dev = doc.createNestedObject("device");
@@ -391,23 +415,25 @@ bool MQTTService::publishBinarySensorDiscovery(const char* entity_id, const char
     av["topic"] = availability_topic;
     char topic[128]; snprintf(topic, sizeof(topic), "%s/binary_sensor/%s/%s/config", "homeassistant", m_device_id, entity_id);
     char buf[768]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
-    return result;
+    return len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
 }
 
 bool MQTTService::publishSwitchDiscovery(const char* entity_id, const char* name,
-                                         const char* command_topic, const char* state_topic) {
+                                         const char* command_topic,
+                                         const char* value_template) {
     if (!m_connected) {
         return false;
     }
     StaticJsonDocument<512> doc;
     if (name) doc["name"] = name;
-    char ct[96], st[96];
+    char ct[96];
     snprintf(ct, sizeof(ct), "%s/%s", m_topic_base, command_topic);
-    snprintf(st, sizeof(st), "%s/%s", m_topic_base, state_topic);
-    doc["command_topic"] = ct; doc["state_topic"] = st;
+    doc["command_topic"] = ct;
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    doc["state_topic"] = state_topic;
     doc["payload_on"] = true; doc["payload_off"] = false; doc["retain"] = true;
-    doc["value_template"] = "{{ value_json.value }}";
+    doc["value_template"] = value_template ? value_template : "{{ value_json.value }}";
     char uid[64]; snprintf(uid, sizeof(uid), "%s-%s", m_device_id, entity_id);
     doc["unique_id"] = uid;
     JsonObject dev = doc.createNestedObject("device");
@@ -418,52 +444,58 @@ bool MQTTService::publishSwitchDiscovery(const char* entity_id, const char* name
     av["topic"] = availability_topic;
     char topic[128]; snprintf(topic, sizeof(topic), "%s/switch/%s/%s/config", "homeassistant", m_device_id, entity_id);
     char buf[768]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
-    return result;
+    return len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
 }
 
 bool MQTTService::publishNumberDiscovery(const char* entity_id, const char* name,
-                                         const char* command_topic, const char* state_topic,
-                                         int min, int max, int step, const char* unit) {
+                                         const char* command_topic,
+                                         int min, int max, int step, const char* unit,
+                                         const char* value_template) {
     if (!m_connected) {
         return false;
     }
     StaticJsonDocument<512> doc;
     if (name) doc["name"] = name;
-    char ct[96], st[96];
+    char ct[96];
     snprintf(ct, sizeof(ct), "%s/%s", m_topic_base, command_topic);
-    snprintf(st, sizeof(st), "%s/%s", m_topic_base, state_topic);
-    doc["command_topic"] = ct; doc["state_topic"] = st;
+    doc["command_topic"] = ct;
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    doc["state_topic"] = state_topic;
     doc["min"] = min; doc["max"] = max; doc["step"] = step;
     if (unit) doc["unit_of_measurement"] = unit;
     doc["retain"] = true;
-    doc["value_template"] = "{{ value_json.value }}";
+    doc["value_template"] = value_template ? value_template : "{{ value_json.value }}";
     char uid[64]; snprintf(uid, sizeof(uid), "%s-%s", m_device_id, entity_id);
     doc["unique_id"] = uid;
     JsonObject dev = doc.createNestedObject("device");
     setupDeviceInfo(dev);
     JsonObject av = doc.createNestedObject("availability");
-    char availability_topic[96];    snprintf(availability_topic, sizeof(availability_topic), "%s/%s", m_topic_base, TOPIC_AVAILABILITY);
+    char availability_topic[96];
+    snprintf(availability_topic, sizeof(availability_topic), "%s/%s", m_topic_base, TOPIC_AVAILABILITY);
     av["topic"] = availability_topic;
     char topic[128]; snprintf(topic, sizeof(topic), "%s/number/%s/%s/config", "homeassistant", m_device_id, entity_id);
     char buf[768]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
-    return result;
+    return len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, true);
 }
 
 bool MQTTService::publishSelectDiscovery(const char* entity_id, const char* name,
-                                         const char* command_topic, const char* state_topic,
-                                         const char* options) {
+                                         const char* command_topic,
+                                         const char* options,
+                                         const char* value_template) {
     if (!m_connected) {
         return false;
     }
     StaticJsonDocument<512> doc;
     if (name) doc["name"] = name;
-    char ct[96], st[96];
+    char ct[96];
     snprintf(ct, sizeof(ct), "%s/%s", m_topic_base, command_topic);
-    snprintf(st, sizeof(st), "%s/%s", m_topic_base, state_topic);
-    doc["command_topic"] = ct; doc["state_topic"] = st; doc["retain"] = true;
-    doc["value_template"] = "{{ value_json.value }}";
+    doc["command_topic"] = ct;
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    doc["state_topic"] = state_topic;
+    doc["retain"] = true;
+    doc["value_template"] = value_template ? value_template : "{{ value_json.value }}";
     JsonArray opts = doc.createNestedArray("options");
     const char* p = options;
     while (p && *p) {
@@ -490,72 +522,85 @@ bool MQTTService::publishSelectDiscovery(const char* entity_id, const char* name
 }
 
 bool MQTTService::publishStateData() {
-    if (!m_connected) {
+    if (!m_connected || !m_state) {
         return false;
     }
-    if (!m_state) {
-        return false;
-    }
+
+    // 构建合并 JSON 文档（~1.2KB）
+    DynamicJsonDocument doc(1536);
 
     // BMS
-    publishStateToTopic("state/bms/soc", m_state->bms.soc);
-    publishStateToTopic("state/bms/soh", m_state->bms.soh);
-    publishStateToTopic("state/bms/voltage", m_state->bms.voltage);
-    publishStateToTopic("state/bms/current", m_state->bms.current);
-    publishStateToTopic("state/bms/temperature", m_state->bms.temperature);
-    publishStateToTopic("state/bms/capacity_remaining", m_state->bms.capacity_remaining);
-    publishStateToTopic("state/bms/cycle_count", (int)m_state->bms.cycle_count);
-    publishStateToTopic("state/bms/cell_1", m_state->bms.cell_voltages[0]);
-    publishStateToTopic("state/bms/cell_2", m_state->bms.cell_voltages[1]);
-    publishStateToTopic("state/bms/cell_3", m_state->bms.cell_voltages[2]);
-    publishStateToTopic("state/bms/cell_4", m_state->bms.cell_voltages[3]);
-    publishStateToTopic("state/bms/cell_5", m_state->bms.cell_voltages[4]);
-    publishStateToTopic("state/bms/cell_min", m_state->bms.cell_voltage_min);
-    publishStateToTopic("state/bms/cell_max", m_state->bms.cell_voltage_max);
-    publishStateToTopic("state/bms/cell_avg", m_state->bms.cell_voltage_avg);
-    publishStateToTopic("state/bms/balancing_active", m_state->bms.balancing_active);
-    publishStateToTopic("state/bms/is_connected", m_state->bms.is_connected);
-    publishStateToTopic("state/bms/fault_type", (int)m_state->bms.fault_type);
+    JsonObject bms = doc.createNestedObject("bms");
+    bms["soc"] = m_state->bms.soc;
+    bms["soh"] = m_state->bms.soh;
+    bms["voltage"] = m_state->bms.voltage;
+    bms["current"] = m_state->bms.current;
+    bms["temperature"] = m_state->bms.temperature;
+    bms["capacity_remaining"] = m_state->bms.capacity_remaining;
+    bms["cycle_count"] = m_state->bms.cycle_count;
+    bms["cell_1"] = m_state->bms.cell_voltages[0];
+    bms["cell_2"] = m_state->bms.cell_voltages[1];
+    bms["cell_3"] = m_state->bms.cell_voltages[2];
+    bms["cell_4"] = m_state->bms.cell_voltages[3];
+    bms["cell_5"] = m_state->bms.cell_voltages[4];
+    bms["cell_min"] = m_state->bms.cell_voltage_min;
+    bms["cell_max"] = m_state->bms.cell_voltage_max;
+    bms["cell_avg"] = m_state->bms.cell_voltage_avg;
+    bms["balancing_active"] = m_state->bms.balancing_active;
+    bms["is_connected"] = m_state->bms.is_connected;
+    bms["self_consumption"] = m_state->self_consumption_mA;
+    bms["fault_type"] = getBmsFaultString(m_state->bms.fault_type);
 
     // Power
-    publishStateToTopic("state/power/input_voltage", m_state->power.input_voltage);
-    publishStateToTopic("state/power/input_current", m_state->power.input_current);
-    publishStateToTopic("state/power/output_power", m_state->power.output_power);
-    publishStateToTopic("state/power/battery_voltage", m_state->power.battery_voltage);
-    publishStateToTopic("state/power/battery_current", m_state->power.battery_current);
-    publishStateToTopic("state/power/ac_present", m_state->power.ac_present);
-    publishStateToTopic("state/power/charger_enabled", m_state->power.charger_enabled);
-    publishStateToTopic("state/power/hybrid_mode", m_state->power.hybrid_mode);
-    publishStateToTopic("state/power/fault_type", (int)m_state->power.fault_type);
+    JsonObject power = doc.createNestedObject("power");
+    power["input_voltage"] = m_state->power.input_voltage;
+    power["input_current"] = m_state->power.input_current;
+    power["output_power"] = m_state->power.output_power;
+    power["battery_voltage"] = m_state->power.battery_voltage;
+    power["battery_current"] = m_state->power.battery_current;
+    power["ac_present"] = m_state->power.ac_present;
+    power["charger_enabled"] = m_state->power.charger_enabled;
+    power["fault_type"] = getPowerFaultString(m_state->power.fault_type);
 
     // System
-    publishStateToTopic("state/system/uptime", (int)m_state->system.uptime);
-    publishStateToTopic("state/system/board_temperature", m_state->system.board_temperature);
-    publishStateToTopic("state/system/environment_temperature", m_state->system.environment_temperature);
-    publishStateToTopic("state/system/wifi_connected", m_state->system.wifi_connected);
-    publishStateToTopic("state/system/wifi_rssi", m_state->system.wifi_rssi);
-    publishStateToTopic("state/system/wifi_ssid", m_state->system.wifi_ssid);
-    publishStateToTopic("state/system/firmware_version", m_state->system.firmware_version);
-    publishStateToTopic("state/system/power_mode", m_state->power_mode);
-    publishStateToTopic("state/system/overall_status", m_state->overall_status);
-    publishStateToTopic("state/system/emergency_shutdown", m_state->emergency_shutdown);
+    JsonObject system = doc.createNestedObject("system");
+    system["uptime"] = m_state->system.uptime;
+    system["board_temperature"] = m_state->system.board_temperature;
+    system["environment_temperature"] = m_state->system.environment_temperature;
+    system["board_temperature_sht"] = m_state->system.board_temperature_sht;
+    system["board_humidity"] = m_state->system.board_humidity;
+    system["wifi_connected"] = m_state->system.wifi_connected;
+    system["wifi_rssi"] = m_state->system.wifi_rssi;
+    system["wifi_ssid"] = m_state->system.wifi_ssid;
+    system["firmware_version"] = m_state->system.firmware_version;
+    system["power_mode"] = getPowerModeString(m_state->power_mode);
+    system["overall_status"] = getOverallStatusString(m_state->overall_status);
+    system["emergency_shutdown"] = m_state->emergency_shutdown;
 
     // Protection
-    publishStateToTopic("state/protection/over_current", m_state->over_current_protection);
-    publishStateToTopic("state/protection/over_temp", m_state->over_temp_protection);
-    publishStateToTopic("state/protection/short_circuit", m_state->short_circuit_protection);
+    JsonObject prot = doc.createNestedObject("protection");
+    prot["over_current"] = m_state->over_current_protection;
+    prot["over_temp"] = m_state->over_temp_protection;
+    prot["short_circuit"] = m_state->short_circuit_protection;
 
     // Config
     if (m_config) {
-        publishStateToTopic("state/config/led_brightness", m_config->led_brightness);
-        publishStateToTopic("state/config/buzzer_enabled", m_config->buzzer_enabled);
-        publishStateToTopic("state/config/buzzer_volume", m_config->buzzer_volume);
-        
-        // 将 hid_report_mode 的数字索引转换为字符串
-        publishStateToTopic("state/config/hid_report_mode", getHidReportModeString(m_config->hid_report_mode));
+        JsonObject cfg = doc.createNestedObject("config");
+        cfg["led_brightness"] = m_config->led_brightness;
+        cfg["buzzer_enabled"] = m_config->buzzer_enabled;
+        cfg["buzzer_volume"] = m_config->buzzer_volume;
+        cfg["hid_report_mode"] = getHidReportModeString(m_config->hid_report_mode);
     }
 
-    return true;
+    char topic[96];
+    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, TOPIC_STATE);
+    char buf[1536];
+    size_t len = serializeJson(doc, buf, sizeof(buf));
+    if (len >= sizeof(buf) - 1) {
+        DBG.println("[MQTT] State JSON overflow, skipped");
+        return false;
+    }
+    return publishPayload(topic, (const uint8_t*)buf, len, 0, false);
 }
 
 bool MQTTService::publishAvailability(bool online) {
@@ -639,9 +684,6 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
             config_copy.hid_report_mode = new_mode;
             config_changed = true;
             DBG.printf("[MQTT] hid_report_mode change requested: %d (%s)\n", new_mode, payload_str);
-            
-            // 立即发布新状态以确认更改
-            publishStateToTopic("state/config/hid_report_mode", getHidReportModeString(new_mode));
         }
     }
     else if (strcmp(cmd, "buzzer_volume") == 0) {
@@ -658,9 +700,6 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
             config_copy.buzzer_volume = new_volume;
             config_changed = true;
             DBG.printf("[MQTT] buzzer_volume change requested: %d\n", new_volume);
-            
-            // 立即发布新状态以确认更改
-            publishStateValue("state/config/buzzer_volume", new_volume);
         }
     }
     else if (strcmp(cmd, "led_brightness") == 0) {
@@ -677,9 +716,6 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
             config_copy.led_brightness = new_brightness;
             config_changed = true;
             DBG.printf("[MQTT] led_brightness change requested: %d\n", new_brightness);
-            
-            // 立即发布新状态以确认更改
-            publishStateValue("state/config/led_brightness", new_brightness);
         }
     }
     else {
@@ -695,80 +731,6 @@ void MQTTService::handleCommand(const char* topic, const char* payload, unsigned
 }
 
 // =============================================================================
-// 发布状态值 (通用方法)
-// =============================================================================
-bool MQTTService::publishStateValue(const char* topic, float value) {
-    StaticJsonDocument<64> doc; doc["value"] = value;
-    char buf[48]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, false);
-    return result;
-}
-
-bool MQTTService::publishStateValue(const char* topic, int value) {
-    StaticJsonDocument<32> doc; doc["value"] = value;
-    char buf[32]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, false);
-    return result;
-}
-
-bool MQTTService::publishStateValue(const char* topic, bool value) {
-    StaticJsonDocument<32> doc; doc["value"] = value;
-    char buf[32]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, false);
-    return result;
-}
-
-bool MQTTService::publishStateValue(const char* topic, const char* value) {
-    StaticJsonDocument<128> doc; doc["value"] = value;
-    char buf[144]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, false);
-    return result;
-}
-
-bool MQTTService::publishStateValue(const char* topic, uint16_t value) {
-    StaticJsonDocument<32> doc; doc["value"] = value;
-    char buf[32]; size_t len = serializeJson(doc, buf, sizeof(buf));
-    bool result = len < sizeof(buf) - 1 && publishPayload(topic, (const uint8_t*)buf, len, 0, false);
-    return result;
-}
-
-bool MQTTService::publishStateToTopic(const char* path, float value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, value);
-}
-
-bool MQTTService::publishStateToTopic(const char* path, int value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, value);
-}
-
-bool MQTTService::publishStateToTopic(const char* path, bool value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, value);
-}
-
-bool MQTTService::publishStateToTopic(const char* path, const char* value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, value);
-}
-
-bool MQTTService::publishStateToTopic(const char* path, uint16_t value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, value);
-}
-
-bool MQTTService::publishStateToTopic(const char* path, uint32_t value) {
-    char topic[128];
-    snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, path);
-    return publishStateValue(topic, (int)value);
-}
-
-// =============================================================================
 // 辅助方法实现
 // =============================================================================
 
@@ -778,5 +740,55 @@ const char* MQTTService::getHidReportModeString(uint8_t mode) const {
         case 1: return "mWh";
         case 2: return "%";
         default: return "unknown";
+    }
+}
+
+const char* MQTTService::getBmsFaultString(uint8_t fault) const {
+    switch (fault) {
+        case BMS_FAULT_NONE: return "None";
+        case BMS_FAULT_OVER_VOLTAGE: return "Over Voltage";
+        case BMS_FAULT_UNDER_VOLTAGE: return "Under Voltage";
+        case BMS_FAULT_OVER_CURRENT: return "Over Current";
+        case BMS_FAULT_SHORT_CIRCUIT: return "Short Circuit";
+        case BMS_FAULT_OVER_TEMP: return "Over Temperature";
+        case BMS_FAULT_CHIP_ERROR: return "Chip Error";
+        case BMS_FAULT_PASSIVE_SHUTDOWN: return "Passive Shutdown";
+        default: return "Unknown";
+    }
+}
+
+const char* MQTTService::getPowerFaultString(uint8_t fault) const {
+    switch (fault) {
+        case POWER_FAULT_NONE: return "None";
+        case POWER_FAULT_CHIP_ERROR: return "Chip Error";
+        case POWER_FAULT_OVER_CURRENT: return "Over Current";
+        case POWER_FAULT_OVER_TEMPERATURE: return "Over Temperature";
+        case POWER_FAULT_INPUT_OVERVOLTAGE: return "Input Overvoltage";
+        case POWER_FAULT_INPUT_UNDERVOLTAGE: return "Input Undervoltage";
+        case POWER_FAULT_BATTERY_OVERVOLTAGE: return "Battery Overvoltage";
+        case POWER_FAULT_BATTERY_UNDERVOLTAGE: return "Battery Undervoltage";
+        case POWER_FAULT_SHORT_CIRCUIT: return "Short Circuit";
+        case POWER_FAULT_CHARGE_TIMEOUT: return "Charge Timeout";
+        case POWER_FAULT_I2C_COMMUNICATION: return "I2C Communication Error";
+        default: return "Unknown";
+    }
+}
+
+const char* MQTTService::getPowerModeString(uint8_t mode) const {
+    switch (mode) {
+        case POWER_MODE_AC: return "AC";
+        case POWER_MODE_BATTERY: return "Battery";
+        case POWER_MODE_HYBRID: return "Hybrid";
+        case POWER_MODE_CHARGING: return "Charging";
+        default: return "Unknown";
+    }
+}
+
+const char* MQTTService::getOverallStatusString(uint8_t status) const {
+    switch (status) {
+        case OVERALL_STATUS_NORMAL: return "Normal";
+        case OVERALL_STATUS_WARNING: return "Warning";
+        case OVERALL_STATUS_FAULT: return "Fault";
+        default: return "Unknown";
     }
 }

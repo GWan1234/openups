@@ -377,12 +377,30 @@ uint16_t BQ76920::getCellVoltage_mV(uint8_t cell_idx) {
 }
 
 
-// 批量读取电芯电压 (优化 I2C 通信效率)
+// 批量读取电芯电压 (单次 I2C burst read 读取全部寄存器)
 bool BQ76920::getCellVoltages_mV(uint16_t* voltages, uint8_t count) {
-    if (count > actual_cell_count || voltages == nullptr) return false;
-    
+    if (count > actual_cell_count || voltages == nullptr || i2c == nullptr) return false;
+
+    // 一次 burst read 读取 VC1~VC5 共 5 个寄存器 (0x0C~0x15)
+    uint16_t raw_regs[5];
+    if (!i2c->readRegistersWordCRC(BQ76920_ADDRESS, VOLTAGE_BASE_ADDR, raw_regs, 5)) {
+        // burst read 失败，回退到逐个读取
+        for (uint8_t i = 0; i < count; i++) {
+            voltages[i] = getCellVoltage_mV(i);
+        }
+        return true;
+    }
+
+    // 逻辑索引到硬件通道映射 + gain/offset 转换
     for (uint8_t i = 0; i < count; i++) {
-        voltages[i] = getCellVoltage_mV(i);
+        uint8_t hw_channel;
+        if (i < (actual_cell_count - 1)) {
+            hw_channel = i;
+        } else {
+            hw_channel = 4;
+        }
+        uint16_t adc_raw = raw_regs[hw_channel] & 0x3FFF;
+        voltages[i] = static_cast<uint16_t>((adc_raw * bq_gain) + bq_offset);
     }
     return true;
 }

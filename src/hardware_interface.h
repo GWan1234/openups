@@ -119,6 +119,7 @@ public:
     float readNTCTemperature(uint8_t pin, const uint16_t* table, size_t table_size);
     float readBoardTemperature();
     float readEnvironmentTemperature();
+    void readAllTemperatures(float& board_temp, float& env_temp);
     
     // ADC Calibration
     void setADCCalibration(uint8_t pin, uint8_t coefficient);

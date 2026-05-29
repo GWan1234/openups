@@ -36,7 +36,6 @@ private:
     void prepareResponse(uint16_t cmd);
     void rebuildBuffers();
 
-    static uint8_t crc8(const uint8_t *data, uint8_t len);
     uint16_t toRawTemp(float c);
     uint16_t toRawRH(float rh);
 };

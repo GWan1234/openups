@@ -75,7 +75,7 @@ $('outP').textContent=(p.output_power||0)+' W';
 $('pmBattV').textContent=(p.battery_voltage||0)+' mV';$('pmBattI').textContent=(p.battery_current||0)+' mA';
 $('chgSt').innerHTML=p.charger_enabled?badge('g','充电中'):badge('b','未充电');
 $('pwrMd').innerHTML=badge('b',['AC','电池','混合','充电'][d.power_mode]||'未知');
-$('brdT').textContent=(s.board_temperature||0).toFixed(1)+' °C';$('envT').textContent=(s.environment_temperature||0).toFixed(1)+' °C';
+$('brdT').textContent=(s.board_temperature||0).toFixed(1)+' °C';$('envT').textContent=(s.environment_temperature||0).toFixed(1)+' °C';$('shtT').textContent=(s.board_temperature_sht||0).toFixed(1)+' °C';$('shtH').textContent=(s.board_humidity||0).toFixed(1)+' %';
 // BMS panel
 var bsc=b.soc||0,bb=$('b_soc_bar');$('b_soc').textContent=bsc.toFixed(1)+' %';bb.style.width=bsc+'%';bb.textContent=bsc.toFixed(1)+'%';bb.style.background=bsc>20?'#52c41a':bsc>10?'#faad14':'#f5222d';
 $('b_soh').textContent=(b.soh||0).toFixed(1)+' %';$('b_v').textContent=(b.voltage||0)+' mV';
@@ -94,6 +94,13 @@ $('p_ip').textContent=((p.input_voltage||0)*(p.input_current||0)/1e6).toFixed(2)
 $('p_bv').textContent=(p.battery_voltage||0)+' mV';$('p_bi').textContent=(p.battery_current||0)+' mA';
 $('p_ce').innerHTML=p.charger_enabled?badge('g','是'):badge('b','否');$('p_hy').innerHTML=p.hybrid_mode?badge('g','是'):badge('b','否');
 $('p_ft').textContent=p.fault_type||0;$('p_ph').innerHTML=!p.prochot_status?badge('r','触发'):badge('g','正常');$('p_tb').innerHTML=!p.tbstat_status?badge('w','触发'):badge('g','正常');
+// Self-consumption
+var sc_ma=d.self_consumption_mA||0;
+$('sc_mA').textContent=sc_ma>0?sc_ma.toFixed(2)+' mA':'采集中';
+$('sc_conf').textContent=(d.sc_confidence||0)+'%';
+$('sc_seg').textContent=d.sc_segment_count||0;
+var sc_ts=d.sc_last_update||0;
+$('sc_time').textContent=sc_ts>0?new Date(sc_ts*1000).toLocaleDateString():'未计算';
 $('updT').textContent='更新：'+new Date().toLocaleTimeString();
 // Tips
 var tips=d.tips||[];var tb=$('tipBar');
