@@ -1274,23 +1274,25 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
         for (uint8_t i = 0; i < config_.cell_count && i < 5; i++) {
             bmsState.cell_voltages[i] = cell_voltages[i];
         }
-        
+
         uint32_t sum = 0;
         bmsState.cell_voltage_min = bmsState.cell_voltage_max = cell_voltages[0];
-        
+
         for (uint8_t i = 0; i < config_.cell_count; i++) {
             if (cell_voltages[i] < bmsState.cell_voltage_min) bmsState.cell_voltage_min = cell_voltages[i];
             if (cell_voltages[i] > bmsState.cell_voltage_max) bmsState.cell_voltage_max = cell_voltages[i];
             sum += cell_voltages[i];
         }
         bmsState.cell_voltage_avg = sum / config_.cell_count;
+        // 各节电压使用芯片OTP校准的gain+offset，精度高于总电压ADC的固定系数
+        // 优先使用各节之和，避免未校准的总电压ADC引入~50mV误差
         bmsState.voltage = sum;
     } else {
         read_success = false;
+        // 各节读取失败时，回退到总电压ADC（固定系数1.532mV/LSB，未校准）
+        uint16_t total_voltage = bq76920_.getTotalVoltage_mV();
+        if (total_voltage > 9000) bmsState.voltage = total_voltage;
     }
-    
-    uint16_t total_voltage = bq76920_.getTotalVoltage_mV();
-    if (total_voltage > 9000) bmsState.voltage = total_voltage;
     
     int16_t current = bq76920_.getCurrent_mA();
     if (current != -32768) {
