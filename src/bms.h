@@ -212,8 +212,7 @@ public:
     bool soc_initialized_;
     float last_stable_soc_;
     unsigned long last_soc_update_timestamp_;
-    float self_discharge_rate_per_day_;
-    
+
     // SOH Learning context
     SOH_Learning_Context_t soh_learning_ctx_;
     unsigned long soc_stable_start_time_;

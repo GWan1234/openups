@@ -17,7 +17,7 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
       last_periodic_update_(0), last_day_update_(0), current_remaining_capacity(0.0f),
       accumulated_charge_mAh(0.0f), accumulated_discharge_mAh(0.0f),
       cc_ready_pending_(false), soc_initialized_(false), last_stable_soc_(50.0f),
-      last_soc_update_timestamp_(0), self_discharge_rate_per_day_(0.01f),
+      last_soc_update_timestamp_(0),
       soc_stable_start_time_(0), soc_waiting_for_stable_(false),
       hardware_fault_wait_(BMS_FAULT_NONE),
       full_charge_calibrated_(false),
@@ -590,13 +590,8 @@ void BMS::compensateSelfDischarge(unsigned long delta_time_ms) {
     float days = (float)delta_time_ms / (1000.0f * 3600.0f * 24.0f);
     float q_max = getAvailableCapacity();
 
-    // 使用计算值或默认值
-    float sc_rate;
-    if (self_consumption_mA_ > 0) {
-        sc_rate = self_consumption_mA_ * 24.0f / q_max;
-    } else {
-        sc_rate = self_discharge_rate_per_day_;
-    }
+    // 使用自消耗 mA 值转换为每日百分比
+    float sc_rate = self_consumption_mA_ * 24.0f / q_max;
 
     float loss_mah = q_max * sc_rate * days;
 
@@ -718,7 +713,7 @@ void BMS::cleanupOldRawFiles() {
 }
 
 void BMS::loadSelfConsumption() {
-    self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 0.0f);
+    self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 20.0f);
     sc_segment_count_ = preferences_.getUInt(PREFS_KEY_SC_SEG_COUNT, 0);
     sc_confidence_ = preferences_.getUInt(PREFS_KEY_SC_CONFIDENCE, 0);
     sc_last_update_ = preferences_.getUInt(PREFS_KEY_SC_LAST_UPD, 0);
