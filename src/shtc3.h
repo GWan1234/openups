@@ -4,12 +4,13 @@
 #include <stdint.h>
 #include "i2c_interface.h"
 
-#define SHTC3_ADDRESS       0x38    // 实际地址 0x70，ESP32 Wire 需右移一位
+#define SHTC3_ADDRESS       0x70    // 实际地址 0x70，ESP32 Wire 需右移一位
 
 // 命令定义 (MSB first)
-#define SHTC3_CMD_WAKEUP    0x3517
-#define SHTC3_CMD_SLEEP     0xB098
-#define SHTC3_CMD_READ_TF   0x7866  // Temperature first, no clock stretching
+#define SHTC3_CMD_WAKEUP      0x3517
+#define SHTC3_CMD_SLEEP       0xB098
+#define SHTC3_CMD_READ_TF     0x7866  // Temperature first, no clock stretching
+#define SHTC3_CMD_SOFT_RESET  0x805D  // 软复位
 
 #define SHTC3_READ_INTERVAL_MS  30000   // 读取间隔 30 秒
 #define SHTC3_MEASURE_WAIT_MS   15      // 测量等待 > 12.1ms
