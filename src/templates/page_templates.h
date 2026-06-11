@@ -76,12 +76,6 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row"><span class="lb">SHTC3温度</span><span class="vl" id="shtT">-- °C</span></div>
 <div class="row"><span class="lb">SHTC3湿度</span><span class="vl" id="shtH">-- %</span></div>
 </div>
-<div class="card"><div class="card-t">系统自消耗</div>
-<div class="row"><span class="lb">消耗电流</span><span class="vl" id="sc_mA">-- mA</span></div>
-<div class="row"><span class="lb">置信度</span><span class="vl" id="sc_conf">-- %</span></div>
-<div class="row"><span class="lb">合格段数</span><span class="vl" id="sc_seg">--</span></div>
-<div class="row"><span class="lb">最后更新</span><span class="vl" id="sc_time">--</span></div>
-</div>
 </div>
 </div>
 
@@ -106,6 +100,10 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row"><span class="lb">故障类型</span><span class="vl r" id="b_fault">--</span></div>
 <div class="row"><span class="lb">BMS 模式</span><span class="vl" id="b_mode">--</span></div>
 </div>
+<div class="card"><div class="card-t">系统自消耗（实验性功能）</div>
+<div class="row"><span class="lb">消耗电流</span><span class="vl" id="sc_mA">-- mA</span></div>
+<div class="row"><span class="lb">最后更新</span><span class="vl" id="sc_time">--</span></div>
+</div>
 </div>
 <div class="card" style="margin-top:16px"><div class="card-t">单体电压详情</div>
 <div class="cells" id="b_cells"></div>
@@ -114,6 +112,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="stat-box"><div class="stat-label">最低</div><div class="stat-value" id="b_min">-- mV</div></div>
 <div class="stat-box"><div class="stat-label">平均</div><div class="stat-value" id="b_avg">-- mV</div></div>
 <div class="stat-box"><div class="stat-label">压差</div><div class="stat-value" id="b_dlt">-- mV</div></div>
+<div class="stat-box"><div class="stat-label">内阻采样（实验性功能）</div><div class="stat-value" id="b_ir_cnt">--</div></div>
 </div>
 </div>
 <div class="card-t" style="margin:20px 0 12px;font-size:14px;font-weight:600">BQ76920 寄存器状态</div>

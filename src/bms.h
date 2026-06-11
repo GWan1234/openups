@@ -34,8 +34,13 @@
 // 自消耗计算 NVS keys
 #define PREFS_KEY_SELF_CONSUMP  "sc_mA"
 #define PREFS_KEY_SC_SEG_COUNT  "sc_seg_cnt"
+#define PREFS_KEY_SC_TOTAL_SEG  "sc_total_seg"
 #define PREFS_KEY_SC_CONFIDENCE "sc_conf"
 #define PREFS_KEY_SC_LAST_UPD   "sc_last_up"
+#define PREFS_KEY_SC_LAST_CHK   "sc_last_chk"
+
+#define PREFS_KEY_IR_RESULT     "ir_result"    // float[5] 共20字节
+#define PREFS_KEY_IR_COUNT      "ir_count"
 
 // OCV-SOC lookup table (NCM, 密集采样)
 // 基于实际NCM电池放电曲线，中段(20-80%)每3-5%一个点，底部加密
@@ -171,16 +176,38 @@ public:
     // 自消耗计算结果 getter
     float getSelfConsumption_mA() const { return self_consumption_mA_; }
     uint8_t getSCSegmentCount() const { return sc_segment_count_; }
+    uint8_t getSCTotalSegments() const { return sc_total_segments_; }
     uint8_t getSCConfidence() const { return sc_confidence_; }
     uint32_t getSCLastUpdate() const { return sc_last_update_; }
+    uint32_t getSCLastCheck() const { return sc_last_check_; }
+
+    // 内阻估算结果 getter
+    const float* getInternalResistance() const { return ir_result_mΩ_; }
+    uint8_t getIRSampleCount() const { return ir_sample_count_; }
+
+
+    // 内阻估算结果 setter（由 SystemManager 分析任务调用）
+    void updateInternalResistance(const float* ir_data, uint8_t sample_count) {
+        for (uint8_t i = 0; i < 5; i++) ir_result_mΩ_[i] = ir_data[i];
+        ir_sample_count_ = sample_count;
+        saveIRData();
+    }
 
     // 自消耗计算结果 setter（由 SystemManager 分析任务调用）
-    void updateSelfConsumption(float mA, uint8_t seg_count, uint8_t confidence, uint32_t update_time) {
+    void updateSelfConsumption(float mA, uint8_t seg_count, uint8_t total_segments, uint8_t confidence, uint32_t update_time, uint32_t check_time) {
         self_consumption_mA_ = mA;
         sc_segment_count_ = seg_count;
+        sc_total_segments_ = total_segments;
         sc_confidence_ = confidence;
         sc_last_update_ = update_time;
+        sc_last_check_ = check_time;
         saveSelfConsumption();
+    }
+
+    // 仅更新检查时间和总段数（分析未成功时调用）
+    void updateSCLastCheck(uint32_t check_time, uint8_t total_segments = 0) {
+        sc_last_check_ = check_time;
+        if (total_segments > 0) sc_total_segments_ = total_segments;
     }
     bool applyNewConfig(const BMS_Config_t& config);
     void applyPendingConfig();
@@ -303,16 +330,31 @@ public:
     RawSample raw_buffer_[RAW_BUFFER_SIZE];
     uint8_t raw_buffer_idx_ = 0;
     uint32_t last_raw_sample_time_ = 0;
+
+    // 采集统计
+    uint32_t raw_call_count_ = 0;
+    uint32_t raw_skip_ntp_ = 0;
+    uint32_t raw_skip_interval_ = 0;
+    uint32_t raw_flush_count_ = 0;
+    uint32_t raw_flush_fail_ = 0;
     float self_consumption_mA_ = 0.0f;       // 当前自消耗值 (0=未计算)
     uint8_t sc_segment_count_ = 0;            // 合格段数
+    uint8_t sc_total_segments_ = 0;           // 总候选段数
     uint8_t sc_confidence_ = 0;               // 置信度
     uint32_t sc_last_update_ = 0;             // 最后计算时间
+    uint32_t sc_last_check_ = 0;              // 最后检查时间
 
     void collectRawSample(const BMS_State& bmsState);
     void flushRawBuffer();
     void cleanupOldRawFiles();
     void loadSelfConsumption();
     void saveSelfConsumption();
+    void loadIRData();
+    void saveIRData();
+
+    // 内阻估算结果（由 SystemManager 分析任务写入）
+    float ir_result_mΩ_[5] = {};                // 每节电池内阻 (mΩ), 0=未测量
+    uint8_t ir_sample_count_ = 0;               // 有效突变采样数
 };
 
 #endif

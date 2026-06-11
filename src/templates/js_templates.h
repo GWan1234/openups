@@ -43,7 +43,7 @@ ws.onclose=function(){document.getElementById('wsSt').className='ws-st fail';doc
 ws.onmessage=function(e){upd(JSON.parse(e.data))};
 }
 function badge(c,t){return'<span class="badge '+c+'">'+t+'</span>'}
-function renderCells(cs,max,min,balCounts){var h='';for(var i=0;i<5;i++){var v=cs[i]||0;var bc=balCounts?balCounts[i]:0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'/'+bc+'</div></div>'}return h}
+function renderCells(cs,max,min,balCounts,irArr){var h='';for(var i=0;i<5;i++){var v=cs[i]||0;var bc=balCounts?balCounts[i]:0;var ir=irArr?irArr[i]:0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'/'+bc+'</div>'+(ir>0?'<div class="ir">'+ir.toFixed(1)+' mΩ</div>':'')+'</div>'}return h}
 function getBalancingCells(mask){if(!mask)return[];var cells=[];for(var i=0;i<5;i++){if(mask&(1<<i))cells.push('Cell'+(i+1))}return cells}
 function setStat(id,val,c){var e=$(id);e.textContent=val+' mV';e.className='stat-value'+c}
 // === 数据刷新 ===
@@ -62,7 +62,7 @@ $('battV').textContent=(b.voltage||0)+' mV';
 var ci=b.current||0;$('battI').textContent=ci+' mA';$('battI').className='vl'+(ci>0?' g':ci<0?' w':'');
 $('battT').textContent=(b.temperature||0).toFixed(1)+' °C';$('soh').textContent=(b.soh||0).toFixed(1)+' %';
 $('cycles').textContent=b.cycle_count||0;$('capR').textContent=(b.capacity_remaining||0)+' mAh';
-var cs=b.cell_voltages||[],bcs=b.cell_balancing_count||[];$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs);
+var cs=b.cell_voltages||[],bcs=b.cell_balancing_count||[],irs=b.cell_ir||[];$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs,irs);
 $('cellMM').textContent=(b.cell_voltage_max||0)+'/'+(b.cell_voltage_min||0)+' mV';
 $('cellD').textContent=((b.cell_voltage_max||0)-(b.cell_voltage_min||0))+' mV';
 // 更新均衡状态显示
@@ -85,9 +85,10 @@ $('b_bal').innerHTML=b.balancing_active?badge('g','均衡中'):badge('b','未激
 // 更新BMS面板的总均衡次数
 $('b_bal_total').textContent=b.balancing_events_total||0;
 $('b_fault').textContent=b.fault_type||0;$('b_mode').textContent=b.bms_mode||0;
-var bcs2=b.cell_balancing_count||[];$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs2);
+var bcs2=b.cell_balancing_count||[];$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs2,irs);
 setStat('b_max',b.cell_voltage_max||0,' g');setStat('b_min',b.cell_voltage_min||0,' r');setStat('b_avg',b.cell_voltage_avg||0,' b');
 setStat('b_dlt',(b.cell_voltage_max||0)-(b.cell_voltage_min||0),' w');
+$('b_ir_cnt').textContent=(b.ir_sample_count||0)+'次';
 // Power panel
 $('p_ac').innerHTML=p.ac_present?badge('g','在线'):badge('r','离线');$('p_iv').textContent=(p.input_voltage||0)+' mV';$('p_ii').textContent=(p.input_current||0)+' mA';
 $('p_ip').textContent=((p.input_voltage||0)*(p.input_current||0)/1e6).toFixed(2)+' W';$('p_op').textContent=(p.output_power||0)+' W';
@@ -96,11 +97,12 @@ $('p_ce').innerHTML=p.charger_enabled?badge('g','是'):badge('b','否');$('p_hy'
 $('p_ft').textContent=p.fault_type||0;$('p_ph').innerHTML=!p.prochot_status?badge('r','触发'):badge('g','正常');$('p_tb').innerHTML=!p.tbstat_status?badge('w','触发'):badge('g','正常');
 // Self-consumption
 var sc_ma=d.self_consumption_mA||0;
-$('sc_mA').textContent=sc_ma>0?sc_ma.toFixed(2)+' mA':'采集中';
-$('sc_conf').textContent=(d.sc_confidence||0)+'%';
-$('sc_seg').textContent=d.sc_segment_count||0;
+$('sc_mA').textContent=sc_ma>0?sc_ma.toFixed(1)+' mA ('+(sc_ma*24).toFixed(0)+'mAh/天)':'采集中';
 var sc_ts=d.sc_last_update||0;
-$('sc_time').textContent=sc_ts>0?new Date(sc_ts*1000).toLocaleDateString():'未计算';
+var sc_check=d.sc_last_check||0;
+if(sc_ts>0){$('sc_time').textContent=new Date(sc_ts*1000).toLocaleDateString()}
+else if(sc_check>0){$('sc_time').textContent=new Date(sc_check*1000).toLocaleDateString()+' (采集中)'}
+else{$('sc_time').textContent='未计算'}
 $('updT').textContent='更新：'+new Date().toLocaleTimeString();
 // Tips
 var tips=d.tips||[];var tb=$('tipBar');

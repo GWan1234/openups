@@ -131,7 +131,7 @@ bool BMS::begin() {
 
 void BMS::update(System_Global_State& globalState) {
     if (!initialized_) return;
-    
+
     unsigned long current_time = millis();
     BMS_State& bmsState = globalState.bms;
 
@@ -608,9 +608,11 @@ void BMS::compensateSelfDischarge(unsigned long delta_time_ms) {
 // =============================================================================
 
 void BMS::collectRawSample(const BMS_State& bmsState) {
+    raw_call_count_++;
+
     uint32_t now = getTimestamp();
-    if (now < 1000000000) return;  // NTP 未同步，跳过
-    if (now - last_raw_sample_time_ < 60) return;  // 1分钟间隔
+    if (now < 1000000000) { raw_skip_ntp_++; return; }
+    if (now - last_raw_sample_time_ < 60) { raw_skip_interval_++; return; }
 
     RawSample& s = raw_buffer_[raw_buffer_idx_];
     s.timestamp = now;
@@ -636,6 +638,7 @@ void BMS::collectRawSample(const BMS_State& bmsState) {
 extern SemaphoreHandle_t g_spiffs_mutex;
 
 void BMS::flushRawBuffer() {
+    raw_flush_count_++;
     if (raw_buffer_idx_ == 0) return;
 
     // 获取日期字符串 YYYYMMDD
@@ -651,9 +654,9 @@ void BMS::flushRawBuffer() {
     // 以追加模式写入
     File file = SPIFFS.open(filename, FILE_APPEND);
     if (!file) {
+        raw_flush_fail_++;
         if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
-        DBG.printf_P(PSTR("BMS: SPIFFS write failed: %s\n"), filename);
-        raw_buffer_idx_ = 0;  // 丢弃数据，避免内存积压
+        raw_buffer_idx_ = 0;
         return;
     }
 
@@ -675,8 +678,7 @@ void BMS::cleanupOldRawFiles() {
     uint32_t now = getTimestamp();
     if (now < 1000000000) return;
 
-    // 计算 7 天前的时间戳
-    uint32_t cutoff = now - (7 * 86400);
+    uint32_t cutoff = now - (30 * 86400);
 
     if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
 
@@ -686,13 +688,19 @@ void BMS::cleanupOldRawFiles() {
         return;
     }
 
+    int total = 0, removed = 0;
     File file = root.openNextFile();
     while (file) {
-        // 文件名格式: /raw/YYYYMMDD.bin
         const char* name = file.name();
-        // 解析日期
+        total++;
+
+        // 兼容两种格式: "/raw/YYYYMMDD.bin" 或 "YYYYMMDD.bin"
         int year = 0, month = 0, day = 0;
-        if (sscanf(name, "/raw/%04d%02d%02d.bin", &year, &month, &day) == 3) {
+        if (sscanf(name, "/raw/%04d%02d%02d.bin", &year, &month, &day) != 3) {
+            sscanf(name, "%04d%02d%02d.bin", &year, &month, &day);
+        }
+
+        if (year > 0) {
             struct tm tm_info = {};
             tm_info.tm_year = year - 1900;
             tm_info.tm_mon = month - 1;
@@ -703,7 +711,7 @@ void BMS::cleanupOldRawFiles() {
                 char path[32];
                 snprintf(path, sizeof(path), "/raw/%04d%02d%02d.bin", year, month, day);
                 SPIFFS.remove(path);
-                DBG.printf_P(PSTR("BMS: Removed old raw file: %s\n"), path);
+                removed++;
             }
         }
         file = root.openNextFile();
@@ -713,17 +721,34 @@ void BMS::cleanupOldRawFiles() {
 }
 
 void BMS::loadSelfConsumption() {
-    self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 20.0f);
+    self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 0.83f);  // 默认20mAh/天
     sc_segment_count_ = preferences_.getUInt(PREFS_KEY_SC_SEG_COUNT, 0);
+    sc_total_segments_ = preferences_.getUInt(PREFS_KEY_SC_TOTAL_SEG, 0);
     sc_confidence_ = preferences_.getUInt(PREFS_KEY_SC_CONFIDENCE, 0);
     sc_last_update_ = preferences_.getUInt(PREFS_KEY_SC_LAST_UPD, 0);
+    sc_last_check_ = preferences_.getUInt(PREFS_KEY_SC_LAST_CHK, 0);
 }
 
 void BMS::saveSelfConsumption() {
     preferences_.putFloat(PREFS_KEY_SELF_CONSUMP, self_consumption_mA_);
     preferences_.putUInt(PREFS_KEY_SC_SEG_COUNT, sc_segment_count_);
+    preferences_.putUInt(PREFS_KEY_SC_TOTAL_SEG, sc_total_segments_);
     preferences_.putUInt(PREFS_KEY_SC_CONFIDENCE, sc_confidence_);
     preferences_.putUInt(PREFS_KEY_SC_LAST_UPD, sc_last_update_);
+    preferences_.putUInt(PREFS_KEY_SC_LAST_CHK, sc_last_check_);
+}
+
+void BMS::loadIRData() {
+    // getBytes 需要先检查 key 是否存在
+    if (preferences_.isKey(PREFS_KEY_IR_RESULT)) {
+        preferences_.getBytes(PREFS_KEY_IR_RESULT, ir_result_mΩ_, sizeof(ir_result_mΩ_));
+    }
+    ir_sample_count_ = preferences_.getUInt(PREFS_KEY_IR_COUNT, 0);
+}
+
+void BMS::saveIRData() {
+    preferences_.putBytes(PREFS_KEY_IR_RESULT, ir_result_mΩ_, sizeof(ir_result_mΩ_));
+    preferences_.putUInt(PREFS_KEY_IR_COUNT, ir_sample_count_);
 }
 
 float BMS::calculateSOC_Voltage(const BMS_State& bmsState) {
@@ -1489,6 +1514,9 @@ bool BMS::loadFromStorage() {
 
     // 恢复自消耗计算结果
     loadSelfConsumption();
+
+    // 恢复内阻估算结果
+    loadIRData();
 
     return true;
 }

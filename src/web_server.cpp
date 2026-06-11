@@ -302,6 +302,13 @@ void WebServer::notifyClients() {
   bms["cell_voltage_max"] = state.bms.cell_voltage_max;
   bms["cell_voltage_avg"] = state.bms.cell_voltage_avg;
 
+  // 内阻估算数组
+  JsonArray ir_arr = bms.createNestedArray("cell_ir");
+  for (int i = 0; i < 5; i++) {
+    ir_arr.add(serialized(String(state.bms.cell_internal_resistance[i], 1)));
+  }
+  bms["ir_sample_count"] = state.bms.ir_sample_count;
+
   // BQ76920 寄存器数组
   JsonArray bq76920_regs = bms.createNestedArray("bq76920_registers");
   for (int i = 0; i < 12; i++) {
@@ -344,8 +351,6 @@ void WebServer::notifyClients() {
 
   // 自消耗计算数据
   doc["self_consumption_mA"] = serialized(String(state.self_consumption_mA, 2));
-  doc["sc_segment_count"] = state.sc_segment_count;
-  doc["sc_confidence"] = state.sc_confidence;
   doc["sc_last_update"] = state.sc_last_update;
 
   String json;
@@ -408,8 +413,6 @@ void WebServer::buildStatusResponse(DynamicJsonDocument& doc, const System_Globa
 
   // 自消耗计算
   doc["self_consumption_mA"] = state.self_consumption_mA;
-  doc["sc_segment_count"] = state.sc_segment_count;
-  doc["sc_confidence"] = state.sc_confidence;
   doc["sc_last_update"] = state.sc_last_update;
 }
 
@@ -435,6 +438,12 @@ void WebServer::buildBmsResponse(DynamicJsonDocument& doc, const System_Global_S
   doc["cell_voltage_min"] = state.bms.cell_voltage_min;
   doc["cell_voltage_max"] = state.bms.cell_voltage_max;
   doc["cell_voltage_avg"] = state.bms.cell_voltage_avg;
+
+  JsonArray ir_arr = doc.createNestedArray("cell_ir");
+  for (int i = 0; i < 5; i++) {
+    ir_arr.add(serialized(String(state.bms.cell_internal_resistance[i], 1)));
+  }
+  doc["ir_sample_count"] = state.bms.ir_sample_count;
 }
 
 void WebServer::buildPowerResponse(DynamicJsonDocument& doc, const System_Global_State& state) {
@@ -599,6 +608,18 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# HELP ups_bms_cell_voltage_avg Average cell voltage in millivolts\n";
   metrics += "# TYPE ups_bms_cell_voltage_avg gauge\n";
   metrics += "ups_bms_cell_voltage_avg " + String(state.bms.cell_voltage_avg) + "\n\n";
+
+  // Internal resistance
+  metrics += "# HELP ups_bms_cell_ir Estimated cell internal resistance in mΩ\n";
+  metrics += "# TYPE ups_bms_cell_ir gauge\n";
+  for (int i = 0; i < 5; i++) {
+    metrics += "ups_bms_cell_ir{cell=\"" + String(i + 1) + "\"} " + String(state.bms.cell_internal_resistance[i], 1) + "\n";
+  }
+  metrics += "\n";
+
+  metrics += "# HELP ups_bms_ir_sample_count Number of internal resistance measurements\n";
+  metrics += "# TYPE ups_bms_ir_sample_count gauge\n";
+  metrics += "ups_bms_ir_sample_count " + String(state.bms.ir_sample_count) + "\n\n";
   
   // Power metrics
   metrics += "# HELP ups_power_input_voltage Input voltage in millivolts\n";
@@ -678,6 +699,14 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# HELP ups_sc_segment_count Number of valid quiescent segments used\n";
   metrics += "# TYPE ups_sc_segment_count gauge\n";
   metrics += "ups_sc_segment_count " + String(state.sc_segment_count) + "\n\n";
+
+  metrics += "# HELP ups_sc_total_segments Total quiescent segments found (including invalid)\n";
+  metrics += "# TYPE ups_sc_total_segments gauge\n";
+  metrics += "ups_sc_total_segments " + String(state.sc_total_segments) + "\n\n";
+
+  metrics += "# HELP ups_sc_last_check Last self-consumption analysis check time (Unix timestamp)\n";
+  metrics += "# TYPE ups_sc_last_check gauge\n";
+  metrics += "ups_sc_last_check " + String(state.sc_last_check) + "\n\n";
 
   request->send(200, "text/plain; version=0.0.4; charset=utf-8", metrics);
 }

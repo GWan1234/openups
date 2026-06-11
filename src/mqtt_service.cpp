@@ -551,6 +551,13 @@ bool MQTTService::publishStateData() {
     bms["self_consumption"] = m_state->self_consumption_mA;
     bms["fault_type"] = getBmsFaultString(m_state->bms.fault_type);
 
+    // 内阻数据
+    JsonArray ir_arr = bms.createNestedArray("cell_ir");
+    for (int i = 0; i < 5; i++) {
+        ir_arr.add(serialized(String(m_state->bms.cell_internal_resistance[i], 1)));
+    }
+    bms["ir_sample_count"] = m_state->bms.ir_sample_count;
+
     // Power
     JsonObject power = doc.createNestedObject("power");
     power["input_voltage"] = m_state->power.input_voltage;

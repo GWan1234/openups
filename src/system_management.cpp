@@ -249,8 +249,17 @@ void SystemManagement::collectData() {
         // 同步自消耗计算结果到全局状态
         globalState.self_consumption_mA = bms->getSelfConsumption_mA();
         globalState.sc_segment_count = bms->getSCSegmentCount();
+        globalState.sc_total_segments = bms->getSCTotalSegments();
         globalState.sc_confidence = bms->getSCConfidence();
         globalState.sc_last_update = bms->getSCLastUpdate();
+        globalState.sc_last_check = bms->getSCLastCheck();
+
+        // 同步内阻估算结果到全局状态
+        const float* ir = bms->getInternalResistance();
+        for (uint8_t i = 0; i < 5; i++) {
+            globalState.bms.cell_internal_resistance[i] = ir[i];
+        }
+        globalState.bms.ir_sample_count = bms->getIRSampleCount();
     } else {
         // BMS 不存在时，标记为未连接
         globalState.bms.is_connected = false;
@@ -1427,17 +1436,10 @@ void SystemManagement::clearTips() {
 // 自消耗分析 - FreeRTOS 任务和核心逻辑
 // =============================================================================
 
-// 用于线性回归的中间结构
-struct QuiescentSegment {
-    uint32_t start_ts;
-    uint32_t end_ts;
-    int16_t  temp_min;
-    int16_t  temp_max;
-    uint8_t  soc_start;
-    uint8_t  soc_end;
-    float    v_start;       // 起始平均电压 (mV)
-    float    v_end;         // 结束平均电压 (mV)
-};
+// 扫描参数常量
+static constexpr uint16_t MIN_BLOCK_MINS = 480;      // 最短连续静置段 8 小时
+static constexpr uint32_t MIN_TOTAL_DURATION = 86400; // 累计静置 ≥ 24 小时
+static constexpr int      MAX_PULSES = 15;
 
 void SystemManagement::scAnalysisTask(void* param) {
     SystemManagement* self = static_cast<SystemManagement*>(param);
@@ -1446,98 +1448,111 @@ void SystemManagement::scAnalysisTask(void* param) {
     vTaskDelay(pdMS_TO_TICKS(300000));
 
     while (true) {
-        self->runSelfConsumptionAnalysis();
+        // 一次扫描，同时获取静置段和突变事件
+        uint32_t now = getTimestamp();
+        uint32_t cutoff_ts = (now > 1000000000) ? now - (7 * 86400) : 0;
+
+        static RawScanResult scan_result;
+        if (self->scanRawSamples(cutoff_ts, scan_result)) {
+            // 自消耗分析
+            self->runSelfConsumptionAnalysis(scan_result);
+
+            // 内阻分析
+            self->runInternalResistanceAnalysis(scan_result);
+        }
+
         // 每 24 小时执行一次
         vTaskDelay(pdMS_TO_TICKS(86400000));
     }
 }
 
-void SystemManagement::runSelfConsumptionAnalysis() {
-    DBG.println(F("SC: Starting self-consumption analysis..."));
-
-    if (!bms) {
-        DBG.println(F("SC: BMS not available, skip"));
-        return;
-    }
+void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_result) {
+    if (!bms) return;
 
     uint32_t now = getTimestamp();
-    if (now < 1000000000) {
-        DBG.println(F("SC: NTP not synced, skip"));
-        return;
-    }
+    if (now < 1000000000) return;
 
     SCAnalysisResult result = {};
-    if (!findQuiescentSegments(now, result)) {
-        DBG.println(F("SC: Analysis failed or no valid segments"));
+    if (!findQuiescentSegments(now, scan_result, result)) {
+        // 分析失败，更新检查时间和总段数
+        bms->updateSCLastCheck(now, result.total_segments);
+        DBG.printf_P(PSTR("SC: 分析未通过，共 %d 段\n"), result.total_segments);
         return;
     }
 
     if (result.valid) {
         bms->updateSelfConsumption(result.self_consumption_mA, result.segment_count,
-                                   result.confidence, now);
+                                   result.total_segments, result.confidence, now, now);
 
-        DBG.printf_P(PSTR("SC: Result: %.1f mA, %d segments, %d%% confidence\n"),
-                     result.self_consumption_mA, result.segment_count, result.confidence);
+        DBG.printf_P(PSTR("SC: %.1fmA (%.0fmAh/天) %d/%d天 %d%%\n"),
+                     result.self_consumption_mA, result.self_consumption_mA * 24.0f,
+                     result.segment_count, result.total_segments, result.confidence);
     }
 }
 
-void SystemManagement::startSelfConsumptionAnalysis() {
-    // 手动触发分析（从 Web UI 调用）
-    if (sc_analysis_task_handle_) {
-        // 通过通知唤醒任务
-        xTaskNotifyGive(sc_analysis_task_handle_);
-    }
-}
+// =============================================================================
+// 内阻估算分析（定时分析历史数据中的电流突变事件）
+// =============================================================================
 
-float SystemManagement::getOcvSlope(float soc1, float soc2) {
-    // 从 bms.h 的 OCV_SOC_TABLE 动态计算斜率 (mV/%SOC)
-    // OCV_SOC_TABLE 按 SOC 降序排列: {4200,100}, {4150,96}, ..., {3000,0}
-    // 相邻两点间的斜率 = dV / dSOC
+void SystemManagement::runInternalResistanceAnalysis(const RawScanResult& scan_result) {
+    if (!bms || scan_result.pulse_count == 0) return;
 
-    float slope_sum = 0;
-    int slope_count = 0;
+    float ir_sum[5] = {};
+    uint8_t ir_valid_count[5] = {};
 
-    // 在 OCV_SOC_TABLE 中查找 soc1 所在区间的斜率
-    for (int i = 0; i < OCV_TABLE_SIZE - 1; i++) {
-        float v_high = OCV_SOC_TABLE[i][0];
-        float soc_high = OCV_SOC_TABLE[i][1];
-        float v_low = OCV_SOC_TABLE[i + 1][0];
-        float soc_low = OCV_SOC_TABLE[i + 1][1];
+    // 从突变事件计算内阻
+    for (int p = 0; p < scan_result.pulse_count; p++) {
+        const IRPulseEvent& pulse = scan_result.pulses[p];
+        if (pulse.delta_current == 0) continue;
 
-        // soc1 在此区间内
-        if (soc1 <= soc_high && soc1 >= soc_low) {
-            float dsoc = soc_high - soc_low;
-            if (dsoc > 0) slope_sum += (v_high - v_low) / dsoc;
-            slope_count++;
+        for (uint8_t i = 0; i < 5; i++) {
+            if (pulse.cell_mv_after[i] == 0) continue;  // 未连接的电芯跳过
+
+            int16_t delta_mv = (int16_t)pulse.cell_mv_after[i] - (int16_t)pulse.cell_mv_before[i];
+            float r_mΩ = fabsf((float)delta_mv / (float)pulse.delta_current * 1000.0f);
+
+            // 合理性检查：内阻应在 0.5-500 mΩ 范围内
+            if (r_mΩ > 0.5f && r_mΩ < 500.0f) {
+                ir_sum[i] += r_mΩ;
+                ir_valid_count[i]++;
+            }
         }
-
-        // soc2 在此区间内
-        if (soc2 <= soc_high && soc2 >= soc_low) {
-            float dsoc = soc_high - soc_low;
-            if (dsoc > 0) slope_sum += (v_high - v_low) / dsoc;
-            slope_count++;
-        }
-
-        if (slope_count >= 2) break;
     }
 
-    if (slope_count == 0) return -1.0f;
-    return slope_sum / slope_count;
+    // 计算平均值，至少需要3个有效样本
+    float ir_result[5] = {};
+    bool all_valid = true;
+    for (uint8_t i = 0; i < 5; i++) {
+        if (ir_valid_count[i] >= 3) {
+            ir_result[i] = ir_sum[i] / ir_valid_count[i];
+        } else {
+            all_valid = false;
+        }
+    }
+
+    if (all_valid) {
+        bms->updateInternalResistance(ir_result, scan_result.pulse_count);
+        DBG.printf_P(PSTR("IR: %.1f/%.1f/%.1f/%.1f/%.1fmΩ %d脉冲\n"),
+                     ir_result[0], ir_result[1], ir_result[2], ir_result[3], ir_result[4], scan_result.pulse_count);
+    } else {
+        DBG.printf_P(PSTR("IR: 脉冲不足 %d 次\n"), scan_result.pulse_count);
+    }
 }
 
-bool SystemManagement::findQuiescentSegments(uint32_t now_ts, SCAnalysisResult& result) {
-    static QuiescentSegment segments[10];
-    int seg_count = 0;
+// =============================================================================
+// 合并扫描函数：一次遍历同时检测静置段和电流突变
+// =============================================================================
 
-    uint32_t cutoff_ts = now_ts - (7 * 86400);
+bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result) {
+    result.seg_count = 0;
+    result.pulse_count = 0;
 
     if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
 
-    // 遍历 /raw/ 目录下的所有文件
     File root = SPIFFS.open("/raw");
     if (!root || !root.isDirectory()) {
         if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
-        DBG.println(F("SC: /raw/ directory not found"));
+        DBG.println(F("SCAN: /raw/ directory not found"));
         return false;
     }
 
@@ -1546,25 +1561,53 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, SCAnalysisResult& 
     int file_count = 0;
     File file = root.openNextFile();
     while (file && file_count < 7) {
-        strlcpy(filenames[file_count], file.name(), 32);
+        const char* name = file.name();
+        if (name[0] == '/') {
+            strlcpy(filenames[file_count], name, 32);
+        } else {
+            snprintf(filenames[file_count], 32, "/raw/%s", name);
+        }
         file_count++;
         file = root.openNextFile();
     }
 
-    // 逐文件扫描，寻找静置段
-    for (int fi = 0; fi < file_count && seg_count < 10; fi++) {
+    if (file_count == 0) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return false;
+    }
+
+    // 跨文件保持
+    RawSample prev_sample;
+    bool has_prev = false;
+    uint32_t prev_ts = 0;
+
+    // 当前正在累积的连续静置段
+    bool in_block = false;
+    uint32_t blk_start_ts = 0, blk_end_ts = 0;
+    int16_t blk_temp_min = 127, blk_temp_max = -127;
+    uint16_t blk_mins = 0;
+
+    // 最长段记录
+    uint32_t longest_start_ts = 0, longest_end_ts = 0;
+    uint16_t longest_mins = 0;
+
+    // 结束当前段，与最长段比较
+    auto finalizeBlock = [&]() {
+        if (!in_block) return;
+        if (blk_mins >= MIN_BLOCK_MINS && blk_mins > longest_mins) {
+            longest_mins = blk_mins;
+            longest_start_ts = blk_start_ts;
+            longest_end_ts = blk_end_ts;
+        }
+        in_block = false;
+    };
+
+    for (int fi = 0; fi < file_count; fi++) {
         File f = SPIFFS.open(filenames[fi], FILE_READ);
         if (!f) continue;
 
-        bool in_segment = false;
-        uint32_t seg_start_ts = 0;
-        int16_t seg_temp_min = 127, seg_temp_max = -127;
-        uint8_t seg_soc_start = 0;
-        uint32_t seg_sample_count = 0;
-        float seg_v_sum = 0;
-        int seg_low_current_count = 0;
-        bool seg_has_spike = false;
-        uint32_t prev_ts = 0;
+        uint32_t file_samples = f.size() / sizeof(RawSample);
+        if (file_samples == 0) { f.close(); continue; }
 
         const int CHUNK = 100;
         static RawSample buf[CHUNK];
@@ -1574,201 +1617,200 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, SCAnalysisResult& 
             if (to_read == 0) break;
             f.read((uint8_t*)buf, to_read * sizeof(RawSample));
 
-            for (int i = 0; i < to_read && seg_count < 10; i++) {
+            for (int i = 0; i < to_read; i++) {
                 RawSample& s = buf[i];
 
-                // 时间过滤：跳过 cutoff 之前的数据
-                if (s.timestamp < cutoff_ts) continue;
+                // 时间过滤
+                if (s.timestamp < cutoff_ts) {
+                    prev_sample = s; has_prev = true; prev_ts = s.timestamp;
+                    continue;
+                }
 
-                // 检查时间连续性（间隙 > 10 分钟则断开）
+                // ===== 内阻突变检测 =====
+                if (has_prev && result.pulse_count < MAX_PULSES) {
+                    bool was_quiet = (abs(prev_sample.current_mA) <= 5);
+                    bool now_high = (abs(s.current_mA) >= 1000);
+                    if (was_quiet && now_high) {
+                        int16_t delta = s.current_mA - prev_sample.current_mA;
+                        if (delta != 0) {
+                            IRPulseEvent& pulse = result.pulses[result.pulse_count];
+                            pulse.delta_current = delta;
+                            for (uint8_t ch = 0; ch < 5; ch++) {
+                                pulse.cell_mv_before[ch] = prev_sample.cell_mv[ch];
+                                pulse.cell_mv_after[ch] = s.cell_mv[ch];
+                            }
+                            result.pulse_count++;
+                        }
+                    }
+                }
+
+                // ===== 连续静置段检测（跨自然日） =====
+
+                // 时间间隙 > 10 分钟：结束当前段
                 if (prev_ts > 0 && s.timestamp > prev_ts + 600) {
-                    if (in_segment && seg_sample_count >= 2880) {
-                        // 保存当前段
-                        QuiescentSegment& seg = segments[seg_count];
-                        seg.start_ts = seg_start_ts;
-                        seg.end_ts = prev_ts;
-                        seg.temp_min = seg_temp_min;
-                        seg.temp_max = seg_temp_max;
-                        seg.soc_start = seg_soc_start;
-                        seg.soc_end = buf[i > 0 ? i - 1 : 0].soc_pct;
-                        seg.v_start = seg_v_sum / seg_sample_count;
-                        seg.v_end = seg_v_sum / seg_sample_count;  // 粗略值
-                        seg_count++;
-                    }
-                    in_segment = false;
-                    seg_low_current_count = 0;
-                    seg_has_spike = false;
+                    finalizeBlock();
                 }
 
-                // 电流检查
-                if (abs(s.current_mA) < 5) {
-                    if (!in_segment) {
-                        in_segment = true;
-                        seg_start_ts = s.timestamp;
-                        seg_temp_min = 127;
-                        seg_temp_max = -127;
-                        seg_soc_start = s.soc_pct;
-                        seg_sample_count = 0;
-                        seg_v_sum = 0;
-                        seg_low_current_count = 0;
-                        seg_has_spike = false;
+                bool is_quiet = (abs(s.current_mA) < 5);
+
+                if (is_quiet) {
+                    if (!in_block) {
+                        in_block = true;
+                        blk_start_ts = s.timestamp;
+                        blk_temp_min = 127;
+                        blk_temp_max = -127;
+                        blk_mins = 0;
                     }
-                    seg_low_current_count++;
+                    blk_end_ts = s.timestamp;
+                    blk_mins++;
+                    if (s.temperature < blk_temp_min) blk_temp_min = s.temperature;
+                    if (s.temperature > blk_temp_max) blk_temp_max = s.temperature;
                 } else {
-                    // 电流尖峰检测（> 50mA 视为尖峰）
-                    if (abs(s.current_mA) > 50) {
-                        seg_has_spike = true;
-                    }
-                    // 短暂高电流（< 50mA）不打断段，但不计入低电流计数
+                    finalizeBlock();
                 }
 
-                if (in_segment) {
-                    seg_sample_count++;
-                    seg_v_sum += s.voltage_mV;
-                    if (s.temperature < seg_temp_min) seg_temp_min = s.temperature;
-                    if (s.temperature > seg_temp_max) seg_temp_max = s.temperature;
-                }
-
-                prev_ts = s.timestamp;
+                prev_sample = s; has_prev = true; prev_ts = s.timestamp;
             }
-        }
-
-        // 文件结束，处理最后一段
-        if (in_segment && seg_sample_count >= 2880 && !seg_has_spike && seg_count < 10) {
-            QuiescentSegment& seg = segments[seg_count];
-            seg.start_ts = seg_start_ts;
-            seg.end_ts = prev_ts;
-            seg.temp_min = seg_temp_min;
-            seg.temp_max = seg_temp_max;
-            seg.soc_start = seg_soc_start;
-            seg.soc_end = seg_soc_start;  // 粗略值
-            seg.v_start = seg_v_sum / seg_sample_count;
-            seg.v_end = seg_v_sum / seg_sample_count;
-            seg_count++;
         }
 
         f.close();
     }
 
+    // 结束最后一个段
+    finalizeBlock();
+
+    // 没有合格段则直接返回
+    if (longest_mins == 0) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return true;
+    }
+
+    // ===== 第二遍：对最长段裁掉首尾各 10 个样本，计算首尾平均电压 =====
+    static constexpr int TRIM = 10;      // 去掉首尾各10个样本（避免边界噪声）
+    static constexpr int AVG_N = 10;     // 首尾各取10个样本算平均
+    float v_first_sum = 0, v_last_sum = 0;
+    uint16_t v_first_cnt = 0, v_last_cnt = 0;
+    uint32_t trimmed_ts_start = 0, trimmed_ts_end = 0;
+    int16_t trimmed_temp_min = 127, trimmed_temp_max = -127;
+    uint16_t sample_in_block = 0;
+    uint16_t block_total = longest_mins;
+
+    // 裁剪后的窗口：跳过前 TRIM 个，取 AVG_N 个；跳过后 TRIM 个，取 AVG_N 个
+    uint16_t skip_start = TRIM;
+    uint16_t avg_start_end = TRIM + AVG_N;
+    uint16_t avg_end_start = (block_total > TRIM + AVG_N) ? block_total - TRIM - AVG_N : avg_start_end;
+    uint16_t skip_end = (block_total > TRIM) ? block_total - TRIM : block_total;
+
+    for (int fi = 0; fi < file_count; fi++) {
+        File f = SPIFFS.open(filenames[fi], FILE_READ);
+        if (!f) continue;
+
+        const int CHUNK = 100;
+        static RawSample buf2[CHUNK];
+
+        while (f.available() >= (int)sizeof(RawSample)) {
+            int to_read = min(CHUNK, (int)(f.available() / sizeof(RawSample)));
+            if (to_read == 0) break;
+            f.read((uint8_t*)buf2, to_read * sizeof(RawSample));
+
+            for (int i = 0; i < to_read; i++) {
+                RawSample& s = buf2[i];
+                if (s.timestamp < longest_start_ts || s.timestamp > longest_end_ts) continue;
+                if (abs(s.current_mA) >= 5) continue;  // 只计静置样本
+
+                if (sample_in_block == 0) {
+                    trimmed_ts_start = s.timestamp;
+                }
+                trimmed_ts_end = s.timestamp;
+                if (s.temperature < trimmed_temp_min) trimmed_temp_min = s.temperature;
+                if (s.temperature > trimmed_temp_max) trimmed_temp_max = s.temperature;
+
+                // 裁剪后的首部：跳过前 TRIM 个，取 AVG_N 个样本累加电压
+                if (sample_in_block >= skip_start && sample_in_block < avg_start_end) {
+                    v_first_sum += s.voltage_mV;
+                    v_first_cnt++;
+                }
+                // 裁剪后的尾部：取 AVG_N 个样本累加电压
+                if (sample_in_block >= avg_end_start && sample_in_block < skip_end) {
+                    v_last_sum += s.voltage_mV;
+                    v_last_cnt++;
+                }
+
+                sample_in_block++;
+            }
+        }
+
+        f.close();
+    }
+
+    // 保存唯一的结果段（用平均电压计算精确SOC）
+    if (v_first_cnt > 0 && v_last_cnt > 0 && bms) {
+        float v_first_avg = v_first_sum / v_first_cnt;  // 首部10个样本的平均电压
+        float v_last_avg = v_last_sum / v_last_cnt;     // 尾部10个样本的平均电压
+        
+        result.seg_count = 1;
+        QuiescentSegment& seg = result.segments[0];
+        seg.start_ts = trimmed_ts_start;
+        seg.end_ts = trimmed_ts_end;
+        seg.soc_start = bms->calculateSOC_FromVoltage(v_first_avg);  // 用平均电压计算精确SOC
+        seg.soc_end = bms->calculateSOC_FromVoltage(v_last_avg);     // 用平均电压计算精确SOC
+        seg.temp_min = trimmed_temp_min;
+        seg.temp_max = trimmed_temp_max;
+        seg.block_mins = sample_in_block;
+    }
+
     if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
 
-    // 质量筛选
-    // 需要重新读取数据做精确线性回归 — 省略，使用粗略值
-    // 对于筛选后的段，进行线性回归计算电压变化率
+    return true;
+}
 
-    if (seg_count == 0) {
-        DBG.println(F("SC: No quiescent segments found"));
-        return false;
-    }
+bool SystemManagement::findQuiescentSegments(uint32_t now_ts, const RawScanResult& scan_result, SCAnalysisResult& result) {
+    result.total_segments = scan_result.seg_count;
 
-    // 第二步：质量筛选
-    static QuiescentSegment valid_segments[10];
-    int valid_count = 0;
+    // scanRawSamples只返回0或1个段
+    if (scan_result.seg_count == 0) return false;
 
-    for (int i = 0; i < seg_count && valid_count < 10; i++) {
-        QuiescentSegment& seg = segments[i];
+    const QuiescentSegment& seg = scan_result.segments[0];
+    result.total_segments = 1;
 
-        // 温度波动 < 5°C
-        if (seg.temp_max - seg.temp_min > 5) continue;
+    // SOC 范围筛选（20%-80%）
+    if (seg.soc_start < 20 || seg.soc_start > 80) return false;
+    if (seg.soc_end < 20 || seg.soc_end > 80) return false;
 
-        // SOC 范围 20-80%
-        if (seg.soc_start < 20 || seg.soc_start > 80) continue;
-        if (seg.soc_end < 20 || seg.soc_end > 80) continue;
+    // 累计静置时长 ≥ 24 小时
+    uint32_t total_quiet_secs = (uint32_t)seg.block_mins * 60;
+    if (total_quiet_secs < MIN_TOTAL_DURATION) return false;
 
-        // 无电流尖峰（已在扫描时检查）
-        valid_segments[valid_count++] = seg;
-    }
+    // 计算自消耗（使用 SOH 修正后的实际容量）
+    float span_hours = (float)(seg.end_ts - seg.start_ts) / 3600.0f;
+    if (span_hours <= 0.01f) return false;
 
-    if (valid_count < 3) {
-        DBG.printf_P(PSTR("SC: Only %d valid segments (need 3+)\n"), valid_count);
-        return false;
-    }
-
-    // 检查数据跨度 ≥ 7 天
-    uint32_t earliest = valid_segments[0].start_ts;
-    uint32_t latest = valid_segments[0].end_ts;
-    // 检查温度覆盖 ≥ 10°C
-    int16_t global_temp_min = valid_segments[0].temp_min;
-    int16_t global_temp_max = valid_segments[0].temp_max;
-
-    for (int i = 1; i < valid_count; i++) {
-        if (valid_segments[i].start_ts < earliest) earliest = valid_segments[i].start_ts;
-        if (valid_segments[i].end_ts > latest) latest = valid_segments[i].end_ts;
-        if (valid_segments[i].temp_min < global_temp_min) global_temp_min = valid_segments[i].temp_min;
-        if (valid_segments[i].temp_max > global_temp_max) global_temp_max = valid_segments[i].temp_max;
-    }
-
-    if (latest - earliest < 7 * 86400) {
-        DBG.println(F("SC: Data span < 7 days"));
-        return false;
-    }
-    if (global_temp_max - global_temp_min < 10) {
-        DBG.println(F("SC: Temp coverage < 10°C"));
-        return false;
-    }
-
-    // 第三步：对每个合格段做精确线性回归（重新读取数据）
     float q_nominal = (float)bms->config_.nominal_capacity_mAh;
-    float weighted_sum = 0;
-    float weight_total = 0;
-    uint32_t analysis_time = getTimestamp();
+    float soh = globalState.bms.soh;
+    if (soh <= 0 || soh > 100) soh = 100.0f;
+    float q_actual = q_nominal * soh / 100.0f;
 
-    for (int i = 0; i < valid_count; i++) {
-        QuiescentSegment& seg = valid_segments[i];
+    // 直接用SOC差值计算
+    float delta_soc = fabsf(seg.soc_start - seg.soc_end);  // %
+    float soc_rate = delta_soc / span_hours;                // %/h
+    float sc_current = q_actual * soc_rate / 100.0f;       // mA
 
-        // 重新读取该段时间范围内的数据，做精确线性回归
-        // 简化：使用已有粗略值
-        float voltage_rate = (seg.v_end - seg.v_start) / ((float)(seg.end_ts - seg.start_ts) / 3600.0f);
+    // 温度归一化到 25°C
+    float t_avg = (seg.temp_min + seg.temp_max) / 2.0f;
+    float sc_25c = sc_current / (1.0f + 0.015f * (t_avg - 25.0f));
 
-        // 获取 OCV 斜率
-        float soc_mid = (seg.soc_start + seg.soc_end) / 2.0f;
-        float ocv_slope = getOcvSlope((float)seg.soc_start, (float)seg.soc_end);
-        if (ocv_slope <= 0) continue;
+    // 合理性检查：自消耗上限 20mA（约480mAh/天）
+    if (sc_25c > 20.0f) return false;
 
-        // SOC 变化率 = 电压变化率 / OCV 斜率 (%/h)
-        float soc_rate = voltage_rate / ocv_slope;
+    // 调试信息
+    DBG.printf_P(PSTR("SC: %.4f%%->%.4f%% dSOC:%.4f%% t:%.1fh sc:%.3fmA\n"),
+                 seg.soc_start, seg.soc_end, delta_soc, span_hours, sc_25c);
 
-        // 自消耗电流 = Q_nominal × SOC_rate / 100 (mA)
-        float sc_current = q_nominal * fabsf(soc_rate) / 100.0f;
+    // 置信度：基于静置时长
+    uint8_t confidence = min(100, (int)(total_quiet_secs / 86400 * 30));
 
-        // 温度归一化到 25°C
-        float t_avg = (seg.temp_min + seg.temp_max) / 2.0f;
-        float sc_25c = sc_current / (1.0f + 0.015f * (t_avg - 25.0f));
-
-        // 计算权重
-        float duration_hours = (float)(seg.end_ts - seg.start_ts) / 3600.0f;
-        float w_duration = duration_hours / 48.0f;
-        float w_temp = 1.0f / (1.0f + (float)(seg.temp_max - seg.temp_min));
-        uint32_t age_days = (analysis_time - seg.end_ts) / 86400;
-        float w_time = max(0.1f, 1.0f - (float)age_days / 90.0f);
-
-        float weight = w_duration * w_temp * w_time;
-
-        weighted_sum += sc_25c * weight;
-        weight_total += weight;
-
-        DBG.printf_P(PSTR("SC: Seg%d: V_rate=%.2fmV/h OCV_slope=%.1f SC=%.1fmA T=%.1f°C W=%.3f\n"),
-                     i, voltage_rate, ocv_slope, sc_25c, t_avg, weight);
-    }
-
-    if (weight_total <= 0) {
-        DBG.println(F("SC: No valid weighted data"));
-        return false;
-    }
-
-    float final_sc = weighted_sum / weight_total;
-
-    // 合理性检查：自消耗应在 10-200mA 范围内
-    if (final_sc < 10.0f || final_sc > 200.0f) {
-        DBG.printf_P(PSTR("SC: Result %.1f mA out of range, reject\n"), final_sc);
-        return false;
-    }
-
-    // 计算置信度
-    uint8_t confidence = min(100, (int)(valid_count * 20 + (latest - earliest) / 86400 * 5));
-
-    result.self_consumption_mA = final_sc;
-    result.segment_count = valid_count;
+    result.self_consumption_mA = sc_25c;
+    result.segment_count = 1;
     result.confidence = confidence;
     result.valid = true;
 

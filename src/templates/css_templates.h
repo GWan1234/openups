@@ -69,6 +69,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text'
 .cells{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px}
 .cell{text-align:center;padding:10px 6px;background:linear-gradient(135deg,#f5f5f7 0%,#e8e8ed 100%);border-radius:10px;border:1px solid rgba(0,0,0,0.04)}
 .cn{font-size:10px;color:#86868b;font-weight:600}.cv{font-size:14px;font-weight:700;color:#1d1d1f;margin-top:3px}
+.ir{font-size:10px;color:#007aff;font-weight:600;margin-top:2px}
 
 /* macOS 风格徽章 */
 .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.02em}

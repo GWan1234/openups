@@ -87,6 +87,10 @@ typedef struct {
     BMS_Fault_t fault_type;         // 当前故障类型
     bool is_connected;              // BMS 连接状态
     uint8_t bms_mode;               // BMS 工作模式 (0:正常，1:异常)
+
+    // 电池内阻估算 (mΩ)
+    float cell_internal_resistance[5]; // 每节电池内阻 (mΩ), 0=未测量
+    uint8_t ir_sample_count;           // 内阻采样次数
     
     // BQ76920 寄存器原始值
     uint8_t bq76920_registers[12];  // [0]STATUS [1]CELL_BALANCE [2]SYS_CTRL1 [3]SYS_CTRL2
@@ -213,8 +217,10 @@ typedef struct {
     // 自消耗计算结果
     float    self_consumption_mA;    // 当前值 (mA)，0=未计算
     uint8_t  sc_segment_count;       // 合格静置段数
+    uint8_t  sc_total_segments;      // 总候选段数（含不合格）
     uint8_t  sc_confidence;          // 置信度 0-100
     uint32_t sc_last_update;         // 最后计算时间 (Unix)
+    uint32_t sc_last_check;          // 最后检查时间 (Unix)
 } System_Global_State;
 
 // =============================================================================

@@ -17,8 +17,35 @@
 struct SCAnalysisResult {
     float self_consumption_mA;
     uint8_t segment_count;
+    uint8_t total_segments;
     uint8_t confidence;
     bool valid;
+};
+
+// 连续静置段（跨自然日，不受天边界限制）
+struct QuiescentSegment {
+    uint32_t start_ts;       // 段起始时间
+    uint32_t end_ts;         // 段结束时间
+    int16_t  temp_min;       // 段内最低温度
+    int16_t  temp_max;       // 段内最高温度
+    float    soc_start;      // 段起始 SOC (%)
+    float    soc_end;        // 段结束 SOC (%)
+    uint16_t block_mins;     // 段时长（分钟）
+};
+
+// 内阻突变事件
+struct IRPulseEvent {
+    int16_t delta_current;      // 电流变化 (mA)
+    uint16_t cell_mv_before[5]; // 突变前每节电压 (mV)
+    uint16_t cell_mv_after[5];  // 突变后每节电压 (mV)
+};
+
+// 合并扫描结果
+struct RawScanResult {
+    QuiescentSegment segments[14];  // 连续静置段（≥8h，7天最多约14段）
+    int seg_count;
+    IRPulseEvent pulses[15];        // 内阻脉冲事件
+    int pulse_count;
 };
 
 // Forward declarations
@@ -82,9 +109,6 @@ public:
     
     // 持久化所有模块数据（OTA前调用）
     void saveAllData();
-
-    // 自消耗分析
-    void startSelfConsumptionAnalysis();
 
     // 清除所有系统提示
     void clearTips();
@@ -339,10 +363,10 @@ private:
 
     // 自消耗分析
     static void scAnalysisTask(void* param);
-    void runSelfConsumptionAnalysis();
-    bool findQuiescentSegments(const uint32_t cutoff_ts, SCAnalysisResult& result);
-    float linearRegressionSlope(const float* voltages, const uint32_t* timestamps, int count);
-    float getOcvSlope(float soc_start, float soc_end);
+    void runSelfConsumptionAnalysis(const RawScanResult& scan_result);
+    void runInternalResistanceAnalysis(const RawScanResult& scan_result);
+    bool findQuiescentSegments(uint32_t now_ts, const RawScanResult& scan_result, SCAnalysisResult& result);
+    bool scanRawSamples(uint32_t cutoff_ts, RawScanResult& result);
 
     // 充电事件回调
     static void onChargeStarted(EventType type, void* param);
