@@ -398,6 +398,23 @@ bool BMS::startBalancing(BMS_State& bmsState) {
                 stats_.balancing_events |= (current_total << 50);
             }
         }
+        // 均衡进行中mask变化：新增cell计数 + 发布事件
+        else if (bmsState.balance_mask != balance_mask) {
+            uint8_t added = balance_mask & ~bmsState.balance_mask;
+            if (added) {
+                for (uint8_t i = 0; i < config_.cell_count; i++) {
+                    if (added & (1 << i)) {
+                        uint8_t cell_shift = i * 10;
+                        uint8_t cell_count = (stats_.balancing_events >> cell_shift) & 0x3FF;
+                        cell_count++;
+                        int64_t clear_mask = ~(((int64_t)0x3FF) << cell_shift);
+                        stats_.balancing_events &= clear_mask;
+                        stats_.balancing_events |= ((int64_t)cell_count << cell_shift);
+                    }
+                }
+                EventBus::getInstance().publish(EVT_BMS_BALANCING_STARTED, &balance_mask);
+            }
+        }
 
         bmsState.balance_mask = balance_mask;
 
