@@ -33,19 +33,10 @@ struct QuiescentSegment {
     uint16_t block_mins;     // 段时长（分钟）
 };
 
-// 内阻突变事件
-struct IRPulseEvent {
-    int16_t delta_current;      // 电流变化 (mA)
-    uint16_t cell_mv_before[5]; // 突变前每节电压 (mV)
-    uint16_t cell_mv_after[5];  // 突变后每节电压 (mV)
-};
-
-// 合并扫描结果
+// 合并扫描结果（仅自消耗）
 struct RawScanResult {
     QuiescentSegment segments[14];  // 连续静置段（≥8h，7天最多约14段）
     int seg_count;
-    IRPulseEvent pulses[15];        // 内阻脉冲事件
-    int pulse_count;
 };
 
 // Forward declarations
@@ -364,7 +355,7 @@ private:
     // 自消耗分析
     static void scAnalysisTask(void* param);
     void runSelfConsumptionAnalysis(const RawScanResult& scan_result);
-    void runInternalResistanceAnalysis(const RawScanResult& scan_result);
+    void analyzeBurstIR();
     bool findQuiescentSegments(uint32_t now_ts, const RawScanResult& scan_result, SCAnalysisResult& result);
     bool scanRawSamples(uint32_t cutoff_ts, RawScanResult& result);
 

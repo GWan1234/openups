@@ -1439,7 +1439,6 @@ void SystemManagement::clearTips() {
 // 扫描参数常量
 static constexpr uint16_t MIN_BLOCK_MINS = 480;      // 最短连续静置段 8 小时
 static constexpr uint32_t MIN_TOTAL_DURATION = 86400; // 累计静置 ≥ 24 小时
-static constexpr int      MAX_PULSES = 15;
 
 void SystemManagement::scAnalysisTask(void* param) {
     SystemManagement* self = static_cast<SystemManagement*>(param);
@@ -1454,12 +1453,10 @@ void SystemManagement::scAnalysisTask(void* param) {
 
         static RawScanResult scan_result;
         if (self->scanRawSamples(cutoff_ts, scan_result)) {
-            // 自消耗分析
             self->runSelfConsumptionAnalysis(scan_result);
-
-            // 内阻分析
-            self->runInternalResistanceAnalysis(scan_result);
         }
+
+        self->analyzeBurstIR();
 
         // 每 24 小时执行一次
         vTaskDelay(pdMS_TO_TICKS(86400000));
@@ -1491,61 +1488,11 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
 }
 
 // =============================================================================
-// 内阻估算分析（定时分析历史数据中的电流突变事件）
-// =============================================================================
-
-void SystemManagement::runInternalResistanceAnalysis(const RawScanResult& scan_result) {
-    if (!bms || scan_result.pulse_count == 0) return;
-
-    float ir_sum[5] = {};
-    uint8_t ir_valid_count[5] = {};
-
-    // 从突变事件计算内阻
-    for (int p = 0; p < scan_result.pulse_count; p++) {
-        const IRPulseEvent& pulse = scan_result.pulses[p];
-        if (pulse.delta_current == 0) continue;
-
-        for (uint8_t i = 0; i < 5; i++) {
-            if (pulse.cell_mv_after[i] == 0) continue;  // 未连接的电芯跳过
-
-            int16_t delta_mv = (int16_t)pulse.cell_mv_after[i] - (int16_t)pulse.cell_mv_before[i];
-            float r_mΩ = fabsf((float)delta_mv / (float)pulse.delta_current * 1000.0f);
-
-            // 合理性检查：内阻应在 0.5-500 mΩ 范围内
-            if (r_mΩ > 0.5f && r_mΩ < 500.0f) {
-                ir_sum[i] += r_mΩ;
-                ir_valid_count[i]++;
-            }
-        }
-    }
-
-    // 计算平均值，至少需要3个有效样本
-    float ir_result[5] = {};
-    bool all_valid = true;
-    for (uint8_t i = 0; i < 5; i++) {
-        if (ir_valid_count[i] >= 3) {
-            ir_result[i] = ir_sum[i] / ir_valid_count[i];
-        } else {
-            all_valid = false;
-        }
-    }
-
-    if (all_valid) {
-        bms->updateInternalResistance(ir_result, scan_result.pulse_count);
-        DBG.printf_P(PSTR("IR: %.1f/%.1f/%.1f/%.1f/%.1fmΩ %d脉冲\n"),
-                     ir_result[0], ir_result[1], ir_result[2], ir_result[3], ir_result[4], scan_result.pulse_count);
-    } else {
-        DBG.printf_P(PSTR("IR: 脉冲不足 %d 次\n"), scan_result.pulse_count);
-    }
-}
-
-// =============================================================================
-// 合并扫描函数：一次遍历同时检测静置段和电流突变
+// 合并扫描函数：扫描静置段
 // =============================================================================
 
 bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result) {
     result.seg_count = 0;
-    result.pulse_count = 0;
 
     if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
 
@@ -1556,18 +1503,22 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
         return false;
     }
 
-    // 收集所有原始文件
+    // 收集所有原始文件（跳过 burst.bin）
     static char filenames[7][32];
     int file_count = 0;
     File file = root.openNextFile();
     while (file && file_count < 7) {
         const char* name = file.name();
+        char fullpath[32];
         if (name[0] == '/') {
-            strlcpy(filenames[file_count], name, 32);
+            strlcpy(fullpath, name, 32);
         } else {
-            snprintf(filenames[file_count], 32, "/raw/%s", name);
+            snprintf(fullpath, 32, "/raw/%s", name);
         }
-        file_count++;
+        if (strstr(fullpath, "burst") == nullptr) {
+            strlcpy(filenames[file_count], fullpath, 32);
+            file_count++;
+        }
         file = root.openNextFile();
     }
 
@@ -1577,8 +1528,6 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     }
 
     // 跨文件保持
-    RawSample prev_sample;
-    bool has_prev = false;
     uint32_t prev_ts = 0;
 
     // 当前正在累积的连续静置段
@@ -1622,26 +1571,8 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
 
                 // 时间过滤
                 if (s.timestamp < cutoff_ts) {
-                    prev_sample = s; has_prev = true; prev_ts = s.timestamp;
+                    prev_ts = s.timestamp;
                     continue;
-                }
-
-                // ===== 内阻突变检测 =====
-                if (has_prev && result.pulse_count < MAX_PULSES) {
-                    bool was_quiet = (abs(prev_sample.current_mA) <= 5);
-                    bool now_high = (abs(s.current_mA) >= 1000);
-                    if (was_quiet && now_high) {
-                        int16_t delta = s.current_mA - prev_sample.current_mA;
-                        if (delta != 0) {
-                            IRPulseEvent& pulse = result.pulses[result.pulse_count];
-                            pulse.delta_current = delta;
-                            for (uint8_t ch = 0; ch < 5; ch++) {
-                                pulse.cell_mv_before[ch] = prev_sample.cell_mv[ch];
-                                pulse.cell_mv_after[ch] = s.cell_mv[ch];
-                            }
-                            result.pulse_count++;
-                        }
-                    }
                 }
 
                 // ===== 连续静置段检测（跨自然日） =====
@@ -1669,7 +1600,7 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
                     finalizeBlock();
                 }
 
-                prev_sample = s; has_prev = true; prev_ts = s.timestamp;
+                prev_ts = s.timestamp;
             }
         }
 
@@ -1815,4 +1746,110 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, const RawScanResul
     result.valid = true;
 
     return true;
+}
+
+// =============================================================================
+// 内阻估算分析（从 burst.bin 读取电流突变快照）
+// =============================================================================
+
+void SystemManagement::analyzeBurstIR() {
+    if (!bms) return;
+
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+    File file = SPIFFS.open("/raw/burst.bin", FILE_READ);
+    if (!file) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return;
+    }
+
+    uint32_t file_size = file.size();
+    uint32_t entry_count = file_size / sizeof(BurstSample);
+    if (entry_count == 0) {
+        file.close();
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return;
+    }
+
+    static constexpr uint32_t MAX_BURST_SAMPLES = 50;
+    static constexpr uint8_t  IR_RECENT_COUNT = 3;
+
+    // 保留最近 MAX_BURST_SAMPLES 条（用于裁剪文件 + IR计算）
+    static BurstSample recent_buf[MAX_BURST_SAMPLES];
+    uint32_t recent_count = 0;
+    uint32_t discard_count = (entry_count > MAX_BURST_SAMPLES) ? entry_count - MAX_BURST_SAMPLES : 0;
+    uint32_t sample_idx = 0;
+
+    const int CHUNK = 20;
+    static BurstSample buf[CHUNK];
+
+    while (file.available() >= (int)sizeof(BurstSample)) {
+        int to_read = min(CHUNK, (int)(file.available() / sizeof(BurstSample)));
+        if (to_read == 0) break;
+        file.read((uint8_t*)buf, to_read * sizeof(BurstSample));
+
+        for (int i = 0; i < to_read; i++) {
+            if (sample_idx >= discard_count && recent_count < MAX_BURST_SAMPLES) {
+                recent_buf[recent_count++] = buf[i];
+            }
+            sample_idx++;
+        }
+    }
+
+    file.close();
+
+    // 裁剪文件：只保留最近 MAX_BURST_SAMPLES 条
+    if (discard_count > 0) {
+        File wf = SPIFFS.open("/raw/burst.bin", FILE_WRITE);
+        if (wf) {
+            if (recent_count > 0) {
+                wf.write((uint8_t*)recent_buf, recent_count * sizeof(BurstSample));
+            }
+            wf.close();
+        }
+        DBG.printf_P(PSTR("IR: burst.bin trimmed %d -> %d\n"), entry_count, recent_count);
+    }
+
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+    // IR 计算：只取最近 IR_RECENT_COUNT 条
+    float ir_sum[5] = {};
+    uint8_t ir_valid_count[5] = {};
+    uint8_t ir_start = (recent_count > IR_RECENT_COUNT) ? recent_count - IR_RECENT_COUNT : 0;
+
+    for (uint32_t i = ir_start; i < recent_count; i++) {
+        BurstSample& bs = recent_buf[i];
+        int16_t delta_current = bs.current_after - bs.current_before;
+        if (delta_current == 0) continue;
+
+        for (uint8_t ch = 0; ch < 5; ch++) {
+            if (bs.cell_after[ch] == 0) continue;
+
+            int16_t delta_mv = (int16_t)bs.cell_after[ch] - (int16_t)bs.cell_before[ch];
+            float r_mΩ = fabsf((float)delta_mv / (float)delta_current * 1000.0f);
+
+            if (r_mΩ > 0.5f && r_mΩ < 500.0f) {
+                ir_sum[ch] += r_mΩ;
+                ir_valid_count[ch]++;
+            }
+        }
+    }
+
+    float ir_result[5] = {};
+    bool all_valid = true;
+    for (uint8_t i = 0; i < bms->config_.cell_count; i++) {
+        if (ir_valid_count[i] >= 1) {
+            ir_result[i] = ir_sum[i] / ir_valid_count[i];
+        } else {
+            all_valid = false;
+        }
+    }
+
+    if (all_valid) {
+        bms->updateInternalResistance(ir_result, entry_count);
+        DBG.printf_P(PSTR("IR: %.1f/%.1f/%.1f/%.1f/%.1fmΩ %d样本\n"),
+                     ir_result[0], ir_result[1], ir_result[2], ir_result[3], ir_result[4], entry_count);
+    } else {
+        DBG.printf_P(PSTR("IR: burst样本不足 %d 条\n"), entry_count);
+    }
 }

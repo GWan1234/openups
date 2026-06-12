@@ -331,6 +331,11 @@ public:
     uint8_t raw_buffer_idx_ = 0;
     uint32_t last_raw_sample_time_ = 0;
 
+    // 电流突变快照 - 缓冲区
+    static const uint8_t BURST_BUFFER_SIZE = 5;
+    BurstSample burst_buffer_[BURST_BUFFER_SIZE];
+    uint8_t burst_buffer_idx_ = 0;
+
     // 采集统计
     uint32_t raw_call_count_ = 0;
     uint32_t raw_skip_ntp_ = 0;
@@ -346,6 +351,7 @@ public:
 
     void collectRawSample(const BMS_State& bmsState);
     void flushRawBuffer();
+    void flushBurstBuffer();
     void cleanupOldRawFiles();
     void loadSelfConsumption();
     void saveSelfConsumption();

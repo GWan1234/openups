@@ -242,6 +242,7 @@ void BMS::update(System_Global_State& globalState) {
         bmsState.soh = stats_.soh;
         bmsState.cycle_count = stats_.total_cycles;
         collectRawSample(bmsState);
+        flushBurstBuffer();
 
         // 同步自消耗值到 globalState（通过外部指针访问）
         // 注意：这里只能更新 bmsState，globalState 的同步在 SystemManager 中完成
@@ -689,6 +690,29 @@ void BMS::flushRawBuffer() {
 
     // 清理超过 7 天的旧文件
     cleanupOldRawFiles();
+}
+
+void BMS::flushBurstBuffer() {
+    if (burst_buffer_idx_ == 0) return;
+
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+    File file = SPIFFS.open("/raw/burst.bin", FILE_APPEND);
+    if (!file) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        burst_buffer_idx_ = 0;
+        return;
+    }
+
+    size_t bytes = file.write((uint8_t*)burst_buffer_, burst_buffer_idx_ * sizeof(BurstSample));
+    file.close();
+
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+    DBG.printf_P(PSTR("BMS: Flushed %d burst samples (%d bytes)\n"),
+                 burst_buffer_idx_, bytes);
+
+    burst_buffer_idx_ = 0;
 }
 
 void BMS::cleanupOldRawFiles() {
@@ -1304,8 +1328,39 @@ void BMS::updateFaultLogic(BMS_State& bmsState) {
 bool BMS::updateBasicInfo(BMS_State& bmsState) {
     bool read_success = true;
     bmsState.capacity_full = config_.nominal_capacity_mAh;
-    
+
     i2cPowerOn();
+
+    // 先读电流，判断是否发生突变（低概率，提前判断避免后续无用拷贝）
+    bool burst_detected = false;
+    int16_t old_current = 0;
+    uint16_t old_voltage = 0;
+    uint16_t old_cell_voltages[5];
+
+    int16_t current = bq76920_.getCurrent_mA();
+    if (current != -32768) {
+        if (current >= -5 && current <= 5) current = 0;
+
+        if (burst_buffer_idx_ < BURST_BUFFER_SIZE) {
+            bool old_quiet = (bmsState.current == 0); //之前读取已经处理过，无需再次判断+-5
+            bool new_quiet = (current == 0); // up
+            bool old_high = (bmsState.current >= 1000 || bmsState.current <= -1000);
+            bool new_high = (current >= 1000 || current <= -1000);
+
+            if ((old_quiet && new_high) || (old_high && new_quiet)) {
+                burst_detected = true;
+                old_current = bmsState.current;
+                old_voltage = bmsState.voltage;
+                for (uint8_t i = 0; i < 5; i++) old_cell_voltages[i] = bmsState.cell_voltages[i];
+            }
+        }
+
+        bmsState.current = current;
+    } else {
+        read_success = false;
+    }
+
+    // 读电压
     uint16_t cell_voltages[5];
     if (bq76920_.getCellVoltages_mV(cell_voltages, config_.cell_count)) {
         for (uint8_t i = 0; i < config_.cell_count && i < 5; i++) {
@@ -1321,32 +1376,36 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
             sum += cell_voltages[i];
         }
         bmsState.cell_voltage_avg = sum / config_.cell_count;
-        // 各节电压使用芯片OTP校准的gain+offset，精度高于总电压ADC的固定系数
-        // 优先使用各节之和，避免未校准的总电压ADC引入~50mV误差
         bmsState.voltage = sum;
     } else {
         read_success = false;
-        // 各节读取失败时，回退到总电压ADC（固定系数1.532mV/LSB，未校准）
         uint16_t total_voltage = bq76920_.getTotalVoltage_mV();
         if (total_voltage > 9000) bmsState.voltage = total_voltage;
     }
-    
-    int16_t current = bq76920_.getCurrent_mA();
-    if (current != -32768) {
-        // 零飘死区处理：-5~5mA视为0
-        if (current >= -5 && current <= 5) current = 0;
-        bmsState.current = current;
-    } else {
-        read_success = false;
+
+    // 突变快照写入
+    if (burst_detected && read_success) {
+        BurstSample& bs = burst_buffer_[burst_buffer_idx_];
+        bs.timestamp_before = getTimestamp();
+        bs.timestamp_after = bs.timestamp_before;
+        bs.current_before = old_current;
+        bs.current_after = current;
+        bs.voltage_before = old_voltage;
+        bs.voltage_after = bmsState.voltage;
+        for (uint8_t i = 0; i < 5; i++) {
+            bs.cell_before[i] = old_cell_voltages[i];
+            bs.cell_after[i] = bmsState.cell_voltages[i];
+        }
+        burst_buffer_idx_++;
     }
-    
+
     float temp = bq76920_.getTempCelsius();
     if (temp > -98.0f && temp < 150.0f) {
         bmsState.temperature = temp;
     } else {
         read_success = false;
     }
-    
+
     return read_success;
 }
 

@@ -191,6 +191,21 @@ typedef struct __attribute__((packed)) {
 } RawSample;                    // 合计 24 bytes
 
 // =============================================================================
+// 电流突变快照结构体 (36 bytes)
+// =============================================================================
+
+typedef struct __attribute__((packed)) {
+    uint32_t timestamp_before;    // 4  过渡前时刻 (Unix秒)
+    uint32_t timestamp_after;     // 4  过渡后时刻
+    int16_t  current_before;      // 2  过渡前电流 (mA)
+    int16_t  current_after;       // 2  过渡后电流
+    uint16_t voltage_before;      // 2  过渡前总电压 (mV)
+    uint16_t voltage_after;       // 2  过渡后总电压
+    uint16_t cell_before[5];      // 10 过渡前各cell电压 (mV)
+    uint16_t cell_after[5];       // 10 过渡后各cell电压
+} BurstSample;                    // 合计 36 bytes
+
+// =============================================================================
 // 主设备数据结构 - 系统全局"黑板"
 // =============================================================================
 
