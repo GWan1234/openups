@@ -18,7 +18,6 @@ struct SCAnalysisResult {
     float self_consumption_mA;
     uint8_t segment_count;
     uint8_t total_segments;
-    uint8_t confidence;
     bool valid;
 };
 

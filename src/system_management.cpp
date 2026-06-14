@@ -250,7 +250,6 @@ void SystemManagement::collectData() {
         globalState.self_consumption_mA = bms->getSelfConsumption_mA();
         globalState.sc_segment_count = bms->getSCSegmentCount();
         globalState.sc_total_segments = bms->getSCTotalSegments();
-        globalState.sc_confidence = bms->getSCConfidence();
         globalState.sc_last_update = bms->getSCLastUpdate();
         globalState.sc_last_check = bms->getSCLastCheck();
 
@@ -1438,7 +1437,7 @@ void SystemManagement::clearTips() {
 
 // 扫描参数常量
 static constexpr uint16_t MIN_BLOCK_MINS = 480;      // 最短连续静置段 8 小时
-static constexpr uint32_t MIN_TOTAL_DURATION = 86400; // 累计静置 ≥ 24 小时
+static constexpr uint32_t MIN_TOTAL_DURATION = 28800; // 累计静置 ≥ 8 小时
 
 void SystemManagement::scAnalysisTask(void* param) {
     SystemManagement* self = static_cast<SystemManagement*>(param);
@@ -1479,11 +1478,11 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
 
     if (result.valid) {
         bms->updateSelfConsumption(result.self_consumption_mA, result.segment_count,
-                                   result.total_segments, result.confidence, now, now);
+                                   result.total_segments, now, now);
 
-        DBG.printf_P(PSTR("SC: %.1fmA (%.0fmAh/天) %d/%d天 %d%%\n"),
+        DBG.printf_P(PSTR("SC: %.1fmA (%.0fmAh/天) %d/%d天\n"),
                      result.self_consumption_mA, result.self_consumption_mA * 24.0f,
-                     result.segment_count, result.total_segments, result.confidence);
+                     result.segment_count, result.total_segments);
     }
 }
 
@@ -1504,10 +1503,11 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     }
 
     // 收集所有原始文件（跳过 burst.bin）
-    static char filenames[7][32];
+    static const int MAX_RAW_FILES = 32;
+    static char filenames[MAX_RAW_FILES][32];
     int file_count = 0;
     File file = root.openNextFile();
-    while (file && file_count < 7) {
+    while (file && file_count < MAX_RAW_FILES) {
         const char* name = file.name();
         char fullpath[32];
         if (name[0] == '/') {
@@ -1520,6 +1520,18 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
             file_count++;
         }
         file = root.openNextFile();
+    }
+
+    // 按文件名排序（YYYYMMDD.bin 字典序=时间序）
+    for (int i = 0; i < file_count - 1; i++) {
+        for (int j = i + 1; j < file_count; j++) {
+            if (strcmp(filenames[i], filenames[j]) > 0) {
+                char tmp[32];
+                strlcpy(tmp, filenames[i], 32);
+                strlcpy(filenames[i], filenames[j], 32);
+                strlcpy(filenames[j], tmp, 32);
+            }
+        }
     }
 
     if (file_count == 0) {
@@ -1632,6 +1644,8 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     uint16_t avg_end_start = (block_total > TRIM + AVG_N) ? block_total - TRIM - AVG_N : avg_start_end;
     uint16_t skip_end = (block_total > TRIM) ? block_total - TRIM : block_total;
 
+    uint8_t cell_count = (bms && bms->config_.cell_count > 0) ? bms->config_.cell_count : 5;
+
     for (int fi = 0; fi < file_count; fi++) {
         File f = SPIFFS.open(filenames[fi], FILE_READ);
         if (!f) continue;
@@ -1656,14 +1670,19 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
                 if (s.temperature < trimmed_temp_min) trimmed_temp_min = s.temperature;
                 if (s.temperature > trimmed_temp_max) trimmed_temp_max = s.temperature;
 
+                // 计算本样本的平均单体电压（用于OCV-SOC查表）
+                float sample_cell_avg = 0;
+                for (int c = 0; c < cell_count && c < 5; c++) sample_cell_avg += s.cell_mv[c];
+                sample_cell_avg /= (float)cell_count;
+
                 // 裁剪后的首部：跳过前 TRIM 个，取 AVG_N 个样本累加电压
                 if (sample_in_block >= skip_start && sample_in_block < avg_start_end) {
-                    v_first_sum += s.voltage_mV;
+                    v_first_sum += sample_cell_avg;
                     v_first_cnt++;
                 }
                 // 裁剪后的尾部：取 AVG_N 个样本累加电压
                 if (sample_in_block >= avg_end_start && sample_in_block < skip_end) {
-                    v_last_sum += s.voltage_mV;
+                    v_last_sum += sample_cell_avg;
                     v_last_cnt++;
                 }
 
@@ -1678,7 +1697,7 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     if (v_first_cnt > 0 && v_last_cnt > 0 && bms) {
         float v_first_avg = v_first_sum / v_first_cnt;  // 首部10个样本的平均电压
         float v_last_avg = v_last_sum / v_last_cnt;     // 尾部10个样本的平均电压
-        
+
         result.seg_count = 1;
         QuiescentSegment& seg = result.segments[0];
         seg.start_ts = trimmed_ts_start;
@@ -1704,11 +1723,11 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, const RawScanResul
     const QuiescentSegment& seg = scan_result.segments[0];
     result.total_segments = 1;
 
-    // SOC 范围筛选（20%-80%）
-    if (seg.soc_start < 20 || seg.soc_start > 80) return false;
-    if (seg.soc_end < 20 || seg.soc_end > 80) return false;
+    // SOC 范围筛选（10%-90%，避开OCV曲线极平坦区域）
+    if (seg.soc_start < 10 || seg.soc_start > 90) return false;
+    if (seg.soc_end < 10 || seg.soc_end > 90) return false;
 
-    // 累计静置时长 ≥ 24 小时
+    // 累计静置时长 ≥ 8 小时
     uint32_t total_quiet_secs = (uint32_t)seg.block_mins * 60;
     if (total_quiet_secs < MIN_TOTAL_DURATION) return false;
 
@@ -1737,12 +1756,8 @@ bool SystemManagement::findQuiescentSegments(uint32_t now_ts, const RawScanResul
     DBG.printf_P(PSTR("SC: %.4f%%->%.4f%% dSOC:%.4f%% t:%.1fh sc:%.3fmA\n"),
                  seg.soc_start, seg.soc_end, delta_soc, span_hours, sc_25c);
 
-    // 置信度：基于静置时长
-    uint8_t confidence = min(100, (int)(total_quiet_secs / 86400 * 30));
-
     result.self_consumption_mA = sc_25c;
     result.segment_count = 1;
-    result.confidence = confidence;
     result.valid = true;
 
     return true;

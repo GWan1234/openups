@@ -692,10 +692,6 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# TYPE ups_self_consumption_mA gauge\n";
   metrics += "ups_self_consumption_mA " + String(state.self_consumption_mA, 2) + "\n\n";
 
-  metrics += "# HELP ups_sc_confidence Self-consumption calculation confidence (0-100)\n";
-  metrics += "# TYPE ups_sc_confidence gauge\n";
-  metrics += "ups_sc_confidence " + String(state.sc_confidence) + "\n\n";
-
   metrics += "# HELP ups_sc_segment_count Number of valid quiescent segments used\n";
   metrics += "# TYPE ups_sc_segment_count gauge\n";
   metrics += "ups_sc_segment_count " + String(state.sc_segment_count) + "\n\n";

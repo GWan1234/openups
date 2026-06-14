@@ -765,7 +765,6 @@ void BMS::loadSelfConsumption() {
     self_consumption_mA_ = preferences_.getFloat(PREFS_KEY_SELF_CONSUMP, 0.83f);  // 默认20mAh/天
     sc_segment_count_ = preferences_.getUInt(PREFS_KEY_SC_SEG_COUNT, 0);
     sc_total_segments_ = preferences_.getUInt(PREFS_KEY_SC_TOTAL_SEG, 0);
-    sc_confidence_ = preferences_.getUInt(PREFS_KEY_SC_CONFIDENCE, 0);
     sc_last_update_ = preferences_.getUInt(PREFS_KEY_SC_LAST_UPD, 0);
     sc_last_check_ = preferences_.getUInt(PREFS_KEY_SC_LAST_CHK, 0);
 }
@@ -774,7 +773,6 @@ void BMS::saveSelfConsumption() {
     preferences_.putFloat(PREFS_KEY_SELF_CONSUMP, self_consumption_mA_);
     preferences_.putUInt(PREFS_KEY_SC_SEG_COUNT, sc_segment_count_);
     preferences_.putUInt(PREFS_KEY_SC_TOTAL_SEG, sc_total_segments_);
-    preferences_.putUInt(PREFS_KEY_SC_CONFIDENCE, sc_confidence_);
     preferences_.putUInt(PREFS_KEY_SC_LAST_UPD, sc_last_update_);
     preferences_.putUInt(PREFS_KEY_SC_LAST_CHK, sc_last_check_);
 }

@@ -35,7 +35,6 @@
 #define PREFS_KEY_SELF_CONSUMP  "sc_mA"
 #define PREFS_KEY_SC_SEG_COUNT  "sc_seg_cnt"
 #define PREFS_KEY_SC_TOTAL_SEG  "sc_total_seg"
-#define PREFS_KEY_SC_CONFIDENCE "sc_conf"
 #define PREFS_KEY_SC_LAST_UPD   "sc_last_up"
 #define PREFS_KEY_SC_LAST_CHK   "sc_last_chk"
 
@@ -177,7 +176,6 @@ public:
     float getSelfConsumption_mA() const { return self_consumption_mA_; }
     uint8_t getSCSegmentCount() const { return sc_segment_count_; }
     uint8_t getSCTotalSegments() const { return sc_total_segments_; }
-    uint8_t getSCConfidence() const { return sc_confidence_; }
     uint32_t getSCLastUpdate() const { return sc_last_update_; }
     uint32_t getSCLastCheck() const { return sc_last_check_; }
 
@@ -194,11 +192,10 @@ public:
     }
 
     // 自消耗计算结果 setter（由 SystemManager 分析任务调用）
-    void updateSelfConsumption(float mA, uint8_t seg_count, uint8_t total_segments, uint8_t confidence, uint32_t update_time, uint32_t check_time) {
+    void updateSelfConsumption(float mA, uint8_t seg_count, uint8_t total_segments, uint32_t update_time, uint32_t check_time) {
         self_consumption_mA_ = mA;
         sc_segment_count_ = seg_count;
         sc_total_segments_ = total_segments;
-        sc_confidence_ = confidence;
         sc_last_update_ = update_time;
         sc_last_check_ = check_time;
         saveSelfConsumption();
@@ -345,7 +342,6 @@ public:
     float self_consumption_mA_ = 0.0f;       // 当前自消耗值 (0=未计算)
     uint8_t sc_segment_count_ = 0;            // 合格段数
     uint8_t sc_total_segments_ = 0;           // 总候选段数
-    uint8_t sc_confidence_ = 0;               // 置信度
     uint32_t sc_last_update_ = 0;             // 最后计算时间
     uint32_t sc_last_check_ = 0;              // 最后检查时间
 

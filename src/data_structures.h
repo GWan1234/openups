@@ -233,7 +233,6 @@ typedef struct {
     float    self_consumption_mA;    // 当前值 (mA)，0=未计算
     uint8_t  sc_segment_count;       // 合格静置段数
     uint8_t  sc_total_segments;      // 总候选段数（含不合格）
-    uint8_t  sc_confidence;          // 置信度 0-100
     uint32_t sc_last_update;         // 最后计算时间 (Unix)
     uint32_t sc_last_check;          // 最后检查时间 (Unix)
 } System_Global_State;
