@@ -11,6 +11,7 @@
 #include "debug.h"
 #include <esp_ota_ops.h>
 #include <Ticker.h>
+#include <SPIFFS.h>
 
 
 // OTA 配置 —— 修改项目名或最低版本时只需改这里
@@ -124,6 +125,16 @@ void WebServer::setupHttpRoutes() {
     this->handleRestart(request);
   });
   
+  // Raw data file list API
+  server.on("/api/raw-files", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    this->handleRawFileList(request);
+  });
+
+  // Raw data file download API
+  server.on("/api/raw-file", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    this->handleRawFileDownload(request);
+  });
+
   // ADC Calibration API - GET
   server.on("/api/calibration", HTTP_GET, [this](AsyncWebServerRequest* request) {
     this->handleCalibrationGet(request);
@@ -1465,6 +1476,105 @@ void WebServer::handleRestart(AsyncWebServerRequest* request) {
     DBG.println(F("Rebooting now..."));
     ESP.restart();
   });
+}
+
+// =============================================================================
+// Raw Data File Handlers
+// =============================================================================
+
+extern SemaphoreHandle_t g_spiffs_mutex;
+
+void WebServer::handleRawFileList(AsyncWebServerRequest* request) {
+  if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+  File root = SPIFFS.open("/raw");
+  if (!root || !root.isDirectory()) {
+    if (root) root.close();
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+    request->send(200, "application/json", "{\"success\":true,\"files\":[]}");
+    return;
+  }
+
+  DynamicJsonDocument doc(2048);
+  doc["success"] = true;
+  JsonArray files = doc.createNestedArray("files");
+
+  File f = root.openNextFile();
+  int idx = 0;
+  while (f && idx < 50) {
+    const char* name = f.name();
+    // 跳过目录自身
+    if (strcmp(name, "/raw") != 0) {
+      JsonObject obj = files.createNestedObject();
+      // 兼容不同 ESP32 核心版本：确保文件名带 /raw/ 前缀
+      if (strncmp(name, "/raw/", 5) == 0) {
+        obj["name"] = name;
+      } else {
+        obj["name"] = String("/raw/") + name;
+      }
+      obj["size"] = f.size();
+      idx++;
+    }
+    f.close();
+    f = root.openNextFile();
+  }
+  root.close();
+
+  if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+  String response;
+  serializeJson(doc, response);
+  request->send(200, "application/json", response);
+}
+
+void WebServer::handleRawFileDownload(AsyncWebServerRequest* request) {
+  if (!request->hasParam("name")) {
+    sendErrorResponse(request, "Missing 'name' parameter", 400);
+    return;
+  }
+
+  String filename = request->getParam("name")->value();
+
+  // 安全校验：只允许 /raw/ 目录下的文件
+  if (filename.indexOf("..") >= 0 || filename.indexOf("/raw/") != 0) {
+    sendErrorResponse(request, "Invalid filename", 403);
+    return;
+  }
+
+  if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+  File file = SPIFFS.open(filename, FILE_READ);
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+    sendErrorResponse(request, "File not found", 404);
+    return;
+  }
+
+  size_t fileSize = file.size();
+
+  // 提取不含路径的文件名用于 Content-Disposition
+  const char* baseName = strrchr(filename.c_str(), '/');
+  baseName = baseName ? baseName + 1 : filename.c_str();
+
+  // File 通过 shared_ptr 引用计数，lambda 持有副本可保持文件打开
+  // 响应发送完成后 response 析构 → lambda 析构 → File 析构 → 自动关闭
+  AsyncWebServerResponse* response = request->beginResponse(
+    "application/octet-stream", fileSize,
+    [file](uint8_t* buffer, size_t maxLen, size_t index) mutable -> size_t {
+      size_t remaining = file.size() - index;
+      if (remaining == 0) return 0;
+      size_t toRead = (maxLen < remaining) ? maxLen : remaining;
+      return file.read(buffer, toRead);
+    }
+  );
+  String disposition = String("attachment; filename=\"") + baseName + "\"";
+  response->addHeader("Content-Disposition", disposition);
+
+  // 立即释放 SPIFFS 互斥锁，文件通过 File 引用计数保持打开
+  if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+  request->send(response);
 }
 
 // =============================================================================

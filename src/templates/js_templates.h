@@ -269,6 +269,27 @@ function saveCalibration(){var vals=[];for(var i=0;i<calPins.length;i++){var v=+
 
 if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto'}if(w)w.style.display='block';if(f)f.style.display='none';if(t)t.style.display='none'})}
 
+// === 原始采样数据文件 ===
+function loadRawFiles(){
+$('rawFileList').innerHTML='<span style="color:#1677ff">加载中...</span>';
+fetch('/api/raw-files').then(function(r){return r.json()}).then(function(d){
+if(!d.success||!d.files||d.files.length===0){$('rawFileList').innerHTML='<span style="color:#bbb">暂无数据文件</span>';return}
+var h='<div style="max-height:250px;overflow-y:auto">';
+for(var i=0;i<d.files.length;i++){
+var f=d.files[i];
+var sz=f.size>=1024?(f.size/1024).toFixed(1)+' KB':f.size+' B';
+var dlUrl='/api/raw-file?name='+encodeURIComponent(f.name);
+var baseName=f.name.split('/').pop();
+h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px solid #f0f0f0">';
+h+='<a href="'+dlUrl+'" download="'+baseName+'" style="color:#1677ff;text-decoration:none">'+f.name+'</a>';
+h+='<span style="color:#999;font-size:12px">'+sz+'</span>';
+h+='</div>';
+}
+h+='</div>';
+$('rawFileList').innerHTML=h;
+}).catch(function(){$('rawFileList').innerHTML='<span style="color:#f5222d">加载失败</span>'});
+}
+
 conn();
 )rawliteral";
 

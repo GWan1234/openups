@@ -160,10 +160,11 @@ bool SystemManagement::initialize() {
     }
 
     // 启动自消耗分析任务（低优先级，5分钟后首次执行，之后每24小时）
+    // 栈 8192：SPIFFS 文件操作峰值 ~3KB，留足余量
     xTaskCreatePinnedToCore(
         scAnalysisTask,
         "sc_analysis",
-        4096,
+        8192,
         this,
         1,          // 低优先级
         &sc_analysis_task_handle_,
@@ -1446,16 +1447,20 @@ void SystemManagement::scAnalysisTask(void* param) {
     vTaskDelay(pdMS_TO_TICKS(300000));
 
     while (true) {
-        // 一次扫描，同时获取静置段和突变事件
         uint32_t now = getTimestamp();
         uint32_t cutoff_ts = (now > 1000000000) ? now - (7 * 86400) : 0;
 
-        static RawScanResult scan_result;
+        RawScanResult scan_result = {};
         if (self->scanRawSamples(cutoff_ts, scan_result)) {
             self->runSelfConsumptionAnalysis(scan_result);
         }
 
         self->analyzeBurstIR();
+
+        // 输出历史最小剩余栈（high water mark），用于监控是否接近溢出
+        UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(nullptr);
+        DBG.printf_P(PSTR("SC: done, stack min free=%u bytes\n"),
+                     (unsigned)stack_hwm * sizeof(StackType_t));
 
         // 每 24 小时执行一次
         vTaskDelay(pdMS_TO_TICKS(86400000));
@@ -1493,34 +1498,43 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
 bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result) {
     result.seg_count = 0;
 
-    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
-
-    File root = SPIFFS.open("/raw");
-    if (!root || !root.isDirectory()) {
-        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
-        DBG.println(F("SCAN: /raw/ directory not found"));
+    // 堆分配缓冲区
+    static const int MAX_RAW_FILES = 32;
+    const int CHUNK = 32;
+    char (*filenames)[32] = (char(*)[32])calloc(MAX_RAW_FILES, 32);
+    RawSample* buf = (RawSample*)malloc(CHUNK * sizeof(RawSample));
+    if (!filenames || !buf) {
+        free(filenames);
+        free(buf);
+        DBG.println(F("SCAN: malloc failed"));
         return false;
     }
 
-    // 收集所有原始文件（跳过 burst.bin）
-    static const int MAX_RAW_FILES = 32;
-    static char filenames[MAX_RAW_FILES][32];
+    // === 阶段0：收集文件名并排序（快速操作，持锁完成） ===
     int file_count = 0;
-    File file = root.openNextFile();
-    while (file && file_count < MAX_RAW_FILES) {
-        const char* name = file.name();
-        char fullpath[32];
-        if (name[0] == '/') {
-            strlcpy(fullpath, name, 32);
-        } else {
-            snprintf(fullpath, 32, "/raw/%s", name);
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+    {
+        File root = SPIFFS.open("/raw");
+        if (root && root.isDirectory()) {
+            File file = root.openNextFile();
+            while (file && file_count < MAX_RAW_FILES) {
+                const char* name = file.name();
+                char fullpath[32];
+                if (name[0] == '/') {
+                    strlcpy(fullpath, name, 32);
+                } else {
+                    snprintf(fullpath, 32, "/raw/%s", name);
+                }
+                if (strstr(fullpath, "burst") == nullptr) {
+                    strlcpy(filenames[file_count], fullpath, 32);
+                    file_count++;
+                }
+                file = root.openNextFile();
+            }
+            root.close();
         }
-        if (strstr(fullpath, "burst") == nullptr) {
-            strlcpy(filenames[file_count], fullpath, 32);
-            file_count++;
-        }
-        file = root.openNextFile();
     }
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
 
     // 按文件名排序（YYYYMMDD.bin 字典序=时间序）
     for (int i = 0; i < file_count - 1; i++) {
@@ -1534,8 +1548,17 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
         }
     }
 
+    // 只取最近 7 天的文件（分析窗口 = 7 天，避免全量扫描）
+    static const int MAX_SCAN_DAYS = 7;
+    if (file_count > MAX_SCAN_DAYS) {
+        int skip = file_count - MAX_SCAN_DAYS;
+        memmove(filenames, filenames + skip, MAX_SCAN_DAYS * 32);
+        file_count = MAX_SCAN_DAYS;
+    }
+
     if (file_count == 0) {
-        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        free(filenames);
+        free(buf);
         return false;
     }
 
@@ -1552,7 +1575,6 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     uint32_t longest_start_ts = 0, longest_end_ts = 0;
     uint16_t longest_mins = 0;
 
-    // 结束当前段，与最长段比较
     auto finalizeBlock = [&]() {
         if (!in_block) return;
         if (blk_mins >= MIN_BLOCK_MINS && blk_mins > longest_mins) {
@@ -1563,15 +1585,21 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
         in_block = false;
     };
 
+    // === 阶段1：扫描静置段（逐文件持锁，避免长时间阻塞主循环） ===
     for (int fi = 0; fi < file_count; fi++) {
+        if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
         File f = SPIFFS.open(filenames[fi], FILE_READ);
-        if (!f) continue;
+        if (!f) {
+            if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+            continue;
+        }
 
-        uint32_t file_samples = f.size() / sizeof(RawSample);
-        if (file_samples == 0) { f.close(); continue; }
-
-        const int CHUNK = 100;
-        static RawSample buf[CHUNK];
+        if (f.size() == 0) {
+            f.close();
+            if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+            continue;
+        }
 
         while (f.available() >= (int)sizeof(RawSample)) {
             int to_read = min(CHUNK, (int)(f.available() / sizeof(RawSample)));
@@ -1581,15 +1609,11 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
             for (int i = 0; i < to_read; i++) {
                 RawSample& s = buf[i];
 
-                // 时间过滤
                 if (s.timestamp < cutoff_ts) {
                     prev_ts = s.timestamp;
                     continue;
                 }
 
-                // ===== 连续静置段检测（跨自然日） =====
-
-                // 时间间隙 > 10 分钟：结束当前段
                 if (prev_ts > 0 && s.timestamp > prev_ts + 600) {
                     finalizeBlock();
                 }
@@ -1617,20 +1641,20 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
         }
 
         f.close();
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
     }
 
-    // 结束最后一个段
     finalizeBlock();
 
-    // 没有合格段则直接返回
     if (longest_mins == 0) {
-        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        free(filenames);
+        free(buf);
         return true;
     }
 
-    // ===== 第二遍：对最长段裁掉首尾各 10 个样本，计算首尾平均电压 =====
-    static constexpr int TRIM = 10;      // 去掉首尾各10个样本（避免边界噪声）
-    static constexpr int AVG_N = 10;     // 首尾各取10个样本算平均
+    // === 阶段2：定点回读最长段（逐文件持锁） ===
+    static constexpr int TRIM = 10;
+    static constexpr int AVG_N = 10;
     float v_first_sum = 0, v_last_sum = 0;
     uint16_t v_first_cnt = 0, v_last_cnt = 0;
     uint32_t trimmed_ts_start = 0, trimmed_ts_end = 0;
@@ -1638,7 +1662,6 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     uint16_t sample_in_block = 0;
     uint16_t block_total = longest_mins;
 
-    // 裁剪后的窗口：跳过前 TRIM 个，取 AVG_N 个；跳过后 TRIM 个，取 AVG_N 个
     uint16_t skip_start = TRIM;
     uint16_t avg_start_end = TRIM + AVG_N;
     uint16_t avg_end_start = (block_total > TRIM + AVG_N) ? block_total - TRIM - AVG_N : avg_start_end;
@@ -1647,21 +1670,23 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
     uint8_t cell_count = (bms && bms->config_.cell_count > 0) ? bms->config_.cell_count : 5;
 
     for (int fi = 0; fi < file_count; fi++) {
-        File f = SPIFFS.open(filenames[fi], FILE_READ);
-        if (!f) continue;
+        if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
 
-        const int CHUNK = 100;
-        static RawSample buf2[CHUNK];
+        File f = SPIFFS.open(filenames[fi], FILE_READ);
+        if (!f) {
+            if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+            continue;
+        }
 
         while (f.available() >= (int)sizeof(RawSample)) {
             int to_read = min(CHUNK, (int)(f.available() / sizeof(RawSample)));
             if (to_read == 0) break;
-            f.read((uint8_t*)buf2, to_read * sizeof(RawSample));
+            f.read((uint8_t*)buf, to_read * sizeof(RawSample));
 
             for (int i = 0; i < to_read; i++) {
-                RawSample& s = buf2[i];
+                RawSample& s = buf[i];
                 if (s.timestamp < longest_start_ts || s.timestamp > longest_end_ts) continue;
-                if (abs(s.current_mA) >= 5) continue;  // 只计静置样本
+                if (abs(s.current_mA) >= 5) continue;
 
                 if (sample_in_block == 0) {
                     trimmed_ts_start = s.timestamp;
@@ -1670,17 +1695,14 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
                 if (s.temperature < trimmed_temp_min) trimmed_temp_min = s.temperature;
                 if (s.temperature > trimmed_temp_max) trimmed_temp_max = s.temperature;
 
-                // 计算本样本的平均单体电压（用于OCV-SOC查表）
                 float sample_cell_avg = 0;
                 for (int c = 0; c < cell_count && c < 5; c++) sample_cell_avg += s.cell_mv[c];
                 sample_cell_avg /= (float)cell_count;
 
-                // 裁剪后的首部：跳过前 TRIM 个，取 AVG_N 个样本累加电压
                 if (sample_in_block >= skip_start && sample_in_block < avg_start_end) {
                     v_first_sum += sample_cell_avg;
                     v_first_cnt++;
                 }
-                // 裁剪后的尾部：取 AVG_N 个样本累加电压
                 if (sample_in_block >= avg_end_start && sample_in_block < skip_end) {
                     v_last_sum += sample_cell_avg;
                     v_last_cnt++;
@@ -1691,26 +1713,27 @@ bool SystemManagement::scanRawSamples(uint32_t cutoff_ts, RawScanResult& result)
         }
 
         f.close();
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
     }
 
-    // 保存唯一的结果段（用平均电压计算精确SOC）
+    // === 阶段3：计算结果（纯计算，不需要锁） ===
     if (v_first_cnt > 0 && v_last_cnt > 0 && bms) {
-        float v_first_avg = v_first_sum / v_first_cnt;  // 首部10个样本的平均电压
-        float v_last_avg = v_last_sum / v_last_cnt;     // 尾部10个样本的平均电压
+        float v_first_avg = v_first_sum / v_first_cnt;
+        float v_last_avg = v_last_sum / v_last_cnt;
 
         result.seg_count = 1;
         QuiescentSegment& seg = result.segments[0];
         seg.start_ts = trimmed_ts_start;
         seg.end_ts = trimmed_ts_end;
-        seg.soc_start = bms->calculateSOC_FromVoltage(v_first_avg);  // 用平均电压计算精确SOC
-        seg.soc_end = bms->calculateSOC_FromVoltage(v_last_avg);     // 用平均电压计算精确SOC
+        seg.soc_start = bms->calculateSOC_FromVoltage(v_first_avg);
+        seg.soc_end = bms->calculateSOC_FromVoltage(v_last_avg);
         seg.temp_min = trimmed_temp_min;
         seg.temp_max = trimmed_temp_max;
         seg.block_mins = sample_in_block;
     }
 
-    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
-
+    free(filenames);
+    free(buf);
     return true;
 }
 
@@ -1788,15 +1811,21 @@ void SystemManagement::analyzeBurstIR() {
 
     static constexpr uint32_t MAX_BURST_SAMPLES = 50;
     static constexpr uint8_t  IR_RECENT_COUNT = 3;
+    const int CHUNK = 20;
 
-    // 保留最近 MAX_BURST_SAMPLES 条（用于裁剪文件 + IR计算）
-    static BurstSample recent_buf[MAX_BURST_SAMPLES];
+    BurstSample* recent_buf = (BurstSample*)malloc(MAX_BURST_SAMPLES * sizeof(BurstSample));
+    BurstSample* buf = (BurstSample*)malloc(CHUNK * sizeof(BurstSample));
+    if (!recent_buf || !buf) {
+        free(recent_buf);
+        free(buf);
+        file.close();
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        return;
+    }
+
     uint32_t recent_count = 0;
     uint32_t discard_count = (entry_count > MAX_BURST_SAMPLES) ? entry_count - MAX_BURST_SAMPLES : 0;
     uint32_t sample_idx = 0;
-
-    const int CHUNK = 20;
-    static BurstSample buf[CHUNK];
 
     while (file.available() >= (int)sizeof(BurstSample)) {
         int to_read = min(CHUNK, (int)(file.available() / sizeof(BurstSample)));
@@ -1813,7 +1842,6 @@ void SystemManagement::analyzeBurstIR() {
 
     file.close();
 
-    // 裁剪文件：只保留最近 MAX_BURST_SAMPLES 条
     if (discard_count > 0) {
         File wf = SPIFFS.open("/raw/burst.bin", FILE_WRITE);
         if (wf) {
@@ -1825,9 +1853,10 @@ void SystemManagement::analyzeBurstIR() {
         DBG.printf_P(PSTR("IR: burst.bin trimmed %d -> %d\n"), entry_count, recent_count);
     }
 
+    free(buf);  // 读取完成，释放读缓冲区
+
     if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
 
-    // IR 计算：只取最近 IR_RECENT_COUNT 条
     float ir_sum[5] = {};
     uint8_t ir_valid_count[5] = {};
     uint8_t ir_start = (recent_count > IR_RECENT_COUNT) ? recent_count - IR_RECENT_COUNT : 0;
@@ -1867,4 +1896,6 @@ void SystemManagement::analyzeBurstIR() {
     } else {
         DBG.printf_P(PSTR("IR: burst样本不足 %d 条\n"), entry_count);
     }
+
+    free(recent_buf);
 }

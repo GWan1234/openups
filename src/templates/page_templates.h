@@ -117,6 +117,13 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 <div class="card-t" style="margin:20px 0 12px;font-size:14px;font-weight:600">BQ76920 寄存器状态</div>
 <div id="r76" class="grid"></div>
+
+<div class="card" style="margin-top:16px">
+<div class="card-t">原始采样数据文件</div>
+<p style="color:#888;font-size:12px;margin:4px 0 10px">每分钟采集一次，保存在 SPIFFS 分区 /raw/ 目录下，保留 30 天</p>
+<button type="button" class="btn" style="margin-bottom:10px;font-size:12px;padding:4px 12px" onclick="loadRawFiles()">刷新文件列表</button>
+<div id="rawFileList" style="font-size:13px;color:#666">点击上方按钮加载</div>
+</div>
 </div>
 
 <!-- ===== 面板：电源状态 (含 BQ24780S 寄存器) ===== -->

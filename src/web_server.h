@@ -63,6 +63,10 @@ public:
     // Restart device handler
     void handleRestart(AsyncWebServerRequest* request);
 
+    // Raw data file handlers
+    void handleRawFileList(AsyncWebServerRequest* request);
+    void handleRawFileDownload(AsyncWebServerRequest* request);
+
     // ADC Calibration API handlers
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);
