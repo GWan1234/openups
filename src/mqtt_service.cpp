@@ -133,10 +133,11 @@ bool MQTTService::connect() {
         return false;
     }
 
-    if (m_connected) {
+    // 先断开旧连接/清理残留状态，避免 AsyncMqttClient 内部状态混乱
+    if (m_mqtt_client) {
         m_mqtt_client->disconnect();
-        m_connected = false;
     }
+    m_connected = false;
 
     // 配置 AsyncMqttClient
     m_mqtt_client->setServer(m_mqtt_broker, m_mqtt_port);
