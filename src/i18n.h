@@ -100,6 +100,8 @@ enum StrId : uint16_t {
     STR_MQTT_LED_BRIGHTNESS,        // "UPS LED Brightness"
     STR_MQTT_BUZZER_VOLUME,         // "UPS Buzzer Volume"
     STR_MQTT_HID_REPORT_MODE,       // "UPS HID Report Mode"
+    STR_MQTT_CELL_IR,               // "UPS Cell %d Internal Resistance"
+    STR_MQTT_IR_SAMPLE_COUNT,       // "UPS IR Sample Count"
 
     STR_COUNT                       // 字符串总数
 };

@@ -90,6 +90,8 @@ static const char s_en_64[] PROGMEM = "WiFi SSID";
 static const char s_en_65[] PROGMEM = "LED Brightness";
 static const char s_en_66[] PROGMEM = "Buzzer Volume";
 static const char s_en_67[] PROGMEM = "HID Report Mode";
+static const char s_en_68[] PROGMEM = "Cell %d Internal Resistance";
+static const char s_en_69[] PROGMEM = "IR Sample Count";
 
 // Pointer array (ordered by StrId)
 const char* const I18n::strings_en_[] = {
@@ -101,7 +103,7 @@ const char* const I18n::strings_en_[] = {
     s_en_40, s_en_41, s_en_42, s_en_43, s_en_44, s_en_45, s_en_46, s_en_47,
     s_en_48, s_en_49, s_en_50, s_en_51, s_en_52, s_en_53, s_en_54, s_en_55,
     s_en_56, s_en_57, s_en_58, s_en_59, s_en_60, s_en_61, s_en_62, s_en_63,
-    s_en_64, s_en_65, s_en_66, s_en_67,
+    s_en_64, s_en_65, s_en_66, s_en_67, s_en_68, s_en_69,
 };
 
 #endif

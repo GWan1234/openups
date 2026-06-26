@@ -90,6 +90,8 @@ static const char s_zh_64[] PROGMEM = "WiFi SSID";
 static const char s_zh_65[] PROGMEM = "LED亮度";
 static const char s_zh_66[] PROGMEM = "蜂鸣器音量";
 static const char s_zh_67[] PROGMEM = "HID报告模式";
+static const char s_zh_68[] PROGMEM = "电芯%d内阻";
+static const char s_zh_69[] PROGMEM = "内阻采样次数";
 
 // 指针数组（按 StrId 顺序）
 const char* const I18n::strings_zh_[] = {
@@ -101,7 +103,7 @@ const char* const I18n::strings_zh_[] = {
     s_zh_40, s_zh_41, s_zh_42, s_zh_43, s_zh_44, s_zh_45, s_zh_46, s_zh_47,
     s_zh_48, s_zh_49, s_zh_50, s_zh_51, s_zh_52, s_zh_53, s_zh_54, s_zh_55,
     s_zh_56, s_zh_57, s_zh_58, s_zh_59, s_zh_60, s_zh_61, s_zh_62, s_zh_63,
-    s_zh_64, s_zh_65, s_zh_66, s_zh_67,
+    s_zh_64, s_zh_65, s_zh_66, s_zh_67, s_zh_68, s_zh_69,
 };
 
 #endif

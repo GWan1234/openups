@@ -313,6 +313,19 @@ bool MQTTService::publishDiscoveryConfig() {
     publishSensorDiscovery("bms_cell_avg", I18n::get(STR_MQTT_CELL_AVG), "voltage", "measurement", "mV",
                           "{{ value_json.bms.cell_avg }}");
 
+    // 单体内阻 (Cell 1-5)
+    char irName[32];
+    for (int i = 1; i <= 5; i++) {
+        snprintf(irName, sizeof(irName), I18n::get(STR_MQTT_CELL_IR), i);
+        char irKey[20];
+        snprintf(irKey, sizeof(irKey), "bms_cell_%d_ir", i);
+        char irTemplate[64];
+        snprintf(irTemplate, sizeof(irTemplate), "{{ value_json.bms.cell_ir[%d] }}", i - 1);
+        publishSensorDiscovery(irKey, irName, nullptr, "measurement", "mΩ", irTemplate);
+    }
+    publishSensorDiscovery("bms_ir_sample_count", I18n::get(STR_MQTT_IR_SAMPLE_COUNT), nullptr, "measurement", nullptr,
+                          "{{ value_json.bms.ir_sample_count }}");
+
     // 电源传感器
     publishSensorDiscovery("power_input_voltage", I18n::get(STR_MQTT_INPUT_VOLTAGE), "voltage", "measurement", "mV",
                           "{{ value_json.power.input_voltage }}");
