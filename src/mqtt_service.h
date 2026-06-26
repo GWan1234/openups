@@ -109,6 +109,9 @@ private:
     unsigned long m_last_state_publish;
     unsigned long m_last_heartbeat;
     unsigned long m_last_reconnect_attempt;
+    unsigned long m_connected_since;
+    unsigned long m_last_puback;
+    uint8_t m_consecutive_failures;
     char m_mqtt_broker[64];
     uint16_t m_mqtt_port;
     char m_mqtt_username[64];
@@ -122,6 +125,7 @@ private:
     static void onMqttConnect(bool sessionPresent);
     static void onMqttDisconnect(int reason);
     static void onMqttMessage(char* topic, char* payload, int properties, size_t len, size_t index, size_t total);
+    static void onMqttPublish(uint16_t packetId);
     void handleCommand(const char* topic, const char* payload, unsigned int length);
     void subscribeCommandTopics();
 

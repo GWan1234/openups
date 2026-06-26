@@ -62,7 +62,7 @@ SHTC3* shtc3 = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.6";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.7";
   strcpy(FIRMWARE_ID_TAG, version);
   DBG.println(F("Checking for factory reset button..."));
   

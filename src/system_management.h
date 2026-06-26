@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include "data_structures.h"
 #include "event_bus.h"
+#include "i18n.h"
 
 // 自消耗分析任务参数
 struct SCAnalysisResult {
@@ -103,8 +104,9 @@ public:
     // 清除所有系统提示
     void clearTips();
 
-    // 系统提示信息管理 - 自动添加时间前缀 "[M月D日 HH:MM]"
-    void addTip(const char* fmt, ...);
+    // 系统提示信息管理 - 自动添加时间前缀
+    void addTip(StrId fmtId, ...);
+    void addTipRaw(const char* fmt, ...);
 
 private:
     // =============================================================================

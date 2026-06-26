@@ -398,27 +398,27 @@ void SystemManagement::onStateEnter(SystemState newState) {
     // 状态切换时输出提示信息到 Web 页面
     if (newState == SYS_STATE_CRITICAL) {
         if (!globalState.bms.is_connected) {
-            addTip("BMS模块掉线，进入危急状态");
+            addTip(STR_TIP_BMS_OFFLINE);
         } else if (!globalState.power.bq24780s_connected) {
-            addTip("电源芯片BQ24780S掉线，进入危急状态");
+            addTip(STR_TIP_BQ24780S_OFFLINE);
         } else if (globalState.bms.fault_type != BMS_FAULT_NONE) {
-            addTip("BMS故障(%d)，进入危急状态", static_cast<int>(globalState.bms.fault_type));
+            addTip(STR_TIP_BMS_FAULT, static_cast<int>(globalState.bms.fault_type));
         } else {
-            addTip("系统进入危急状态");
+            addTip(STR_TIP_SYSTEM_CRITICAL);
         }
     } else if (newState == SYS_STATE_WARNING) {
         if (globalState.power.fault_type != POWER_FAULT_NONE) {
-            addTip("电源故障(%d)，进入警告状态", static_cast<int>(globalState.power.fault_type));
+            addTip(STR_TIP_POWER_FAULT, static_cast<int>(globalState.power.fault_type));
         } else if (globalState.over_current_protection) {
-            addTip("过流保护触发，进入警告状态");
+            addTip(STR_TIP_OVER_CURRENT);
         } else if (globalState.over_temp_protection) {
-            addTip("过温保护触发，进入警告状态");
+            addTip(STR_TIP_OVER_TEMP);
         } else if (bq24780sRegWarning) {
-            addTip("BQ24780S寄存器配置不一致，进入警告状态");
+            addTip(STR_TIP_BQ24780S_REG_MISMATCH);
         } else if (bq76920RegWarning) {
-            addTip("BQ76920寄存器配置不一致，进入警告状态");
+            addTip(STR_TIP_BQ76920_REG_MISMATCH);
         } else {
-            addTip("系统进入警告状态");
+            addTip(STR_TIP_SYSTEM_WARNING);
         }
     }
 
@@ -1033,7 +1033,7 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
     switch (fault_type) {
         case BMS_FAULT_OVER_TEMP:
             DBG.println(F("[SysMgr] OVER TEMP protection: Disabling both charge and discharge"));
-            addTip("BMS过温保护：关闭充放电");
+            addTip(STR_TIP_BMS_OVER_TEMP);
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -1041,20 +1041,20 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             
         case BMS_FAULT_OVER_VOLTAGE:
             DBG.println(F("[SysMgr] OVER VOLTAGE protection: Disabling charge"));
-            addTip("BMS过压保护：关闭充电");
+            addTip(STR_TIP_BMS_OVER_VOLTAGE);
             bms->disableCharge();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_UNDER_VOLTAGE:
             DBG.println(F("[SysMgr] UNDER VOLTAGE protection: Disabling discharge"));
-            addTip("BMS欠压保护：关闭放电");
+            addTip(STR_TIP_BMS_UNDER_VOLTAGE);
             bms->disableDischarge();
             break;
             
         case BMS_FAULT_OVER_CURRENT:
             DBG.println(F("[SysMgr] OVER CURRENT protection: Disabling both charge and discharge"));
-            addTip("BMS过流保护：关闭充放电");
+            addTip(STR_TIP_BMS_OVER_CURRENT);
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -1062,20 +1062,20 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
             
         case BMS_FAULT_SHORT_CIRCUIT:
             DBG.println(F("[SysMgr] SHORT CIRCUIT protection: Emergency shutdown!"));
-            addTip("BMS短路保护：紧急关机");
+            addTip(STR_TIP_BMS_SHORT_CIRCUIT);
             bms->emergencyShutdown();
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_CHIP_ERROR:
             DBG.println(F("[SysMgr] CHIP ERROR protection: Disabling both charge and discharge"));
-            addTip("BMS芯片错误");
+            addTip(STR_TIP_BMS_CHIP_ERROR);
             powerManagement->stopCharging();
             break;
             
         case BMS_FAULT_PASSIVE_SHUTDOWN:
             DBG.println(F("[SysMgr] PASSIVE SHUTDOWN protection: Disabling both charge and discharge"));
-            addTip("BMS被动关机：关闭充放电");
+            addTip(STR_TIP_BMS_PASSIVE_SHUTDOWN);
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -1088,7 +1088,7 @@ void SystemManagement::handleBmsFault(BMS_Fault_t fault_type) {
         default:
             DBG.printf_P(PSTR("[SysMgr] Unknown BMS fault type: %d, taking safe action\n"), 
                            static_cast<int>(fault_type));
-            addTip("BMS未知故障(%d)", static_cast<int>(fault_type));
+            addTip(STR_TIP_BMS_UNKNOWN_FAULT, static_cast<int>(fault_type));
             bms->disableCharge();
             bms->disableDischarge();
             powerManagement->stopCharging();
@@ -1170,14 +1170,14 @@ void SystemManagement::checkBQ24780sRegisters() {
     if (reg_discharge > 0 && abs(reg_discharge - (int)config->max_discharge_current) > config->max_discharge_current * 0.05f) {
         mismatch = true;
         if (bq24780sRegWarning || regMismatchCountBQ24780s >= 2)
-            addTip("BQ24780S放电电流不一致:寄存器=%dmA,配置=%dmA", reg_discharge, config->max_discharge_current);
+            addTip(STR_TIP_REG_MISMATCH_mA, reg_discharge, config->max_discharge_current);
     }
 
     int reg_input = Utils::parseBQ24780sInputCurrent(regs[10]);
     if (reg_input > 0 && abs(reg_input - (int)config->over_current_threshold) > config->over_current_threshold * 0.05f) {
         mismatch = true;
         if (bq24780sRegWarning || regMismatchCountBQ24780s >= 2)
-            addTip("BQ24780S输入电流不一致:寄存器=%dmA,配置=%dmA", reg_input, config->over_current_threshold);
+            addTip(STR_TIP_REG_MISMATCH_mA, reg_input, config->over_current_threshold);
     }
 
     if (mismatch) {
@@ -1218,28 +1218,28 @@ void SystemManagement::checkBQ76920Registers() {
     if (reg_scd > 0 && config->short_circuit_threshold > 0 && abs(reg_scd - (int)config->short_circuit_threshold) > config->short_circuit_threshold * 0.15f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
-            addTip("BQ76920短路阈值不一致:寄存器=%dmA,配置=%dmA", reg_scd, config->short_circuit_threshold);
+            addTip(STR_TIP_REG_MISMATCH_mA, reg_scd, config->short_circuit_threshold);
     }
 
     int reg_ocd = Utils::parseBQ76920Protect2(regs[5], regs[4]);
     if (reg_ocd > 0 && config->max_discharge_current > 0 && abs(reg_ocd - (int)config->max_discharge_current) > config->max_discharge_current * 0.15f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
-            addTip("BQ76920放电过流不一致:寄存器=%dmA,配置=%dmA", reg_ocd, config->max_discharge_current);
+            addTip(STR_TIP_REG_MISMATCH_mA, reg_ocd, config->max_discharge_current);
     }
 
     float reg_ov = Utils::parseBQ76920OvTrip(regs[7], regs[10], regs[11]);
     if (reg_ov > 0 && config->cell_ov_threshold > 0 && fabs(reg_ov - config->cell_ov_threshold) > config->cell_ov_threshold * 0.02f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
-            addTip("BQ76920过压阈值不一致:寄存器=%dmV,配置=%dmV", (int)reg_ov, config->cell_ov_threshold);
+            addTip(STR_TIP_REG_MISMATCH_mV, (int)reg_ov, config->cell_ov_threshold);
     }
 
     float reg_uv = Utils::parseBQ76920UvTrip(regs[8], regs[10], regs[11]);
     if (reg_uv > 0 && config->cell_uv_threshold > 0 && fabs(reg_uv - config->cell_uv_threshold) > config->cell_uv_threshold * 0.02f) {
         mismatch = true;
         if (bq76920RegWarning || regMismatchCountBQ76920 >= 2)
-            addTip("BQ76920欠压阈值不一致:寄存器=%dmV,配置=%dmV", (int)reg_uv, config->cell_uv_threshold);
+            addTip(STR_TIP_REG_MISMATCH_mV, (int)reg_uv, config->cell_uv_threshold);
     }
 
     if (mismatch) {
@@ -1323,7 +1323,7 @@ void SystemManagement::handleBmsResetBatteryData() {
         for (int i = 0; i < 5; i++) {
             globalState.bms.cell_balancing_count[i] = 0;
         }
-        addTip("电池数据已重置 (SOH/循环/均衡)");
+        addTip(STR_TIP_BATTERY_RESET);
         DBG.println(F("[SysMgr] BMS battery data reset successfully"));
     } else {
         DBG.println(F("[SysMgr] ERROR: Failed to reset BMS battery data"));
@@ -1335,14 +1335,14 @@ void SystemManagement::onChargeStarted(EventType type, void* param) {
     uint32_t info = param ? *static_cast<uint32_t*>(param) : 0;
     uint16_t current = info & 0xFFFF;
     uint16_t voltage = (info >> 16) & 0xFFFF;
-    systemManager->addTip("正在充电，SOC:%.1f%%，充电电流：%dmA，充电电压：%dmV",
+    systemManager->addTip(STR_TIP_CHARGING,
                           systemManager->globalState.bms.soc, current, voltage);
 }
 
 void SystemManagement::onChargeComplete(EventType type, void* param) {
     if (!systemManager || !systemManager->systemInitialized) return;
     auto& st = systemManager->globalState;
-    systemManager->addTip("充电已停止，SOC:%.1f%%", st.bms.soc);
+    systemManager->addTip(STR_TIP_CHARGE_STOPPED, st.bms.soc);
 }
 
 void SystemManagement::onBalancingStarted(EventType type, void* param) {
@@ -1356,12 +1356,12 @@ void SystemManagement::onBalancingStarted(EventType type, void* param) {
             pos += snprintf(cells + pos, sizeof(cells) - pos, "%d", i + 1);
         }
     }
-    systemManager->addTip("电池均衡启动，SOC:%.1f%%，均衡电芯：%s", systemManager->globalState.bms.soc, cells);
+    systemManager->addTip(STR_TIP_BALANCE_START, systemManager->globalState.bms.soc, cells);
 }
 
 void SystemManagement::onBalancingStopped(EventType type, void* param) {
     if (!systemManager || !systemManager->systemInitialized) return;
-    systemManager->addTip("电池均衡停止，SOC:%.1f%%", systemManager->globalState.bms.soc);
+    systemManager->addTip(STR_TIP_BALANCE_STOP, systemManager->globalState.bms.soc);
 }
 
 // =============================================================================
@@ -1402,13 +1402,40 @@ void SystemManagement::saveAllData() {
     DBG.println(F("[SysMgr] All module data saved"));
 }
 
-void SystemManagement::addTip(const char* fmt, ...) {
+void SystemManagement::addTip(StrId fmtId, ...) {
+    if (fmtId >= STR_COUNT) return;
+
+    char buf[SYSTEM_TIP_MAX_LEN];
+    time_t now = time(nullptr);
+    struct tm* t = localtime(&now);
+
+    const char* timeFmt = I18n::get(STR_TIP_TIME_FMT);
+    int off = snprintf(buf, sizeof(buf), timeFmt,
+                       t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min);
+
+    const char* fmt = I18n::get(fmtId);
+    va_list args;
+    va_start(args, fmtId);
+    vsnprintf(buf + off, sizeof(buf) - off, fmt, args);
+    va_end(args);
+
+    uint8_t idx = globalState.tip_index;
+    globalState.tips[idx].timestamp = (uint32_t)now;
+    strlcpy(globalState.tips[idx].message, buf, SYSTEM_TIP_MAX_LEN);
+
+    globalState.tip_index = (idx + 1) % SYSTEM_TIPS_MAX;
+    if (globalState.tip_count < SYSTEM_TIPS_MAX) {
+        globalState.tip_count++;
+    }
+}
+
+void SystemManagement::addTipRaw(const char* fmt, ...) {
     if (fmt == nullptr || fmt[0] == '\0') return;
 
     char buf[SYSTEM_TIP_MAX_LEN];
     time_t now = time(nullptr);
     struct tm* t = localtime(&now);
-    int off = snprintf(buf, sizeof(buf), "[%d月%d日 %02d:%02d]",
+    int off = snprintf(buf, sizeof(buf), "[%d/%d %02d:%02d]",
                        t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min);
 
     va_list args;

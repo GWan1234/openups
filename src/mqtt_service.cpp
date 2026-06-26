@@ -6,7 +6,9 @@
 #include "event_bus.h"
 #include "event_types.h"
 #include "debug.h"
+#include "i18n.h"
 
+#define MQTT_PUBACK_TIMEOUT_MS  120000UL  // 2 分钟无 PUBACK 判定为幽灵连接
 
 // =============================================================================
 // 静态成员初始化
@@ -22,7 +24,8 @@ MQTTService::MQTTService()
     , m_use_tls(false), m_configured(false), m_connected(false)
     , m_discovery_published(false)
     , m_last_state_publish(0), m_last_heartbeat(0)
-    , m_last_reconnect_attempt(0)
+    , m_last_reconnect_attempt(0), m_connected_since(0)
+    , m_last_puback(0), m_consecutive_failures(0)
 {
     s_instance = this;
     memset(m_device_id, 0, sizeof(m_device_id));
@@ -66,6 +69,9 @@ bool MQTTService::begin(Configuration* config, System_Global_State* state) {
     });
     m_mqtt_client->onMessage([](char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
         onMqttMessage(topic, payload, static_cast<int>(properties.qos), len, index, total);
+    });
+    m_mqtt_client->onPublish([](uint16_t packetId) {
+        onMqttPublish(packetId);
     });
     m_mqtt_client->setKeepAlive(MQTT_KEEPALIVE);
 
@@ -112,6 +118,25 @@ void MQTTService::loop(System_Global_State& state) {
     // AsyncMqttClient 是事件驱动的，不需要 loop() 调用
 
     unsigned long now = millis();
+
+    // 僵尸连接检测（三层防线）：
+    // 1. AsyncMqttClient 内部 TCP 层已感知断开 → m_mqtt_client->connected() 返回 false
+    // 2. 库层明确拒绝 publish → m_consecutive_failures 累加
+    // 3. PUBACK 超时 → 状态发布使用 QoS 1，服务器收到后回 PUBACK。
+    //    正常情况下 PUBACK 在毫秒级到达。如果超过 2 分钟没收到任何 PUBACK（同时我们每 10s 发一次），
+    //    说明连接已死（幽灵连接），库的 keepalive 机制也未检测到，强制断开重连。
+
+    bool tcp_disconnected = !m_mqtt_client->connected();
+    bool failure_detected = (m_consecutive_failures >= 5);
+    bool puback_timeout = (m_last_puback > 0) && (now - m_last_puback >= MQTT_PUBACK_TIMEOUT_MS);
+    if (tcp_disconnected || failure_detected || puback_timeout) {
+        DBG.printf("[MQTT] Zombie connection detected: tcp=%s, failures=%u, puback_idle=%lus, forcing disconnect\n",
+                   tcp_disconnected ? "dead" : "ok", m_consecutive_failures,
+                   m_last_puback > 0 ? (now - m_last_puback) / 1000 : 0);
+        disconnect();
+        return;
+    }
+
     if (now - m_last_state_publish >= 10000) {
         publishStateData();
         m_last_state_publish = now;
@@ -138,6 +163,8 @@ bool MQTTService::connect() {
         m_mqtt_client->disconnect();
     }
     m_connected = false;
+    m_consecutive_failures = 0;
+    m_connected_since = 0;
 
     // 配置 AsyncMqttClient
     m_mqtt_client->setServer(m_mqtt_broker, m_mqtt_port);
@@ -167,6 +194,7 @@ void MQTTService::disconnect() {
         m_mqtt_client->disconnect();
     }
     m_connected = false;
+    m_consecutive_failures = 0;
 }
 
 // =============================================================================
@@ -176,6 +204,9 @@ void MQTTService::onMqttConnect(bool sessionPresent) {
     DBG.printf("[MQTT] onConnect: sessionPresent=%s\n", sessionPresent ? "true" : "false");
     if (s_instance) {
         s_instance->m_connected = true;
+        s_instance->m_connected_since = millis();
+        s_instance->m_last_puback = millis();
+        s_instance->m_consecutive_failures = 0;
         s_instance->subscribeCommandTopics();
         s_instance->publishAvailability(true);
     }
@@ -185,12 +216,19 @@ void MQTTService::onMqttDisconnect(int reason) {
     DBG.printf("[MQTT] onDisconnect: reason=%d\n", reason);
     if (s_instance) {
         s_instance->m_connected = false;
+        s_instance->m_consecutive_failures = 0;
     }
 }
 
 void MQTTService::onMqttMessage(char* topic, char* payload, int properties, size_t len, size_t index, size_t total) {
     if (s_instance) {
         s_instance->handleCommand(topic, (const char*)payload, len);
+    }
+}
+
+void MQTTService::onMqttPublish(uint16_t packetId) {
+    if (s_instance) {
+        s_instance->m_last_puback = millis();
     }
 }
 
@@ -224,7 +262,12 @@ void MQTTService::setDeviceIdentifier(const char* identifier) {
 bool MQTTService::publishPayload(const char* topic, const uint8_t* payload, size_t length, uint8_t qos, bool retain) {
     if (!m_connected || !m_mqtt_client) return false;
     uint16_t packetId = m_mqtt_client->publish(topic, qos, retain, reinterpret_cast<const char*>(payload), length);
-    return packetId != 0;
+    if (packetId != 0) {
+        return true;
+    } else {
+        m_consecutive_failures++;
+        return false;
+    }
 }
 
 // =============================================================================
@@ -236,105 +279,104 @@ bool MQTTService::publishDiscoveryConfig() {
     }
 
     // 电池传感器
-    publishSensorDiscovery("bms_soc", "UPS Battery SOC", "battery", "measurement", "%",
+    publishSensorDiscovery("bms_soc", I18n::get(STR_MQTT_BMS_SOC), "battery", "measurement", "%",
                           "{{ value_json.bms.soc }}");
-    publishSensorDiscovery("bms_soh", "UPS Battery SOH", "battery", "measurement", "%",
+    publishSensorDiscovery("bms_soh", I18n::get(STR_MQTT_BMS_SOH), "battery", "measurement", "%",
                           "{{ value_json.bms.soh }}");
-    publishSensorDiscovery("bms_voltage", "UPS Battery Voltage", "voltage", "measurement", "mV",
+    publishSensorDiscovery("bms_voltage", I18n::get(STR_MQTT_BMS_VOLTAGE), "voltage", "measurement", "mV",
                           "{{ value_json.bms.voltage }}");
-    publishSensorDiscovery("bms_current", "UPS Battery Current", "current", "measurement", "mA",
+    publishSensorDiscovery("bms_current", I18n::get(STR_MQTT_BMS_CURRENT), "current", "measurement", "mA",
                           "{{ value_json.bms.current }}");
-    publishSensorDiscovery("bms_temperature", "UPS Battery Temperature", "temperature", "measurement", "°C",
+    publishSensorDiscovery("bms_temperature", I18n::get(STR_MQTT_BMS_TEMPERATURE), "temperature", "measurement", "°C",
                           "{{ value_json.bms.temperature }}");
-    publishSensorDiscovery("bms_capacity_remaining", "UPS Battery Capacity Remaining", "battery_capacity", "measurement", "mAh",
+    publishSensorDiscovery("bms_capacity_remaining", I18n::get(STR_MQTT_BMS_CAPACITY), "battery_capacity", "measurement", "mAh",
                           "{{ value_json.bms.capacity_remaining }}");
-    publishSensorDiscovery("bms_cycle_count", "UPS Battery Cycle Count", nullptr, "measurement", nullptr,
+    publishSensorDiscovery("bms_cycle_count", I18n::get(STR_MQTT_BMS_CYCLE_COUNT), nullptr, "measurement", nullptr,
                           "{{ value_json.bms.cycle_count }}");
-    publishSensorDiscovery("bms_self_consumption", "UPS Self Consumption Current", "current", "measurement", "mA",
+    publishSensorDiscovery("bms_self_consumption", I18n::get(STR_MQTT_BMS_SELF_CONSUMPTION), "current", "measurement", "mA",
                           "{{ value_json.bms.self_consumption }}");
 
     // 单体电压 (Cell 1-5)
-    publishSensorDiscovery("bms_cell_1", "UPS Cell 1 Voltage", "voltage", "measurement", "mV",
-                          "{{ value_json.bms.cell_1 }}");
-    publishSensorDiscovery("bms_cell_2", "UPS Cell 2 Voltage", "voltage", "measurement", "mV",
-                          "{{ value_json.bms.cell_2 }}");
-    publishSensorDiscovery("bms_cell_3", "UPS Cell 3 Voltage", "voltage", "measurement", "mV",
-                          "{{ value_json.bms.cell_3 }}");
-    publishSensorDiscovery("bms_cell_4", "UPS Cell 4 Voltage", "voltage", "measurement", "mV",
-                          "{{ value_json.bms.cell_4 }}");
-    publishSensorDiscovery("bms_cell_5", "UPS Cell 5 Voltage", "voltage", "measurement", "mV",
-                          "{{ value_json.bms.cell_5 }}");
-    publishSensorDiscovery("bms_cell_min", "UPS Cell Min Voltage", "voltage", "measurement", "mV",
+    char cellName[32];
+    for (int i = 1; i <= 5; i++) {
+        snprintf(cellName, sizeof(cellName), I18n::get(STR_MQTT_CELL_VOLTAGE), i);
+        char cellKey[20];
+        snprintf(cellKey, sizeof(cellKey), "bms_cell_%d", i);
+        char cellTemplate[64];
+        snprintf(cellTemplate, sizeof(cellTemplate), "{{ value_json.bms.cell_%d }}", i);
+        publishSensorDiscovery(cellKey, cellName, "voltage", "measurement", "mV", cellTemplate);
+    }
+    publishSensorDiscovery("bms_cell_min", I18n::get(STR_MQTT_CELL_MIN), "voltage", "measurement", "mV",
                           "{{ value_json.bms.cell_min }}");
-    publishSensorDiscovery("bms_cell_max", "UPS Cell Max Voltage", "voltage", "measurement", "mV",
+    publishSensorDiscovery("bms_cell_max", I18n::get(STR_MQTT_CELL_MAX), "voltage", "measurement", "mV",
                           "{{ value_json.bms.cell_max }}");
-    publishSensorDiscovery("bms_cell_avg", "UPS Cell Avg Voltage", "voltage", "measurement", "mV",
+    publishSensorDiscovery("bms_cell_avg", I18n::get(STR_MQTT_CELL_AVG), "voltage", "measurement", "mV",
                           "{{ value_json.bms.cell_avg }}");
 
     // 电源传感器
-    publishSensorDiscovery("power_input_voltage", "UPS Input Voltage", "voltage", "measurement", "mV",
+    publishSensorDiscovery("power_input_voltage", I18n::get(STR_MQTT_INPUT_VOLTAGE), "voltage", "measurement", "mV",
                           "{{ value_json.power.input_voltage }}");
-    publishSensorDiscovery("power_input_current", "UPS Input Current", "current", "measurement", "mA",
+    publishSensorDiscovery("power_input_current", I18n::get(STR_MQTT_INPUT_CURRENT), "current", "measurement", "mA",
                           "{{ value_json.power.input_current }}");
-    publishSensorDiscovery("power_output_power", "UPS Output Power", "power", "measurement", "W",
+    publishSensorDiscovery("power_output_power", I18n::get(STR_MQTT_OUTPUT_POWER), "power", "measurement", "W",
                           "{{ value_json.power.output_power }}");
-    publishSensorDiscovery("power_battery_voltage", "UPS Battery Voltage(adc)", "voltage", "measurement", "mV",
+    publishSensorDiscovery("power_battery_voltage", I18n::get(STR_MQTT_BATT_VOLTAGE_ADC), "voltage", "measurement", "mV",
                           "{{ value_json.power.battery_voltage }}");
-    publishSensorDiscovery("power_battery_current", "UPS Battery Current(adc)", "current", "measurement", "mA",
+    publishSensorDiscovery("power_battery_current", I18n::get(STR_MQTT_BATT_CURRENT_ADC), "current", "measurement", "mA",
                           "{{ value_json.power.battery_current }}");
 
     // 二进制传感器
-    publishBinarySensorDiscovery("ac_present", "UPS AC Power", "power",
+    publishBinarySensorDiscovery("ac_present", I18n::get(STR_MQTT_AC_POWER), "power",
                           "{{ 'true' if value_json.power.ac_present == true else 'false' }}");
-    publishBinarySensorDiscovery("charger_enabled", "UPS Charger Enabled", "plug",
+    publishBinarySensorDiscovery("charger_enabled", I18n::get(STR_MQTT_CHARGER_ENABLED), "plug",
                           "{{ 'true' if value_json.power.charger_enabled == true else 'false' }}");
-    publishBinarySensorDiscovery("balancing_active", "UPS Balancing Active", "running",
+    publishBinarySensorDiscovery("balancing_active", I18n::get(STR_MQTT_BALANCING_ACTIVE), "running",
                           "{{ 'true' if value_json.bms.balancing_active == true else 'false' }}");
-    publishBinarySensorDiscovery("wifi_connected", "UPS WiFi Connected", "connectivity",
+    publishBinarySensorDiscovery("wifi_connected", I18n::get(STR_MQTT_WIFI_CONNECTED), "connectivity",
                           "{{ 'true' if value_json.system.wifi_connected == true else 'false' }}");
-    publishBinarySensorDiscovery("bms_fault", "UPS BMS Fault", "problem",
+    publishBinarySensorDiscovery("bms_fault", I18n::get(STR_MQTT_BMS_FAULT), "problem",
                           "{{ 'fault' if value_json.bms.fault_type != 'None' else 'None' }}", true);
-    publishBinarySensorDiscovery("power_fault", "UPS Power Fault", "problem",
+    publishBinarySensorDiscovery("power_fault", I18n::get(STR_MQTT_POWER_FAULT), "problem",
                           "{{ 'fault' if value_json.power.fault_type != 'None' else 'None' }}", true);
-    publishBinarySensorDiscovery("emergency_shutdown", "UPS Emergency Shutdown", "problem",
+    publishBinarySensorDiscovery("emergency_shutdown", I18n::get(STR_MQTT_EMERGENCY_SHUTDOWN), "problem",
                           "{{ 'true' if value_json.system.emergency_shutdown == true else 'false' }}");
-    publishBinarySensorDiscovery("protection_over_current", "UPS Over Current Protection", "problem",
+    publishBinarySensorDiscovery("protection_over_current", I18n::get(STR_MQTT_PROT_OVER_CURRENT), "problem",
                           "{{ 'true' if value_json.protection.over_current == true else 'false' }}");
-    publishBinarySensorDiscovery("protection_over_temp", "UPS Over Temperature Protection", "problem",
+    publishBinarySensorDiscovery("protection_over_temp", I18n::get(STR_MQTT_PROT_OVER_TEMP), "problem",
                           "{{ 'true' if value_json.protection.over_temp == true else 'false' }}");
-    publishBinarySensorDiscovery("protection_short_circuit", "UPS Short Circuit Protection", "problem",
+    publishBinarySensorDiscovery("protection_short_circuit", I18n::get(STR_MQTT_PROT_SHORT_CIRCUIT), "problem",
                           "{{ 'true' if value_json.protection.short_circuit == true else 'false' }}");
 
     // 系统传感器
-    publishSensorDiscovery("system_uptime", "UPS System Uptime", "duration", "measurement", "s",
+    publishSensorDiscovery("system_uptime", I18n::get(STR_MQTT_SYSTEM_UPTIME), "duration", "measurement", "s",
                           "{{ value_json.system.uptime }}");
-    publishSensorDiscovery("system_board_temperature", "UPS Board Temperature", "temperature", "measurement", "°C",
+    publishSensorDiscovery("system_board_temperature", I18n::get(STR_MQTT_BOARD_TEMP), "temperature", "measurement", "°C",
                           "{{ value_json.system.board_temperature }}");
-    publishSensorDiscovery("system_environment_temperature", "UPS Environment Temperature", "temperature", "measurement", "°C",
+    publishSensorDiscovery("system_environment_temperature", I18n::get(STR_MQTT_ENV_TEMP), "temperature", "measurement", "°C",
                           "{{ value_json.system.environment_temperature }}");
-    publishSensorDiscovery("system_board_temperature_sht", "UPS SHTC3 Temperature", "temperature", "measurement", "°C",
+    publishSensorDiscovery("system_board_temperature_sht", I18n::get(STR_MQTT_SHT_TEMP), "temperature", "measurement", "°C",
                           "{{ value_json.system.board_temperature_sht }}");
-    publishSensorDiscovery("system_board_humidity", "UPS SHTC3 Humidity", "humidity", "measurement", "%",
+    publishSensorDiscovery("system_board_humidity", I18n::get(STR_MQTT_SHT_HUMID), "humidity", "measurement", "%",
                           "{{ value_json.system.board_humidity }}");
-    publishSensorDiscovery("system_wifi_rssi", "UPS WiFi RSSI", "signal_strength", "measurement", "dBm",
+    publishSensorDiscovery("system_wifi_rssi", I18n::get(STR_MQTT_WIFI_RSSI), "signal_strength", "measurement", "dBm",
                           "{{ value_json.system.wifi_rssi }}");
-    publishSensorDiscovery("system_firmware_version", "UPS Firmware Version", nullptr, nullptr, nullptr,
+    publishSensorDiscovery("system_firmware_version", I18n::get(STR_MQTT_FIRMWARE_VERSION), nullptr, nullptr, nullptr,
                           "{{ value_json.system.firmware_version }}");
-    publishSensorDiscovery("system_power_mode", "UPS Power Mode", nullptr, nullptr, nullptr,
+    publishSensorDiscovery("system_power_mode", I18n::get(STR_MQTT_POWER_MODE), nullptr, nullptr, nullptr,
                           "{{ value_json.system.power_mode }}");
-    publishSensorDiscovery("system_overall_status", "UPS Overall Status", nullptr, nullptr, nullptr,
+    publishSensorDiscovery("system_overall_status", I18n::get(STR_MQTT_OVERALL_STATUS), nullptr, nullptr, nullptr,
                           "{{ value_json.system.overall_status }}");
-    publishSensorDiscovery("system_wifi_ssid", "UPS WiFi SSID", nullptr, nullptr, nullptr,
+    publishSensorDiscovery("system_wifi_ssid", I18n::get(STR_MQTT_WIFI_SSID), nullptr, nullptr, nullptr,
                           "{{ value_json.system.wifi_ssid }}");
 
     // 控制实体
-    publishNumberDiscovery("led_brightness", "UPS LED Brightness",
+    publishNumberDiscovery("led_brightness", I18n::get(STR_MQTT_LED_BRIGHTNESS),
                           "command/led_brightness/set", 0, 100, 1, "%",
                           "{{ value_json.config.led_brightness }}");
-    publishNumberDiscovery("buzzer_volume", "UPS Buzzer Volume",
+    publishNumberDiscovery("buzzer_volume", I18n::get(STR_MQTT_BUZZER_VOLUME),
                           "command/buzzer_volume/set", 0, 100, 1, "%",
                           "{{ value_json.config.buzzer_volume }}");
-    publishSelectDiscovery("hid_report_mode", "UPS HID Report Mode",
+    publishSelectDiscovery("hid_report_mode", I18n::get(STR_MQTT_HID_REPORT_MODE),
                           "command/hid_report_mode/set", "mAh,mWh,%",
                           "{{ value_json.config.hid_report_mode }}");
     return true;
@@ -608,7 +650,7 @@ bool MQTTService::publishStateData() {
         DBG.println("[MQTT] State JSON overflow, skipped");
         return false;
     }
-    return publishPayload(topic, (const uint8_t*)buf, len, 0, false);
+    return publishPayload(topic, (const uint8_t*)buf, len, 1, false);
 }
 
 bool MQTTService::publishAvailability(bool online) {

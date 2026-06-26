@@ -4,6 +4,7 @@
 #include "event_bus.h"
 #include "event_types.h"
 #include "debug.h"
+#include "i18n.h"
 
 // 静态实例指针，供事件回调使用
 static ConfigManager* s_configManagerInstance = nullptr;
@@ -85,6 +86,9 @@ bool ConfigManager::loadConfiguration(bool forceReset) {
         
         // 保存默认配置到 Flash
         writeToFlash();
+        
+        // 加载语言设置（独立于主配置）
+        I18n::loadLanguage();
         return true;
     }
     
@@ -96,6 +100,9 @@ bool ConfigManager::loadConfiguration(bool forceReset) {
     
     // 设置为正常运行模式
     m_isConfigModeRequired = false;
+    
+    // 加载语言设置（独立于主配置）
+    I18n::loadLanguage();
     return false;
 }
 

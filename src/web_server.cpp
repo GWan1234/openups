@@ -5,6 +5,7 @@
 #include "system_management.h"
 #include "event_bus.h"
 #include "event_types.h"
+#include "i18n.h"
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Update.h>
@@ -153,6 +154,42 @@ void WebServer::setupHttpRoutes() {
       String* body = (String*)request->_tempObject;
       for (size_t i = 0; i < len; i++) {
         body->concat((char)data[i]);
+      }
+    }
+  );
+
+  // Language switch API
+  server.on("/api/set-lang", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},
+    NULL,
+    [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+      if (!request->_tempObject) {
+        request->_tempObject = new String("");
+      }
+      String* body = (String*)request->_tempObject;
+      for (size_t i = 0; i < len; i++) {
+        body->concat((char)data[i]);
+      }
+      if (index + len == total) {
+        StaticJsonDocument<128> doc;
+        if (!deserializeJson(doc, *body)) {
+          const char* lang = doc["lang"];
+          if (lang && strcmp(lang, "en") == 0) {
+            I18n::setLanguage(LANG_EN);
+          } else {
+            I18n::setLanguage(LANG_ZH);
+          }
+          StaticJsonDocument<128> resp;
+          resp["success"] = true;
+          resp["lang"] = I18n::getLangCode();
+          char buf[256];
+          serializeJson(resp, buf);
+          request->send(200, "application/json", buf);
+        } else {
+          request->send(400, "application/json", "{\"success\":false}");
+        }
+        delete (String*)request->_tempObject;
+        request->_tempObject = nullptr;
       }
     }
   );
@@ -836,7 +873,7 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   // System config
   REPLACE("%WIFI_SSID%", sysConfig->wifi_ssid);
   REPLACE("%WIFI_PASS%", sysConfig->wifi_pass[0] ? sysConfig->wifi_pass : "");
-  REPLACE("%BUZZER_STATUS%", sysConfig->buzzer_enabled ? "已启用" : "已禁用");
+  REPLACE("%BUZZER_STATUS%", sysConfig->buzzer_enabled ? I18n::get(STR_ENABLED) : I18n::get(STR_DISABLED));
   REPLACE("%BUZZER_CHECKED%", sysConfig->buzzer_enabled ? "checked" : "");
   REPLACE_FMT("%VOLUME_VALUE%", "%d", sysConfig->buzzer_volume);
   REPLACE_FMT("%VOLUME_LEVEL%", "%d%%", sysConfig->buzzer_volume);
@@ -936,8 +973,11 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   #undef REPLACE_FMT
   #undef REPLACE_CHK
 
-  // 注入配置模式标记到 </head> 后（确保在 JS 执行前定义）
-  const char* configModeScript = isConfigMode ? "<script>window.CONFIG_MODE=1;</script>" : "<script>window.CONFIG_MODE=0;</script>";
+  // 注入配置模式标记和当前语言到 </head> 后（确保在 JS 执行前定义）
+  char configModeScript[128];
+  snprintf(configModeScript, sizeof(configModeScript),
+    "<script>window.CONFIG_MODE=%d;window.CURLANG='%s';</script>",
+    isConfigMode ? 1 : 0, I18n::getLangCode());
   char* headEndPos = strstr(tempBuffer, "</head>");
   if (headEndPos) {
     size_t headPos = headEndPos - tempBuffer + strlen("</head>");
@@ -1361,6 +1401,18 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     }
   }
   
+  // ========== 处理语言配置 ==========
+  if (doc.containsKey("lang")) {
+    const char* lang = doc["lang"];
+    if (lang && strcmp(lang, "en") == 0) {
+      I18n::setLanguage(LANG_EN);
+    } else {
+      I18n::setLanguage(LANG_ZH);
+    }
+    DBG.printf_P(PSTR("[Config] Language set to: %s\n"), I18n::getLangCode());
+  }
+  // =================================
+
   DBG.println(success ? F("All configs updated successfully") : F("Some config updates failed"));
   return success;
 }
