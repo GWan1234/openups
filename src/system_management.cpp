@@ -1489,8 +1489,10 @@ void SystemManagement::scAnalysisTask(void* param) {
         DBG.printf_P(PSTR("SC: done, stack min free=%u bytes\n"),
                      (unsigned)stack_hwm * sizeof(StackType_t));
 
-        // 每 24 小时执行一次
-        vTaskDelay(pdMS_TO_TICKS(86400000));
+        // 每 24 小时执行一次（分段延时，避免 86400000 溢出 TickType_t）
+        for (int i = 0; i < 24; i++) {
+            vTaskDelay(pdMS_TO_TICKS(3600000));
+        }
     }
 }
 
@@ -1511,10 +1513,6 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
     if (result.valid) {
         bms->updateSelfConsumption(result.self_consumption_mA, result.segment_count,
                                    result.total_segments, now, now);
-
-        DBG.printf_P(PSTR("SC: %.1fmA (%.0fmAh/天) %d/%d天\n"),
-                     result.self_consumption_mA, result.self_consumption_mA * 24.0f,
-                     result.segment_count, result.total_segments);
     }
 }
 

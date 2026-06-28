@@ -62,7 +62,6 @@ void SHTC3::update() {
                     last_read_ = now;
                     break;
                 }
-                DBG.println(F("SHTC3: measuring..."));
                 measure_start_ = now;
                 state_ = SHTC3_MEASURING;
             }
@@ -75,7 +74,6 @@ void SHTC3::update() {
                 if (readData(t, h)) {
                     temperature_ = t;
                     humidity_ = h;
-                    DBG.printf("SHTC3: T=%.1f H=%.1f\n", t, h);
                 }
                 sendCommand(SHTC3_CMD_SLEEP);
                 last_read_ = now;

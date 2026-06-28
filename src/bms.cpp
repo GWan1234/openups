@@ -683,9 +683,6 @@ void BMS::flushRawBuffer() {
 
     if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
 
-    DBG.printf_P(PSTR("BMS: Flushed %d samples (%d bytes) to %s\n"),
-                 raw_buffer_idx_, bytes, filename);
-
     raw_buffer_idx_ = 0;
 
     // 清理超过 7 天的旧文件
@@ -708,9 +705,6 @@ void BMS::flushBurstBuffer() {
     file.close();
 
     if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
-
-    DBG.printf_P(PSTR("BMS: Flushed %d burst samples (%d bytes)\n"),
-                 burst_buffer_idx_, bytes);
 
     burst_buffer_idx_ = 0;
 }

@@ -295,6 +295,12 @@ void setup() {
     DBG.println(F("SPIFFS: Mounted OK"));
   }
 
+  // 初始化日志系统（DEBUG_MODE=1时生效）
+  #if DEBUG_MODE
+  DebugLogger::getInstance().begin(SPIFFS, DEFAULT_LOG_MODE);
+  DBG.println(F("DebugLogger: Initialized"));
+  #endif
+
   g_force_factory_reset = checkFactoryReset();
   g_is_new_board = detectBoardRevision();
 

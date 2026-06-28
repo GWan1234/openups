@@ -76,6 +76,12 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="row"><span class="lb" data-i18n="lblShtHumid">SHTC3湿度</span><span class="vl" id="shtH">-- %</span></div>
 </div>
 </div>
+<div class="card" style="margin-top:16px">
+<div class="card-t" data-i18n="cardLogFiles">日志文件</div>
+<p style="color:#888;font-size:12px;margin:4px 0 10px" data-i18n="logFilesDesc">系统日志文件，保存在 SPIFFS 分区 /log/ 目录下，保留 7 天</p>
+<button type="button" class="btn" style="margin-bottom:10px;font-size:12px;padding:4px 12px" onclick="loadLogFiles()" data-i18n="btnRefreshLog">刷新日志文件列表</button>
+<div id="logFileList" style="font-size:13px;color:#666" data-i18n="btnClickLoad">点击上方按钮加载</div>
+</div>
 </div>
 
 <!-- ===== 面板：BMS 状态 (含 BQ76920 寄存器) ===== -->
@@ -120,9 +126,11 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="card" style="margin-top:16px">
 <div class="card-t" data-i18n="cardRawFiles">原始采样数据文件</div>
 <p style="color:#888;font-size:12px;margin:4px 0 10px" data-i18n="rawFilesDesc">每分钟采集一次，保存在 SPIFFS 分区 /raw/ 目录下，保留 30 天</p>
-<button type="button" class="btn" style="margin-bottom:10px;font-size:12px;padding:4px 12px" onclick="loadRawFiles()" data-i18n="btnRefresh">刷新文件列表</button>
+<button type="button" class="btn" style="margin-bottom:10px;font-size:12px;padding:4px 12px" onclick="loadRawFiles()" data-i18n="btnRefreshRaw">刷新采样文件列表</button>
 <div id="rawFileList" style="font-size:13px;color:#666" data-i18n="btnClickLoad">点击上方按钮加载</div>
 </div>
+
+
 </div>
 
 <!-- ===== 面板：电源状态 (含 BQ24780S 寄存器) ===== -->

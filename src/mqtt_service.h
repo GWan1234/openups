@@ -38,6 +38,9 @@ public:
     // 断开连接
     void disconnect();
 
+    // 强制重连（清空队列 + 强制关闭 TCP，清除幽灵连接状态）
+    void forceReconnect();
+
     // 发布 Discovery 配置
     bool publishDiscoveryConfig();
 

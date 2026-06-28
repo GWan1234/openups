@@ -67,6 +67,14 @@ public:
     void handleRawFileList(AsyncWebServerRequest* request);
     void handleRawFileDownload(AsyncWebServerRequest* request);
 
+    // Log file handlers
+    void handleLogFileList(AsyncWebServerRequest* request);
+    void handleLogFileDownload(AsyncWebServerRequest* request);
+
+    // Generic file handlers
+    void handleFileList(AsyncWebServerRequest* request, const char* dirPath);
+    void handleFileDownload(AsyncWebServerRequest* request, const char* allowedDir);
+
     // ADC Calibration API handlers
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);

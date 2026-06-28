@@ -8,7 +8,7 @@
 #include "debug.h"
 #include "i18n.h"
 
-#define MQTT_PUBACK_TIMEOUT_MS  120000UL  // 2 分钟无 PUBACK 判定为幽灵连接
+#define MQTT_PUBACK_TIMEOUT_MS  90000UL   // 90秒无 PUBACK 判定为幽灵连接（每10s发一次QoS1，90s≈9次未确认）
 
 // =============================================================================
 // 静态成员初始化
@@ -119,21 +119,18 @@ void MQTTService::loop(System_Global_State& state) {
 
     unsigned long now = millis();
 
-    // 僵尸连接检测（三层防线）：
-    // 1. AsyncMqttClient 内部 TCP 层已感知断开 → m_mqtt_client->connected() 返回 false
-    // 2. 库层明确拒绝 publish → m_consecutive_failures 累加
-    // 3. PUBACK 超时 → 状态发布使用 QoS 1，服务器收到后回 PUBACK。
-    //    正常情况下 PUBACK 在毫秒级到达。如果超过 2 分钟没收到任何 PUBACK（同时我们每 10s 发一次），
-    //    说明连接已死（幽灵连接），库的 keepalive 机制也未检测到，强制断开重连。
+    // 幽灵连接检测（核心防线：PUBACK 超时）
+    // AsyncMqttClient 的 connected() 只返回内部布尔值，幽灵连接时仍为 true。
+    // publish() 在 TCP 半开状态下也可能返回非零 packetId（数据进了内核缓冲区但永远到不了对端）。
+    // 唯一可靠信号：QoS1 发布后服务器必须回 PUBACK，正常 <1s 到达。
+    // 我们每 10s 发一次 QoS1 状态数据，若 90s 内无任何 PUBACK → 连接已死。
+    // 注：onPublish 仅对 QoS1 PUBACK 触发，不受 QoS0 消息干扰。
 
-    bool tcp_disconnected = !m_mqtt_client->connected();
-    bool failure_detected = (m_consecutive_failures >= 5);
     bool puback_timeout = (m_last_puback > 0) && (now - m_last_puback >= MQTT_PUBACK_TIMEOUT_MS);
-    if (tcp_disconnected || failure_detected || puback_timeout) {
-        DBG.printf("[MQTT] Zombie connection detected: tcp=%s, failures=%u, puback_idle=%lus, forcing disconnect\n",
-                   tcp_disconnected ? "dead" : "ok", m_consecutive_failures,
-                   m_last_puback > 0 ? (now - m_last_puback) / 1000 : 0);
-        disconnect();
+    if (puback_timeout) {
+        DBG.printf("[MQTT] Ghost connection: no PUBACK for %lus, destroying client\n",
+                   (now - m_last_puback) / 1000);
+        forceReconnect();
         return;
     }
 
@@ -158,9 +155,10 @@ bool MQTTService::connect() {
         return false;
     }
 
-    // 先断开旧连接/清理残留状态，避免 AsyncMqttClient 内部状态混乱
+    // 先断开旧连接/清理残留状态
     if (m_mqtt_client) {
-        m_mqtt_client->disconnect();
+        m_mqtt_client->clearQueue();
+        m_mqtt_client->disconnect(true);  // force=true 强制关闭底层 TCP
     }
     m_connected = false;
     m_consecutive_failures = 0;
@@ -195,6 +193,21 @@ void MQTTService::disconnect() {
     }
     m_connected = false;
     m_consecutive_failures = 0;
+}
+
+void MQTTService::forceReconnect() {
+    DBG.println(F("[MQTT] Force reconnect: clearing stale state"));
+    if (m_connected) {
+        publishAvailability(false);
+    }
+    m_connected = false;
+    m_consecutive_failures = 0;
+    m_connected_since = 0;
+    if (m_mqtt_client) {
+        m_mqtt_client->clearQueue();
+        m_mqtt_client->disconnect(true);  // force=true 强制关闭底层 TCP
+    }
+    m_last_reconnect_attempt = millis() - 5000;  // 立即触发重连
 }
 
 // =============================================================================

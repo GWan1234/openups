@@ -28,8 +28,8 @@ powerModes:["AC","电池","混合","充电"],powerUnknown:"未知",
 cardVoltageCurrent:"🔌 电压 & 电流",cardProtection:"🛡️ 保护 & 均衡",cardSelfConsumption:"📈 系统自消耗（实验性功能）",
 lblTotalVoltage:"总电压",lblFaultType:"故障类型",lblBmsMode:"BMS 模式",lblScCurrent:"消耗电流",lblLastUpdate:"最后更新",
 cardCellDetail:"📊 单体电压详情",lblMax:"最高",lblMin:"最低",lblAvg:"平均",lblIrSample:"内阻采样（实验性功能）",
-cardBq76920Regs:"📋 BQ76920 寄存器状态",cardRawFiles:"📁 原始采样数据文件",
-rawFilesDesc:"每分钟采集一次，保存在 SPIFFS 分区 /raw/ 目录下，保留 30 天",btnRefresh:"刷新文件列表",btnClickLoad:"点击上方按钮加载",
+cardBq76920Regs:"📋 BQ76920 寄存器状态",cardRawFiles:"📁 原始采样数据文件",cardLogFiles:"📁 日志文件",
+rawFilesDesc:"每分钟采集一次，保存在 SPIFFS 分区 /raw/ 目录下，保留 30 天",logFilesDesc:"系统日志文件，保存在 SPIFFS 分区 /log/ 目录下，保留 7 天",btnRefreshRaw:"刷新采样文件列表",btnRefreshLog:"刷新日志文件列表",btnClickLoad:"点击上方按钮加载",
 scCollecting:"采集中",scNotCalculated:"未计算",scPerDay:"mAh/天)",
 cardInputPower:"🔌 输入电源",cardBatteryMon:"🔋 电池监测",cardChargeCtrl:"⚡ 充电控制",cardChipStatus:"💻 芯片状态",
 lblAcStatus:"AC 状态",lblInputPower:"输入功率",lblChargeEnable:"充电使能",lblHybrid:"混合模式",
@@ -101,8 +101,8 @@ powerModes:["AC","Battery","Hybrid","Charging"],powerUnknown:"Unknown",
 cardVoltageCurrent:"🔌 Voltage & Current",cardProtection:"🛡️ Protection & Balancing",cardSelfConsumption:"📈 Self-Consumption (Experimental)",
 lblTotalVoltage:"Total Voltage",lblFaultType:"Fault Type",lblBmsMode:"BMS Mode",lblScCurrent:"Consumption",lblLastUpdate:"Last Update",
 cardCellDetail:"📊 Cell Voltage Details",lblMax:"Max",lblMin:"Min",lblAvg:"Avg",lblIrSample:"IR Sample (Exp.)",
-cardBq76920Regs:"📋 BQ76920 Registers",cardRawFiles:"📁 Raw Sample Files",
-rawFilesDesc:"Collected every minute, stored in SPIFFS /raw/, retained for 30 days",btnRefresh:"Refresh",btnClickLoad:"Click above to load",
+cardBq76920Regs:"📋 BQ76920 Registers",cardRawFiles:"📁 Raw Sample Files",cardLogFiles:"📁 Log Files",
+rawFilesDesc:"Collected every minute, stored in SPIFFS /raw/, retained for 30 days",logFilesDesc:"System log files, stored in SPIFFS /log/, retained for 7 days",btnRefreshRaw:"Refresh Raw Files",btnRefreshLog:"Refresh Log Files",btnClickLoad:"Click above to load",
 scCollecting:"Collecting",scNotCalculated:"Not calculated",scPerDay:"mAh/day)",
 cardInputPower:"🔌 Input Power",cardBatteryMon:"🔋 Battery Monitor",cardChargeCtrl:"⚡ Charge Control",cardChipStatus:"💻 Chip Status",
 lblAcStatus:"AC Status",lblInputPower:"Input Power",lblChargeEnable:"Charge Enable",lblHybrid:"Hybrid Mode",
@@ -465,6 +465,27 @@ h+='</div>';
 h+='</div>';
 $('rawFileList').innerHTML=h;
 }).catch(function(){$('rawFileList').innerHTML='<span style="color:#f5222d">'+L.jsLoadFailed+'</span>'});
+}
+
+// === 日志文件 ===
+function loadLogFiles(){
+$('logFileList').innerHTML='<span style="color:#1677ff">'+L.jsLoading+'</span>';
+fetch('/api/log-files').then(function(r){return r.json()}).then(function(d){
+if(!d.success||!d.files||d.files.length===0){$('logFileList').innerHTML='<span style="color:#bbb">'+L.jsNoData+'</span>';return}
+var h='<div style="max-height:250px;overflow-y:auto">';
+for(var i=0;i<d.files.length;i++){
+var f=d.files[i];
+var sz=f.size>=1024?(f.size/1024).toFixed(1)+' KB':f.size+' B';
+var dlUrl='/api/log-file?name='+encodeURIComponent(f.name);
+var baseName=f.name.split('/').pop();
+h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px solid #f0f0f0">';
+h+='<a href="'+dlUrl+'" download="'+baseName+'" style="color:#1677ff;text-decoration:none">'+f.name+'</a>';
+h+='<span style="color:#999;font-size:12px">'+sz+'</span>';
+h+='</div>';
+}
+h+='</div>';
+$('logFileList').innerHTML=h;
+}).catch(function(){$('logFileList').innerHTML='<span style="color:#f5222d">'+L.jsLoadFailed+'</span>'});
 }
 
 conn();

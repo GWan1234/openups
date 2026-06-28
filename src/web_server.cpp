@@ -136,6 +136,16 @@ void WebServer::setupHttpRoutes() {
     this->handleRawFileDownload(request);
   });
 
+  // Log file list API
+  server.on("/api/log-files", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    this->handleLogFileList(request);
+  });
+
+  // Log file download API
+  server.on("/api/log-file", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    this->handleLogFileDownload(request);
+  });
+
   // ADC Calibration API - GET
   server.on("/api/calibration", HTTP_GET, [this](AsyncWebServerRequest* request) {
     this->handleCalibrationGet(request);
@@ -760,7 +770,6 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
 // =============================================================================
 
 void WebServer::handleRoot(AsyncWebServerRequest* request) {
-  DBG.println(F("WebServer: Serving SPA page"));
   renderSPA(request);
 }
 
@@ -1008,11 +1017,6 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   request->send(200, "text/html", tempBuffer);
   delete[] buffer;
   delete[] tempBuffer;
-  
-  DBG.printf_P(PSTR("SPA page: SSID=%s, Buzzer=%s, Vol=%d, Bright=%d, Windows=%d\n"),
-                  sysConfig->wifi_ssid, sysConfig->buzzer_enabled ? "ON" : "OFF",
-                  sysConfig->buzzer_volume, sysConfig->led_brightness,
-                  powerConfig->charging_window_count);
 }
 
 // =============================================================================
@@ -1531,15 +1535,15 @@ void WebServer::handleRestart(AsyncWebServerRequest* request) {
 }
 
 // =============================================================================
-// Raw Data File Handlers
+// Generic File Handlers
 // =============================================================================
 
 extern SemaphoreHandle_t g_spiffs_mutex;
 
-void WebServer::handleRawFileList(AsyncWebServerRequest* request) {
+void WebServer::handleFileList(AsyncWebServerRequest* request, const char* dirPath) {
   if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
 
-  File root = SPIFFS.open("/raw");
+  File root = SPIFFS.open(dirPath);
   if (!root || !root.isDirectory()) {
     if (root) root.close();
     if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
@@ -1551,18 +1555,19 @@ void WebServer::handleRawFileList(AsyncWebServerRequest* request) {
   doc["success"] = true;
   JsonArray files = doc.createNestedArray("files");
 
+  size_t dirPathLen = strlen(dirPath);
   File f = root.openNextFile();
   int idx = 0;
   while (f && idx < 50) {
     const char* name = f.name();
     // 跳过目录自身
-    if (strcmp(name, "/raw") != 0) {
+    if (strcmp(name, dirPath) != 0) {
       JsonObject obj = files.createNestedObject();
-      // 兼容不同 ESP32 核心版本：确保文件名带 /raw/ 前缀
-      if (strncmp(name, "/raw/", 5) == 0) {
+      // 兼容不同 ESP32 核心版本：确保文件名带目录前缀
+      if (strncmp(name, dirPath, dirPathLen) == 0 && name[dirPathLen] == '/') {
         obj["name"] = name;
       } else {
-        obj["name"] = String("/raw/") + name;
+        obj["name"] = String(dirPath) + "/" + name;
       }
       obj["size"] = f.size();
       idx++;
@@ -1579,7 +1584,7 @@ void WebServer::handleRawFileList(AsyncWebServerRequest* request) {
   request->send(200, "application/json", response);
 }
 
-void WebServer::handleRawFileDownload(AsyncWebServerRequest* request) {
+void WebServer::handleFileDownload(AsyncWebServerRequest* request, const char* allowedDir) {
   if (!request->hasParam("name")) {
     sendErrorResponse(request, "Missing 'name' parameter", 400);
     return;
@@ -1587,8 +1592,8 @@ void WebServer::handleRawFileDownload(AsyncWebServerRequest* request) {
 
   String filename = request->getParam("name")->value();
 
-  // 安全校验：只允许 /raw/ 目录下的文件
-  if (filename.indexOf("..") >= 0 || filename.indexOf("/raw/") != 0) {
+  // 安全校验：只允许指定目录下的文件
+  if (filename.indexOf("..") >= 0 || filename.indexOf(allowedDir) != 0) {
     sendErrorResponse(request, "Invalid filename", 403);
     return;
   }
@@ -1627,6 +1632,30 @@ void WebServer::handleRawFileDownload(AsyncWebServerRequest* request) {
   if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
 
   request->send(response);
+}
+
+// =============================================================================
+// Raw Data File Handlers
+// =============================================================================
+
+void WebServer::handleRawFileList(AsyncWebServerRequest* request) {
+  handleFileList(request, "/raw");
+}
+
+void WebServer::handleRawFileDownload(AsyncWebServerRequest* request) {
+  handleFileDownload(request, "/raw/");
+}
+
+// =============================================================================
+// Log File Handlers
+// =============================================================================
+
+void WebServer::handleLogFileList(AsyncWebServerRequest* request) {
+  handleFileList(request, "/log");
+}
+
+void WebServer::handleLogFileDownload(AsyncWebServerRequest* request) {
+  handleFileDownload(request, "/log/");
 }
 
 // =============================================================================
