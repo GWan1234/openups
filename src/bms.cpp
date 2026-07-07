@@ -7,6 +7,55 @@
 #include "time_utils.h"
 #include "debug.h"
 
+// OCV-SOC lookup table (NCM, 密集采样)
+// 基于实际NCM电池放电曲线，中段(20-80%)每3-5%一个点，底部加密
+static const uint16_t OCV_SOC_TABLE[][2] = {
+    //  mV     SOC%
+    {4200, 100},
+    {4185,  98},
+    {4170,  97},
+    {4150,  96},
+    {4125,  93},
+    {4100,  91},
+    {4075,  89},
+    {4050,  87},
+    {4025,  84},
+    {4000,  82},
+    {3975,  79},
+    {3950,  78},
+    {3925,  75},
+    {3900,  73},
+    {3875,  70},
+    {3850,  68},
+    {3830,  65},
+    {3810,  63},
+    {3795,  60},
+    {3780,  58},
+    {3765,  55},
+    {3750,  52},
+    {3735,  49},
+    {3720,  47},
+    {3705,  44},
+    {3690,  41},
+    {3675,  38},
+    {3660,  35},
+    {3645,  31},
+    {3630,  28},
+    {3610,  24},
+    {3590,  21},
+    {3565,  18},
+    {3540,  15},
+    {3510,  12},
+    {3480,  10},
+    {3415,   7},
+    {3350,   5},
+    {3250,   3},
+    {3150,   2},
+    {3060,   1},
+    {3000,   0}
+};
+static const int OCV_TABLE_SIZE = sizeof(OCV_SOC_TABLE) / sizeof(OCV_SOC_TABLE[0]);
+
 // 定义并初始化静态指针
 BMS* BMS::instancePtr = nullptr;
 
@@ -341,18 +390,35 @@ void BMS::handleCommunicationLoss(BMS_State& bmsState) {
     }
 }
 
+// 均衡迟滞量：启动阈值 >= 10mV 时取 2mV，否则取 1mV；
+// 并保证 停止阈值 = 启动阈值 - 迟滞量 恒大于 1mV。
+// 目的：ADC 采集存在 1-2mV 波动，若启动/停止用同一阈值，压差在阈值附近
+// 会造成隔几小时反复触发均衡的震荡
+static uint16_t balancingHysteresis_mV(uint16_t start_threshold_mV) {
+    uint16_t h = (start_threshold_mV >= 10) ? 2 : 1;
+    if (start_threshold_mV < h + 2) {
+        h = (start_threshold_mV > 2) ? (start_threshold_mV - 2) : 0;
+    }
+    return h;
+}
+
 bool BMS::startBalancing(BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) return false;
-    
+
     bool valid_data = (bmsState.cell_voltage_max > 2500 && bmsState.cell_voltage_max < 4500 &&
                        bmsState.cell_voltage_min > 2500 && bmsState.cell_voltage_min < 4500);
     if (!valid_data) return false;
 
     uint8_t balance_mask = 0;
     const uint16_t* cell_voltages = bmsState.cell_voltages;
-    uint16_t threshold_voltage = bmsState.cell_voltage_min + config_.balancing_voltage_diff;
+    uint16_t start_threshold = bmsState.cell_voltage_min + (uint16_t)config_.balancing_voltage_diff;
+    // 已在均衡中的电芯用更低的停止阈值判定，避免单节电芯因采样波动
+    // 在 mask 中反复进出（同时避免重复累加均衡计数）
+    uint16_t stop_threshold = start_threshold - balancingHysteresis_mV((uint16_t)config_.balancing_voltage_diff);
 
     for (uint8_t i = 0; i < config_.cell_count; i++) {
+        bool already_balancing = bmsState.balance_mask & (1 << i);
+        uint16_t threshold_voltage = already_balancing ? stop_threshold : start_threshold;
         bool should_balance = (cell_voltages[i] > threshold_voltage);
         if (should_balance && i > 0 && (balance_mask & (1 << (i - 1)))) {
             should_balance = false;
@@ -468,10 +534,23 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
         return;
     }
 
+    // 启动/停止迟滞：启动条件 压差 >= 设定值；停止条件 压差 < 设定值 - 迟滞量。
+    // 消除压差在设定值附近因 1-2mV 采样波动导致的反复启停震荡
     uint16_t voltage_diff = bmsState.cell_voltage_max - bmsState.cell_voltage_min;
-    if (voltage_diff < config_.balancing_voltage_diff) {
-        stopBalancing(bmsState);
-        return;
+    uint16_t start_diff = (uint16_t)config_.balancing_voltage_diff;
+    uint16_t stop_diff = start_diff - balancingHysteresis_mV(start_diff);
+
+    if (bmsState.balancing_active) {
+        // 均衡中：压差降到停止阈值以下才停
+        if (voltage_diff < stop_diff) {
+            stopBalancing(bmsState);
+            return;
+        }
+    } else {
+        // 未均衡：压差达到设定值才启动
+        if (voltage_diff < start_diff) {
+            return;
+        }
     }
 
     // 根据压差动态计算最低启动SOC阈值
@@ -1258,12 +1337,13 @@ void BMS::updateQuiescentState(const BMS_State& bmsState) {
 void BMS::checkCriticalFaults(BMS_State& bmsState) {
     BMS_Fault_t current_fault = BMS_FAULT_NONE;
     
-    float max_v = 0, min_v = 10;
+    // cell_voltages[] 单位为 mV，有效范围与 calculateSOC_Voltage 一致 (2500-4500mV)
+    uint16_t max_v = 0, min_v = UINT16_MAX;
     bool voltage_valid = false;
-    
+
     for (int i = 0; i < config_.cell_count && i < 5; i++) {
-        float v = bmsState.cell_voltages[i];
-        if (v > 0.5f && v < 5.0f) {
+        uint16_t v = bmsState.cell_voltages[i];
+        if (v >= 2500 && v <= 4500) {
             voltage_valid = true;
             if (v > max_v) max_v = v;
             if (v < min_v) min_v = v;
@@ -1590,7 +1670,7 @@ bool BMS::loadFromStorage() {
 }
 
 bool BMS::validateConfig(const BMS_Config_t& config) {
-    if (config.cell_count < 1 || config.cell_count > 5) return false;
+    if (config.cell_count < 3 || config.cell_count > 5) return false;  // 硬件仅支持3-5串，与ConfigManager保持一致
     if (config.nominal_capacity_mAh == 0) return false;
     if (config.cell_ov_threshold <= config.cell_uv_threshold) return false;
     return true;

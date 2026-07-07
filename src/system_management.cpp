@@ -76,6 +76,8 @@ SystemManagement::SystemManagement(
     , regMismatchCountBQ76920(0)
     , bq24780sRegWarning(false)
     , bq76920RegWarning(false)
+    , cachedCriticalCondition_(false)
+    , cachedWarningCondition_(false)
     , emergency_discharge_disabled_(false)
     , discharge_buzzer_active_(false)
     , sc_analysis_task_handle_(nullptr)
@@ -298,7 +300,7 @@ void SystemManagement::collectData() {
     // 更新电源模式（带防抖）
     updatePowerMode();
 
-    // 寄存器一致性检查，每 5 秒执行一次
+    // 寄存器一致性检查，每 60 秒执行一次
     if (current_time - lastRegisterCheckTime >= 60000) {
         lastRegisterCheckTime = current_time;
         checkBQ24780sRegisters();
@@ -311,23 +313,17 @@ void SystemManagement::collectData() {
 // =============================================================================
 
 SystemManagement::SystemState SystemManagement::decideNextState() {
-    // =========================================
-    // 优先级 1: CRITICAL 条件检测（模块掉线/不存在）
-    // =========================================
-    if (checkCriticalConditions()) {
+    // 缓存条件检查结果，供 handleState* 复用
+    cachedCriticalCondition_ = checkCriticalConditions();
+    if (cachedCriticalCondition_) {
         return SYS_STATE_CRITICAL;
     }
-    
-    // =========================================
-    // 优先级 2: WARNING 条件检测（模块在线但存在故障）
-    // =========================================
-    if (checkWarningConditions()) {
+
+    cachedWarningCondition_ = checkWarningConditions();
+    if (cachedWarningCondition_) {
         return SYS_STATE_WARNING;
     }
-    
-    // =========================================
-    // 默认正常状态
-    // =========================================
+
     return SYS_STATE_NORMAL;
 }
 
@@ -554,19 +550,19 @@ void SystemManagement::handleStateInit() {
  */
 void SystemManagement::handleStateNormal() {
     // 优先检测 CRITICAL 条件（模块掉线）
-    if (checkCriticalConditions()) {
+    if (cachedCriticalCondition_) {
         DBG.println(F("[FSM] NORMAL: CRITICAL condition detected"));
         transitionToState(SYS_STATE_CRITICAL);
         return;
     }
-    
+
     // 检测 WARNING 条件（模块在线但存在故障）
-    if (checkWarningConditions()) {
+    if (cachedWarningCondition_) {
         DBG.println(F("[FSM] NORMAL: WARNING condition detected"));
         transitionToState(SYS_STATE_WARNING);
         return;
     }
-    
+
     // 保持正常状态，执行呼吸绿灯
     applyIndicatorNormal();
 }
@@ -579,19 +575,19 @@ void SystemManagement::handleStateNormal() {
  */
 void SystemManagement::handleStateWarning() {
     // 优先检测 CRITICAL 条件（模块掉线/BMS全部错误）
-    if (checkCriticalConditions()) {
+    if (cachedCriticalCondition_) {
         DBG.println(F("[FSM] WARNING: CRITICAL condition detected, downgrading"));
         transitionToState(SYS_STATE_CRITICAL);
         return;
     }
-    
+
     // 检测故障是否恢复
-    if (!checkWarningConditions()) {
+    if (!cachedWarningCondition_) {
         DBG.println(F("[FSM] WARNING: Conditions recovered, transitioning to NORMAL"));
         transitionToState(SYS_STATE_NORMAL);
         return;
     }
-    
+
     // 保持警告状态，执行呼吸橙灯
     applyIndicatorWarning();
 }
@@ -602,13 +598,13 @@ void SystemManagement::handleStateWarning() {
  * 若保持危急，调用 applyIndicatorCritical() 执行呼吸红灯+蜂鸣器间歇响
  */
 void SystemManagement::handleStateCritical() {
-    // 检查是否满足恢复条件
-    if (!checkCriticalConditions() && !checkWarningConditions()) {
+    // 检查是否满足恢复条件（使用缓存值）
+    if (!cachedCriticalCondition_ && !cachedWarningCondition_) {
         // 条件恢复，增加计数器
         criticalRecoveryCounter_++;
-        DBG.printf_P(PSTR("[FSM] CRITICAL: Recovery counter: %d/%d\n"), 
+        DBG.printf_P(PSTR("[FSM] CRITICAL: Recovery counter: %d/%d\n"),
                        criticalRecoveryCounter_, CRITICAL_RECOVERY_COUNT);
-        
+
         // 连续 N 次检测正常，才允许恢复
         if (criticalRecoveryCounter_ >= CRITICAL_RECOVERY_COUNT) {
             DBG.println(F("[FSM] CRITICAL: Recovery confirmed, transitioning to NORMAL"));
@@ -623,7 +619,7 @@ void SystemManagement::handleStateCritical() {
             criticalRecoveryCounter_ = 0;
         }
     }
-    
+
     // 保持危急状态，执行呼吸红灯+蜂鸣器间歇响
     applyIndicatorCritical();
 }

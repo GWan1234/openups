@@ -52,7 +52,7 @@ namespace BQ24780SConst {
     // ==================== 电压设置参数 ====================
     namespace Voltage {
        constexpr float CHARGE_VOLTAGE_STEP = 16.0f;  ///< 充电电压步进值 (mV)
-       constexpr uint16_t CHARGE_VOLTAGE_MAX = 12600; ///< 最大充电电压 (mV) - 基于 11 位设置的理论值为 32752，但为了安全，手动限制为 12.6v
+       constexpr uint16_t CHARGE_VOLTAGE_MAX = 18250; ///< 最大充电电压 (mV) - 基于 11 位设置的理论值为 32752，但为了安全，手动限制为 18.250v
        constexpr uint16_t VSYS_MIN_STEP = 256;        ///< 最小系统电压步进值 (mV) - BQ24800专用
     }
     

@@ -9,5 +9,6 @@
 #include "css_templates.h"
 #include "js_templates.h"
 #include "page_templates.h"
+#include "auth_templates.h"
 
 #endif // HTML_TEMPLATES_H

@@ -455,10 +455,15 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
     DBG.println(F("[PowerMgr] Applying pending configuration..."));
     
     // 1. 检查 BQ24780S 硬件配置是否发生变化
-    bool hw_config_changed = 
+    // 注意：over_current_threshold / max_discharge_current 也会写入硬件寄存器
+    // (input_current_limit / discharge_current_max)，必须纳入变更检测，
+    // 否则单独修改这两项时硬件寄存器不会更新，直到重启才生效
+    bool hw_config_changed =
         (config_.iadp_gain_setting != pending_config_.iadp_gain_setting) ||
         (config_.idchg_gain_setting != pending_config_.idchg_gain_setting) ||
-        (config_.enable_hybrid_boost != pending_config_.enable_hybrid_boost);
+        (config_.enable_hybrid_boost != pending_config_.enable_hybrid_boost) ||
+        (config_.over_current_threshold != pending_config_.over_current_threshold) ||
+        (config_.max_discharge_current != pending_config_.max_discharge_current);
     
     if (hw_config_changed && available_) {
         DBG.println(F("[PowerMgr] BQ24780S hardware config changed, applying..."));
@@ -483,6 +488,7 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
     }
     
     // 2. 硬件配置更新成功（或无需更新），更新内部配置
+    uint16_t prev_charge_voltage_limit = config_.charge_voltage_limit;
     config_ = pending_config_;
     config_update_pending_ = false;
 
@@ -497,6 +503,15 @@ void PowerManagement::applyPendingConfig(System_Global_State& globalState) {
     
     // 3. 如果当前处于充电激活状态，并且新的限制比当前低，立即应用
     if (globalState.power.charger_enabled && available_) {
+        // 充电电压限制变更时立即重写充电电压寄存器
+        if (prev_charge_voltage_limit != config_.charge_voltage_limit) {
+            if (bq24780s_.setChargeVoltage(config_.charge_voltage_limit)) {
+                DBG.printf_P(PSTR("[PowerMgr] Charge voltage updated to %d mV while charging\n"),
+                               config_.charge_voltage_limit);
+            } else {
+                DBG.println(F("[PowerMgr] WARNING - Failed to update charge voltage"));
+            }
+        }
         if (last_charge_current_mA_ > config_.max_charge_current) {
             last_charge_current_mA_ = config_.max_charge_current;
             adaptive_charge_current_ = config_.max_charge_current;

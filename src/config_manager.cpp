@@ -10,6 +10,8 @@
 static ConfigManager* s_configManagerInstance = nullptr;
 
 ConfigManager::ConfigManager() : m_isConfigModeRequired(false) {
+    web_username_[0] = '\0';
+    web_password_[0] = '\0';
     loadDefaults();
 }
 
@@ -20,13 +22,27 @@ void ConfigManager::begin() {
 
 bool ConfigManager::loadConfiguration(bool forceReset) {
     DBG.println(F("Loading configuration from flash..."));
-    
+
+    // 加载 Web 访问凭证（独立 NVS key，与主配置结构体解耦，
+    // 旧固件升级后主配置有效但凭证为空 → Web 层强制先设置账户）
+    if (!forceReset) {
+        preferences.begin("ups_config", true);
+        size_t ulen = preferences.getBytes("web_user", web_username_, sizeof(web_username_) - 1);
+        size_t plen = preferences.getBytes("web_pass", web_password_, sizeof(web_password_) - 1);
+        preferences.end();
+        web_username_[ulen] = '\0';
+        web_password_[plen] = '\0';
+    }
+
     // 1. 优先判断：如果强制重置，直接恢复默认值并进入配置模式
+    // （硬件按键强制重置同时清除访问凭证 —— 忘记密码时的唯一恢复路径，
+    //  重置后进入配置模式，向导会强制设置新账户）
     if (forceReset) {
         DBG.println(F("Force reset requested - resetting to defaults"));
+        clearWebCredentials();
         resetToDefaults();
         m_isConfigModeRequired = true;
-        
+
         // 保存默认配置到 Flash
         writeToFlash();
         return true;
@@ -128,12 +144,17 @@ void ConfigManager::resetWiFiConfig() {
 
 void ConfigManager::resetConfiguration() {
     DBG.println(F("Resetting configuration to defaults..."));
-    
+
     // Clear flash storage
+    // preferences.clear() 同时清除 web_user/web_pass 访问凭证：
+    // 出厂重置（物理按键）是忘记密码时唯一的恢复路径，重置后进入
+    // 配置模式，向导会强制设置新账户
     preferences.begin("ups_config", false);
     preferences.clear();
     preferences.end();
-    
+    web_username_[0] = '\0';
+    web_password_[0] = '\0';
+
     // Load default values
     resetToDefaults();
     
@@ -549,6 +570,47 @@ bool ConfigManager::writeToFlash() {
     }
     
     return success;
+}
+
+// =============================================================================
+// Web 访问凭证管理（独立 NVS key 持久化）
+// =============================================================================
+
+bool ConfigManager::setWebCredentials(const char* username, const char* password) {
+    if (!username || !password) return false;
+
+    size_t ulen = strlen(username);
+    size_t plen = strlen(password);
+    if (ulen < 1 || ulen > 32) {
+        DBG.println(F("[ConfigMgr] Invalid web username length (1-32)"));
+        return false;
+    }
+    if (plen < 8 || plen > 64) {
+        DBG.println(F("[ConfigMgr] Invalid web password length (8-64)"));
+        return false;
+    }
+
+    strlcpy(web_username_, username, sizeof(web_username_));
+    strlcpy(web_password_, password, sizeof(web_password_));
+
+    preferences.begin("ups_config", false);
+    bool ok = preferences.putBytes("web_user", web_username_, ulen) == ulen &&
+              preferences.putBytes("web_pass", web_password_, plen) == plen;
+    preferences.end();
+
+    DBG.println(ok ? F("[ConfigMgr] Web credentials saved")
+                   : F("[ConfigMgr] Failed to save web credentials"));
+    return ok;
+}
+
+void ConfigManager::clearWebCredentials() {
+    web_username_[0] = '\0';
+    web_password_[0] = '\0';
+    preferences.begin("ups_config", false);
+    preferences.remove("web_user");
+    preferences.remove("web_pass");
+    preferences.end();
+    DBG.println(F("[ConfigMgr] Web credentials cleared"));
 }
 
 void ConfigManager::onConfigChangeRequest(EventType type, void* param) {

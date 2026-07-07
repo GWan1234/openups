@@ -22,17 +22,17 @@
 // OTA 结果跟踪标志 (upload handler 与 request handler 共享)
 static bool s_otaSuccess = false;
 
-static WebServer* g_webServerInstance = nullptr;
 extern bool g_is_new_board;
 
 // =============================================================================
 // Constructor and Destructor
 // =============================================================================
 
-WebServer::WebServer(ConfigManager* configMgr, SystemManagement* sysMgr, int port) 
-    : server(port), ws("/ws"), configManager(configMgr), systemManager(sysMgr) {
-  spa_html = SPA_PAGE_TEMPLATE;
-  
+WebServer::WebServer(ConfigManager* configMgr, SystemManagement* sysMgr, int port)
+    : server(port), ws("/ws"), configManager(configMgr), systemManager(sysMgr),
+      login_failures_(0), login_lockout_until_(0) {
+  memset(sessions_, 0, sizeof(sessions_));
+
   if (systemManager == nullptr) {
     DBG.println(F("WebServer: CONFIG_MODE (no systemManager)"));
   } else {
@@ -41,15 +41,65 @@ WebServer::WebServer(ConfigManager* configMgr, SystemManagement* sysMgr, int por
 }
 
 WebServer::~WebServer() {
-  if (g_webServerInstance == this) {
-    g_webServerInstance = nullptr;
-  }
   DBG.println(F("WebServer: Destructor called"));
 }
 
 // =============================================================================
 // Server Setup
 // =============================================================================
+
+// 请求体分块收集器：累积到 request->_tempObject（String*），由 handler 取走并释放
+static void collectBody(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+  if (!request->_tempObject) {
+    request->_tempObject = new String();
+    ((String*)request->_tempObject)->reserve(512);
+  }
+  String* body = (String*)request->_tempObject;
+  for (size_t i = 0; i < len; i++) {
+    body->concat((char)data[i]);
+  }
+}
+
+// 丢弃请求体（早返回时释放 _tempObject）
+static void discardBody(AsyncWebServerRequest* request) {
+  delete (String*)request->_tempObject;
+  request->_tempObject = nullptr;
+}
+
+// 取走请求体（转移所有权），无 body 返回 false
+static bool takeBody(AsyncWebServerRequest* request, String& out) {
+  if (!request->_tempObject) return false;
+  out = *(String*)request->_tempObject;
+  discardBody(request);
+  return true;
+}
+
+// 认证 + 无请求体的路由
+void WebServer::onAuth(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction handler) {
+  server.on(uri, method, [this, handler](AsyncWebServerRequest* request) {
+    if (!ensureAuthenticated(request)) return;
+    handler(request);
+  });
+}
+
+// POST + 请求体收集的路由（无认证，供登录/首次设置使用）
+void WebServer::onBody(const char* uri, ArRequestHandlerFunction handler) {
+  server.on(uri, HTTP_POST, handler, NULL,
+    [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+      collectBody(request, data, len);
+    });
+}
+
+// 认证 + POST + 请求体收集的路由
+void WebServer::onAuthBody(const char* uri, ArRequestHandlerFunction handler) {
+  onBody(uri, [this, handler](AsyncWebServerRequest* request) {
+    if (!ensureAuthenticated(request)) {
+      discardBody(request);
+      return;
+    }
+    handler(request);
+  });
+}
 
 bool WebServer::begin() {
   ws.onEvent([this](AsyncWebSocket* server, AsyncWebSocketClient* client, 
@@ -59,7 +109,6 @@ bool WebServer::begin() {
   
   server.addHandler(&ws);
   setupHttpRoutes();
-  g_webServerInstance = this;
   server.begin();
   
   DBG.println(F("Web server started on port 80"));
@@ -72,139 +121,41 @@ void WebServer::setupHttpRoutes() {
   });
 
   // /config and /update redirect to SPA root
-  auto redirectToRoot = [this](AsyncWebServerRequest* request) {
+  auto redirectToRoot = [](AsyncWebServerRequest* request) {
     request->redirect("/");
   };
   server.on("/config", HTTP_GET, redirectToRoot);
   server.on("/update", HTTP_GET, redirectToRoot);
 
-  server.on("/save", HTTP_POST, 
-    [this](AsyncWebServerRequest* request) {
-      this->handleSaveConfig(request);
-    },
-    NULL,
-    [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-      if (!request->_tempObject) {
-        request->_tempObject = new String("");
-      }
-      String* body = (String*)request->_tempObject;
-      for (size_t i = 0; i < len; i++) {
-        body->concat((char)data[i]);
-      }
-    }
-  );
-  
-  // API endpoints - conditional based on systemManager
-  const char* apiRoutes[] = {"/api/status", "/api/bms", "/api/power"};
+  // ---- 认证接口（login/setup 本身无需认证）----
+  onBody("/api/auth/login", [this](AsyncWebServerRequest* r) { handleAuthLogin(r); });
+  onBody("/api/auth/setup", [this](AsyncWebServerRequest* r) { handleAuthSetup(r); });
+  onAuthBody("/api/auth/change", [this](AsyncWebServerRequest* r) { handleAuthChange(r); });
+  server.on("/api/auth/logout", HTTP_POST, [this](AsyncWebServerRequest* r) { handleAuthLogout(r); });
+
+  // ---- 配置与控制接口（认证）----
+  onAuthBody("/save", [this](AsyncWebServerRequest* r) { handleSaveConfig(r); });
+  onAuth("/bms/shipmode", HTTP_POST, [this](AsyncWebServerRequest* r) { handleBmsShipMode(r); });
+  onAuth("/bms/reset-data", HTTP_POST, [this](AsyncWebServerRequest* r) { handleBmsResetData(r); });
+  onAuth("/api/clear-tips", HTTP_POST, [this](AsyncWebServerRequest* r) { handleClearTips(r); });
+  onAuth("/api/restart", HTTP_POST, [this](AsyncWebServerRequest* r) { handleRestart(r); });
+  onAuth("/api/calibration", HTTP_GET, [this](AsyncWebServerRequest* r) { handleCalibrationGet(r); });
+  onAuthBody("/api/calibration", [this](AsyncWebServerRequest* r) { handleCalibrationPost(r); });
+  onAuthBody("/api/set-lang", [this](AsyncWebServerRequest* r) { handleSetLang(r); });
+
+  // ---- 状态查询接口（认证）----
+  static const char* const apiRoutes[] = {"/api/status", "/api/bms", "/api/power"};
   for (const char* route : apiRoutes) {
-    server.on(route, HTTP_GET, [this, route](AsyncWebServerRequest* request) {
-      if (systemManager == nullptr) {
-        sendConfigModeResponse(request);
-        return;
-      }
-      handleApiRequest(request, route);
-    });
+    onAuth(route, HTTP_GET, [this, route](AsyncWebServerRequest* r) { handleApiRequest(r, route); });
   }
-  
-  // BMS Ship Mode endpoint
-  server.on("/bms/shipmode", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    this->handleBmsShipMode(request);
-  });
 
-  // BMS Reset Battery Data endpoint
-  server.on("/bms/reset-data", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    this->handleBmsResetData(request);
-  });
+  // ---- 文件下载接口（认证）----
+  onAuth("/api/raw-files", HTTP_GET, [this](AsyncWebServerRequest* r) { handleFileList(r, "/raw"); });
+  onAuth("/api/raw-file", HTTP_GET, [this](AsyncWebServerRequest* r) { handleFileDownload(r, "/raw/"); });
+  onAuth("/api/log-files", HTTP_GET, [this](AsyncWebServerRequest* r) { handleFileList(r, "/log"); });
+  onAuth("/api/log-file", HTTP_GET, [this](AsyncWebServerRequest* r) { handleFileDownload(r, "/log/"); });
 
-  // Clear tips endpoint
-  server.on("/api/clear-tips", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    this->handleClearTips(request);
-  });
-
-  // Restart device endpoint
-  server.on("/api/restart", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    this->handleRestart(request);
-  });
-  
-  // Raw data file list API
-  server.on("/api/raw-files", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    this->handleRawFileList(request);
-  });
-
-  // Raw data file download API
-  server.on("/api/raw-file", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    this->handleRawFileDownload(request);
-  });
-
-  // Log file list API
-  server.on("/api/log-files", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    this->handleLogFileList(request);
-  });
-
-  // Log file download API
-  server.on("/api/log-file", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    this->handleLogFileDownload(request);
-  });
-
-  // ADC Calibration API - GET
-  server.on("/api/calibration", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    this->handleCalibrationGet(request);
-  });
-  
-  // ADC Calibration API - POST
-  server.on("/api/calibration", HTTP_POST,
-    [this](AsyncWebServerRequest* request) {
-      this->handleCalibrationPost(request);
-    },
-    NULL,
-    [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-      if (!request->_tempObject) {
-        request->_tempObject = new String("");
-      }
-      String* body = (String*)request->_tempObject;
-      for (size_t i = 0; i < len; i++) {
-        body->concat((char)data[i]);
-      }
-    }
-  );
-
-  // Language switch API
-  server.on("/api/set-lang", HTTP_POST,
-    [](AsyncWebServerRequest* request) {},
-    NULL,
-    [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-      if (!request->_tempObject) {
-        request->_tempObject = new String("");
-      }
-      String* body = (String*)request->_tempObject;
-      for (size_t i = 0; i < len; i++) {
-        body->concat((char)data[i]);
-      }
-      if (index + len == total) {
-        StaticJsonDocument<128> doc;
-        if (!deserializeJson(doc, *body)) {
-          const char* lang = doc["lang"];
-          if (lang && strcmp(lang, "en") == 0) {
-            I18n::setLanguage(LANG_EN);
-          } else {
-            I18n::setLanguage(LANG_ZH);
-          }
-          StaticJsonDocument<128> resp;
-          resp["success"] = true;
-          resp["lang"] = I18n::getLangCode();
-          char buf[256];
-          serializeJson(resp, buf);
-          request->send(200, "application/json", buf);
-        } else {
-          request->send(400, "application/json", "{\"success\":false}");
-        }
-        delete (String*)request->_tempObject;
-        request->_tempObject = nullptr;
-      }
-    }
-  );
-  
-  // Prometheus metrics endpoint
+  // Prometheus metrics - 按需求豁免认证
   server.on("/metrics", HTTP_GET, [this](AsyncWebServerRequest* request) {
     if (systemManager == nullptr) {
       sendConfigModeResponse(request);
@@ -212,46 +163,66 @@ void WebServer::setupHttpRoutes() {
     }
     handleMetricsRequest(request);
   });
-  
-  // OTA firmware upload route
+
+  // OTA 固件上传（认证在 handleFirmwareUpload 内进行，须先于 flash 写入）
   server.on("/firmware", HTTP_POST,
     [this](AsyncWebServerRequest* request) {
-      // Upload complete handler — 仅根据 s_otaSuccess 判断是否真正写入成功
-      DBG.printf_P(PSTR("[OTA-REQ] s_otaSuccess=%d hasError=%d\n"), s_otaSuccess, Update.hasError());
-      if (!s_otaSuccess || Update.hasError()) {
-        StaticJsonDocument<256> doc;
-        doc["success"] = false;
-        doc["message"] = Update.hasError() ? Update.errorString() : "OTA verification or write failed";
-        String response;
-        serializeJson(doc, response);
-        request->send(500, "application/json", response);
-        DBG.println(F("OTA: 升级失败，固件未写入。"));
-      } else {
-        StaticJsonDocument<256> doc;
-        doc["success"] = true;
-        doc["message"] = "Firmware update successful. Device will reboot in 3 seconds...";
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
-
-        DBG.println(F("==========================================="));
-        DBG.println(F("OTA update successful! Rebooting in 3 seconds..."));
-        DBG.println(F("==========================================="));
-
-        static Ticker rebootTicker;
-        rebootTicker.once(3, []() {
-          DBG.println(F("Rebooting now..."));
-          ESP.restart();
-        });
-      }
+      if (!ensureAuthenticated(request)) return;
+      this->handleFirmwareResult(request);
     },
     [this](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
-      // Upload handler
       this->handleFirmwareUpload(request, filename, index, data, len, final);
     }
   );
-  
+
   DBG.println(systemManager ? F("API routes: NORMAL_MODE") : F("API routes: CONFIG_MODE (stubs)"));
+}
+
+// OTA 上传完成响应 — 仅根据 s_otaSuccess 判断是否真正写入成功
+void WebServer::handleFirmwareResult(AsyncWebServerRequest* request) {
+  DBG.printf_P(PSTR("[OTA-REQ] s_otaSuccess=%d hasError=%d\n"), s_otaSuccess, Update.hasError());
+
+  if (!s_otaSuccess || Update.hasError()) {
+    String message = Update.hasError() ? Update.errorString() : "OTA verification or write failed";
+    sendErrorResponse(request, message, 500);
+    DBG.println(F("OTA: 升级失败，固件未写入。"));
+    return;
+  }
+
+  request->send(200, "application/json",
+    "{\"success\":true,\"message\":\"Firmware update successful. Device will reboot in 3 seconds...\"}");
+
+  DBG.println(F("==========================================="));
+  DBG.println(F("OTA update successful! Rebooting in 3 seconds..."));
+  DBG.println(F("==========================================="));
+
+  static Ticker rebootTicker;
+  rebootTicker.once(3, []() {
+    DBG.println(F("Rebooting now..."));
+    ESP.restart();
+  });
+}
+
+// 语言切换（原内联在路由注册中）
+void WebServer::handleSetLang(AsyncWebServerRequest* request) {
+  String body;
+  if (!takeBody(request, body)) {
+    sendErrorResponse(request, "Missing request body", 400);
+    return;
+  }
+
+  StaticJsonDocument<128> doc;
+  if (deserializeJson(doc, body)) {
+    request->send(400, "application/json", "{\"success\":false}");
+    return;
+  }
+
+  const char* lang = doc["lang"];
+  I18n::setLanguage((lang && strcmp(lang, "en") == 0) ? LANG_EN : LANG_ZH);
+
+  char buf[96];
+  snprintf(buf, sizeof(buf), "{\"success\":true,\"lang\":\"%s\"}", I18n::getLangCode());
+  request->send(200, "application/json", buf);
 }
 
 // =============================================================================
@@ -261,7 +232,6 @@ void WebServer::setupHttpRoutes() {
 void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, 
                           AwsEventType type, void* arg, uint8_t* data, size_t len) {
   if (type == WS_EVT_CONNECT) {
-    DBG.printf("WebSocket client #%u connected\n", client->id());
     if (systemManager != nullptr) {
       notifyClients();
     } else {
@@ -274,9 +244,7 @@ void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
       serializeJson(doc, buffer);
       client->text(buffer);
     }
-  } else if (type == WS_EVT_DISCONNECT) {
-    DBG.printf("WebSocket client #%u disconnected\n", client->id());
-  } else if (type == WS_EVT_DATA) {
+  }else if (type == WS_EVT_DATA) {
     // 处理客户端消息
     String msg = "";
     for (size_t i = 0; i < len; i++) {
@@ -766,10 +734,261 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
 }
 
 // =============================================================================
+// Authentication - 登录页 + Session Token (Cookie)
+// =============================================================================
+
+// 从 Cookie 头中提取 UPSSESSION token，成功返回 true 并填充 out（33 字节）
+static bool extractSessionToken(AsyncWebServerRequest* request, char* out) {
+  if (!request->hasHeader("Cookie")) return false;
+  const String& cookies = request->header("Cookie");
+  int pos = cookies.indexOf("UPSSESSION=");
+  if (pos < 0) return false;
+  pos += 11; // strlen("UPSSESSION=")
+  int end = cookies.indexOf(';', pos);
+  if (end < 0) end = cookies.length();
+  int len = end - pos;
+  if (len != 32) return false;
+  memcpy(out, cookies.c_str() + pos, 32);
+  out[32] = '\0';
+  return true;
+}
+
+// 生成 32 字符 hex token（128bit 硬件随机数）
+static void generateSessionToken(char* out) {
+  static const char hex[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i += 8) {
+    uint32_t r = esp_random();
+    for (int j = 0; j < 8; j++) {
+      out[i + j] = hex[r & 0xF];
+      r >>= 4;
+    }
+  }
+  out[32] = '\0';
+}
+
+const char* WebServer::createSession() {
+  // 找空位；无空位时淘汰最久未活动的会话
+  unsigned long now = millis();
+  int slot = -1;
+  unsigned long oldest = 0;
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (!sessions_[i].valid) { slot = i; break; }
+    unsigned long idle = now - sessions_[i].last_seen;
+    if (idle >= oldest) { oldest = idle; slot = i; }
+  }
+  generateSessionToken(sessions_[slot].token);
+  sessions_[slot].last_seen = now;
+  sessions_[slot].valid = true;
+  return sessions_[slot].token;
+}
+
+bool WebServer::checkSessionCookie(AsyncWebServerRequest* request) {
+  char token[33];
+  if (!extractSessionToken(request, token)) return false;
+
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (!sessions_[i].valid) continue;
+    // 过期清理（滑动 TTL）
+    if (now - sessions_[i].last_seen > SESSION_TTL_MS) {
+      sessions_[i].valid = false;
+      continue;
+    }
+    if (strcmp(sessions_[i].token, token) == 0) {
+      sessions_[i].last_seen = now; // 活动续期
+      return true;
+    }
+  }
+  return false;
+}
+
+void WebServer::destroySessionFromRequest(AsyncWebServerRequest* request) {
+  char token[33];
+  if (!extractSessionToken(request, token)) return;
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions_[i].valid && strcmp(sessions_[i].token, token) == 0) {
+      sessions_[i].valid = false;
+      return;
+    }
+  }
+}
+
+void WebServer::invalidateAllSessions() {
+  for (int i = 0; i < MAX_SESSIONS; i++) sessions_[i].valid = false;
+}
+
+// 判定当前请求是否已认证（不发送任何响应）
+bool WebServer::isAuthenticated(AsyncWebServerRequest* request) {
+  if (!configManager->hasWebCredentials()) {
+    // 凭证未设置：配置模式放行（初始向导需可访问），正常模式拒绝
+    return systemManager == nullptr;
+  }
+  // 优先 Cookie 会话；其次 HTTP Basic Auth（方便 curl/HomeAssistant 等脚本调用）
+  if (checkSessionCookie(request)) return true;
+  if (request->authenticate(configManager->getWebUsername(), configManager->getWebPassword())) return true;
+  return false;
+}
+
+// 认证门卫：未认证时发送 401 JSON（API 场景），返回 false
+bool WebServer::ensureAuthenticated(AsyncWebServerRequest* request) {
+  if (isAuthenticated(request)) return true;
+
+  if (configManager->hasWebCredentials()) {
+    request->send(401, "application/json",
+      "{\"success\":false,\"error\":\"unauthorized\","
+      "\"message\":\"Login required. Visit / to log in.\"}");
+  } else {
+    // 正常运行模式但凭证为空（如旧固件升级）：要求先设置账户
+    request->send(403, "application/json",
+      "{\"success\":false,\"error\":\"credentials_not_set\","
+      "\"message\":\"Access account not configured. Visit / to set username and password.\"}");
+  }
+  return false;
+}
+
+bool WebServer::parseCredentials(AsyncWebServerRequest* request, String& username, String& password) {
+  String body;
+  if (!takeBody(request, body)) {
+    sendErrorResponse(request, "Missing request body", 400);
+    return false;
+  }
+
+  StaticJsonDocument<256> doc;
+  if (deserializeJson(doc, body)) {
+    sendErrorResponse(request, "Invalid JSON format", 400);
+    return false;
+  }
+
+  const char* u = doc["username"];
+  const char* p = doc["password"];
+  if (!u || !p) {
+    sendErrorResponse(request, "Missing username or password", 400);
+    return false;
+  }
+
+  username = u;
+  password = p;
+  return true;
+}
+
+void WebServer::sendJsonWithNewSession(AsyncWebServerRequest* request, const char* json) {
+  const char* token = createSession();
+  AsyncWebServerResponse* response = request->beginResponse(200, "application/json", json);
+  char cookie[96];
+  snprintf(cookie, sizeof(cookie), "UPSSESSION=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400", token);
+  response->addHeader("Set-Cookie", cookie);
+  request->send(response);
+}
+
+void WebServer::handleAuthLogin(AsyncWebServerRequest* request) {
+  // 暴力破解限制：锁定期内直接拒绝
+  unsigned long now = millis();
+  if (login_lockout_until_ != 0 && (long)(login_lockout_until_ - now) > 0) {
+    request->send(429, "application/json",
+      "{\"success\":false,\"message\":\"Too many failed attempts, try again later\"}");
+    discardBody(request);
+    return;
+  }
+
+  if (!configManager->hasWebCredentials()) {
+    sendErrorResponse(request, "Credentials not configured", 403);
+    discardBody(request);
+    return;
+  }
+
+  String username;
+  String password;
+  if (!parseCredentials(request, username, password)) return;
+
+  if (strcmp(username.c_str(), configManager->getWebUsername()) != 0 ||
+      strcmp(password.c_str(), configManager->getWebPassword()) != 0) {
+    login_failures_++;
+    if (login_failures_ >= 5) {
+      login_lockout_until_ = now + 60000UL; // 锁定 60s
+      login_failures_ = 0;
+      DBG.println(F("[WebServer] Login locked out for 60s (too many failures)"));
+    }
+    request->send(401, "application/json",
+      "{\"success\":false,\"message\":\"Invalid username or password\"}");
+    return;
+  }
+
+  // 登录成功
+  login_failures_ = 0;
+  login_lockout_until_ = 0;
+  sendJsonWithNewSession(request, "{\"success\":true,\"message\":\"Logged in\"}");
+  DBG.println(F("[WebServer] Login OK, session created"));
+}
+
+void WebServer::handleAuthLogout(AsyncWebServerRequest* request) {
+  destroySessionFromRequest(request);
+  AsyncWebServerResponse* response = request->beginResponse(200, "application/json",
+    "{\"success\":true,\"message\":\"Logged out\"}");
+  response->addHeader("Set-Cookie", "UPSSESSION=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+  request->send(response);
+}
+
+void WebServer::handleAuthSetup(AsyncWebServerRequest* request) {
+  // 仅允许在凭证未设置时调用（首次设置无需认证；已设置后必须走 /api/auth/change）
+  if (configManager->hasWebCredentials()) {
+    sendErrorResponse(request, "Credentials already configured, use /api/auth/change", 403);
+    discardBody(request);
+    return;
+  }
+
+  String username;
+  String password;
+  if (!parseCredentials(request, username, password)) return;
+
+  if (!configManager->setWebCredentials(username.c_str(), password.c_str())) {
+    sendErrorResponse(request, "Invalid credentials: username 1-32 chars, password 8-64 chars", 400);
+    return;
+  }
+
+  DBG.println(F("[WebServer] Web access credentials configured"));
+
+  // 首次设置成功后直接建立会话，免去二次登录
+  sendJsonWithNewSession(request, "{\"success\":true,\"message\":\"Credentials saved\"}");
+}
+
+void WebServer::handleAuthChange(AsyncWebServerRequest* request) {
+  // 修改凭证：认证已由 onAuthBody() 统一处理
+  String username;
+  String password;
+  if (!parseCredentials(request, username, password)) return;
+
+  if (!configManager->setWebCredentials(username.c_str(), password.c_str())) {
+    sendErrorResponse(request, "Invalid credentials: username 1-32 chars, password 8-64 chars", 400);
+    return;
+  }
+
+  // 凭证变更后吊销全部会话，所有客户端（包括本机）必须用新凭证重新登录
+  invalidateAllSessions();
+
+  DBG.println(F("[WebServer] Web access credentials changed, all sessions invalidated"));
+  AsyncWebServerResponse* response = request->beginResponse(200, "application/json",
+    "{\"success\":true,\"message\":\"Credentials updated, please re-login\"}");
+  response->addHeader("Set-Cookie", "UPSSESSION=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+  request->send(response);
+}
+
+// =============================================================================
 // Configuration Page Handlers
 // =============================================================================
 
 void WebServer::handleRoot(AsyncWebServerRequest* request) {
+  if (configManager->hasWebCredentials()) {
+    // 已设置凭证：未登录则显示登录页面
+    if (!isAuthenticated(request)) {
+      request->send_P(200, "text/html", AUTH_LOGIN_PAGE);
+      return;
+    }
+  } else if (systemManager != nullptr) {
+    // 正常模式但凭证为空（旧固件升级场景）：强制先设置账户密码
+    request->send_P(200, "text/html", AUTH_SETUP_PAGE);
+    return;
+  }
+  // 已登录，或配置模式且凭证为空（向导内强制设置凭证）
   renderSPA(request);
 }
 
@@ -1027,44 +1246,77 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
   DBG.println(F("WebServer: Handling save config request"));
   
   String jsonString;
-  if (request->_tempObject != nullptr) {
-    jsonString = *(String*)request->_tempObject;
-    delete (String*)request->_tempObject;
-    request->_tempObject = nullptr;
-  } else if (request->hasParam("plain", true)) {
-    jsonString = request->getParam("plain", true)->value();
-  } else if (request->hasArg("plain")) {
-    jsonString = request->arg("plain");
-  } else {
-    sendErrorResponse(request, "Missing request body", 400);
-    return;
+  if (!takeBody(request, jsonString)) {
+    if (request->hasParam("plain", true)) {
+      jsonString = request->getParam("plain", true)->value();
+    } else if (request->hasArg("plain")) {
+      jsonString = request->arg("plain");
+    } else {
+      sendErrorResponse(request, "Missing request body", 400);
+      return;
+    }
   }
   
-  DBG.printf_P(PSTR("Received JSON: %s\n"), jsonString.c_str());
-  
-  StaticJsonDocument<2048> doc;
+  // 2048 → 3072：请求体新增 auth 字段（配置向导首次保存携带账户密码）
+  StaticJsonDocument<3072> doc;
   DeserializationError error = deserializeJson(doc, jsonString);
-  
+
   if (error) {
     DBG.printf_P(PSTR("JSON parse error: %s\n"), error.c_str());
     sendErrorResponse(request, "Invalid JSON format", 400);
     return;
   }
-  
-  if (!updateConfigurationFromRequest(doc)) {
-    sendErrorResponse(request, "Failed to update configuration", 500);
+
+  // 判断是否在配置模式（systemManager 为 nullptr 表示配置模式）
+  bool isConfigMode = (systemManager == nullptr);
+
+  // 配置模式下必须设置访问账户密码（凭证已存在则跳过）
+  // 先做格式预检，实际写入放在配置校验通过之后，避免配置失败但凭证已生效
+  const char* authUser = nullptr;
+  const char* authPass = nullptr;
+  if (isConfigMode && !configManager->hasWebCredentials()) {
+    authUser = doc["auth"]["username"];
+    authPass = doc["auth"]["password"];
+    if (!authUser || !authPass) {
+      sendErrorResponse(request, "Access account required: provide auth.username and auth.password", 400);
+      return;
+    }
+    size_t ulen = strlen(authUser);
+    size_t plen = strlen(authPass);
+    if (ulen < 1 || ulen > 32 || plen < 8 || plen > 64) {
+      sendErrorResponse(request, "Invalid access account: username 1-32 chars, password 8-64 chars", 400);
+      return;
+    }
+  }
+
+  // 字段级校验错误收集
+  DynamicJsonDocument errorDoc(2048);
+  if (!updateConfigurationFromRequest(doc, errorDoc)) {
+    errorDoc["success"] = false;
+    if (!errorDoc.containsKey("message")) {
+      errorDoc["message"] = "Configuration validation failed";
+    }
+    String response;
+    serializeJson(errorDoc, response);
+    request->send(400, "application/json", response);
     return;
   }
-  
+
+  // 配置校验通过，保存访问凭证（如有）
+  if (authUser && authPass) {
+    if (!configManager->setWebCredentials(authUser, authPass)) {
+      sendErrorResponse(request, "Failed to save access account", 500);
+      return;
+    }
+    DBG.println(F("[WebServer] Web access credentials set via config wizard"));
+  }
+
   if (!configManager->saveConfiguration()) {
     sendErrorResponse(request, "Failed to save configuration to flash", 500);
     return;
   }
-  
+
   DBG.println(F("Configuration saved successfully"));
-  
-  // 判断是否在配置模式（systemManager 为 nullptr 表示配置模式）
-  bool isConfigMode = (systemManager == nullptr);
   
   StaticJsonDocument<256> responseDoc;
   responseDoc["success"] = true;
@@ -1126,20 +1378,26 @@ void WebServer::sendConfigModeResponse(AsyncWebServerRequest* request) {
 // Configuration Update Logic
 // =============================================================================
 
-bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
+bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocument& errorDoc) {
   DBG.println(F("Updating configuration from JSON"));
-  
-  bool success = true;
-  
+
+  // 字段级错误收集：非法字段显式报错并拒绝整个请求，不再 silent ignore
+  JsonArray errors = errorDoc.createNestedArray("errors");
+  auto addError = [&errors](const char* field, const char* message) {
+    JsonObject e = errors.createNestedObject();
+    e["field"] = field;
+    e["message"] = message;
+  };
+
   // 创建临时配置副本，避免直接修改内部配置导致变化检测失败
   Configuration tempSysConfig = *configManager->getSystemConfig();
   BMS_Config_t tempBmsConfig = *configManager->getBMSConfig();
   Power_Config_t tempPowerConfig = *configManager->getPowerConfig();
-  
+
   // Update System Configuration
   if (doc.containsKey("system")) {
     JsonVariantConst sys = doc["system"];
-    
+
     if (sys.containsKey("wifi_ssid")) {
       const char* ssid = sys["wifi_ssid"];
       if (ssid) strlcpy(tempSysConfig.wifi_ssid, ssid, sizeof(tempSysConfig.wifi_ssid));
@@ -1151,6 +1409,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     if (sys.containsKey("led_brightness")) {
       int val = sys["led_brightness"];
       if (val >= 0 && val <= 100) tempSysConfig.led_brightness = (uint8_t)val;
+      else addError("system.led_brightness", "must be 0-100");
     }
     if (sys.containsKey("buzzer_enabled")) {
       tempSysConfig.buzzer_enabled = sys["buzzer_enabled"];
@@ -1158,8 +1417,9 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     if (sys.containsKey("volume_level")) {
       int val = sys["volume_level"];
       if (val >= 0 && val <= 100) tempSysConfig.buzzer_volume = (uint8_t)val;
+      else addError("system.volume_level", "must be 0-100");
     }
-    
+
     // ========== 处理 HID 配置 ==========
     if (sys.containsKey("hid_enabled")) {
       tempSysConfig.hid_enabled = sys["hid_enabled"];
@@ -1167,6 +1427,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     if (sys.containsKey("hid_report_mode")) {
       int val = sys["hid_report_mode"];
       if (val >= 0 && val <= 2) tempSysConfig.hid_report_mode = (uint8_t)val;
+      else addError("system.hid_report_mode", "must be 0-2");
     }
     // ================================
 
@@ -1180,8 +1441,9 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
           if (broker) strlcpy(tempSysConfig.mqtt_broker, broker, sizeof(tempSysConfig.mqtt_broker));
         }
         if (sys.containsKey("mqtt_port")) {
-          uint16_t port = sys["mqtt_port"];
-          if (port > 0 && port <= 65535) tempSysConfig.mqtt_port = port;
+          uint32_t port = sys["mqtt_port"];
+          if (port > 0 && port <= 65535) tempSysConfig.mqtt_port = (uint16_t)port;
+          else addError("system.mqtt_port", "must be 1-65535");
         }
         if (sys.containsKey("mqtt_username") && strlen(sys["mqtt_username"].as<const char*>()) > 0) {
           const char* usr = sys["mqtt_username"];
@@ -1233,55 +1495,61 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     }
     // ======================================
     
-    if (!configManager->updateSystemConfig(tempSysConfig, false)) {
-      DBG.println(F("Error: Failed to update system config"));
-      success = false;
-    }
   }
-  
+
   // Update BMS Configuration
   if (doc.containsKey("bms")) {
     JsonVariantConst bms = doc["bms"];
-    
+
     if (bms.containsKey("cell_count")) {
       uint8_t val = bms["cell_count"];
       if (val >= 3 && val <= 5) tempBmsConfig.cell_count = val;
+      else addError("bms.cell_count", "must be 3-5");
     }
     if (bms.containsKey("nominal_capacity_mAh")) {
       uint32_t val = bms["nominal_capacity_mAh"];
       if (val > 0 && val <= 50000) tempBmsConfig.nominal_capacity_mAh = val;
+      else addError("bms.nominal_capacity_mAh", "must be 1-50000 mAh");
     }
     if (bms.containsKey("cell_ov_threshold")) {
       uint16_t val = bms["cell_ov_threshold"];
       if (val >= 4000 && val <= 4500) tempBmsConfig.cell_ov_threshold = val;
+      else addError("bms.cell_ov_threshold", "must be 4000-4500 mV");
     }
     if (bms.containsKey("cell_uv_threshold")) {
       uint16_t val = bms["cell_uv_threshold"];
       if (val >= 2500 && val <= 3500) tempBmsConfig.cell_uv_threshold = val;
+      else addError("bms.cell_uv_threshold", "must be 2500-3500 mV");
     }
     if (bms.containsKey("cell_ov_recover")) {
       uint16_t val = bms["cell_ov_recover"];
       if (val >= 4000 && val <= 4300) tempBmsConfig.cell_ov_recover = val;
+      else addError("bms.cell_ov_recover", "must be 4000-4300 mV");
     }
     if (bms.containsKey("cell_uv_recover")) {
       uint16_t val = bms["cell_uv_recover"];
       if (val >= 2800 && val <= 3300) tempBmsConfig.cell_uv_recover = val;
+      else addError("bms.cell_uv_recover", "must be 2800-3300 mV");
     }
     if (bms.containsKey("max_charge_current")) {
       uint16_t val = bms["max_charge_current"];
-      if (val <= 10000) tempBmsConfig.max_charge_current = val;
+      if (val > 0 && val <= 10000) tempBmsConfig.max_charge_current = val;
+      else addError("bms.max_charge_current", "must be 1-10000 mA");
     }
     if (bms.containsKey("max_discharge_current")) {
       uint16_t val = bms["max_discharge_current"];
-      if (val <= 20000) tempBmsConfig.max_discharge_current = val;
+      if (val > 0 && val <= 20000) tempBmsConfig.max_discharge_current = val;
+      else addError("bms.max_discharge_current", "must be 1-20000 mA");
     }
     if (bms.containsKey("short_circuit_threshold")) {
       uint16_t val = bms["short_circuit_threshold"];
       if (val <= 30000) tempBmsConfig.short_circuit_threshold = val;
+      else addError("bms.short_circuit_threshold", "must be <= 30000 mA");
     }
     if (bms.containsKey("temp_overheat_threshold")) {
       float val = bms["temp_overheat_threshold"];
       if (val >= 50.0f && val <= 80.0f) tempBmsConfig.temp_overheat_threshold = val;
+      else addError("bms.temp_overheat_threshold", "must be 50-80 C");
     }
     if (bms.containsKey("balancing_enabled")) {
       tempBmsConfig.balancing_enabled = bms["balancing_enabled"];
@@ -1289,41 +1557,44 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     if (bms.containsKey("balancing_voltage_diff")) {
       float val = bms["balancing_voltage_diff"];
       if (val >= 5.0f && val <= 100.0f) tempBmsConfig.balancing_voltage_diff = val;
+      else addError("bms.balancing_voltage_diff", "must be 5-100 mV");
     }
-    
-    if (!configManager->updateBMSConfig(tempBmsConfig, false)) {
-      DBG.println(F("Error: Failed to update BMS config"));
-      success = false;
-    }
+
   }
-  
+
   // Update Power Configuration
   if (doc.containsKey("power")) {
     JsonVariantConst pwr = doc["power"];
-    
+
     if (pwr.containsKey("max_charge_current")) {
       uint16_t val = pwr["max_charge_current"];
-      if (val <= 10000) tempPowerConfig.max_charge_current = val;
+      if (val > 0 && val <= 10000) tempPowerConfig.max_charge_current = val;
+      else addError("power.max_charge_current", "must be 1-10000 mA");
     }
     if (pwr.containsKey("charge_voltage_limit")) {
       uint16_t val = pwr["charge_voltage_limit"];
-      if (val >= 10000 && val <= 25000) tempPowerConfig.charge_voltage_limit = val;
+      if (val >= 10000 && val <= 18250) tempPowerConfig.charge_voltage_limit = val;
+      else addError("power.charge_voltage_limit", "must be 10000-18250 mV");
     }
     if (pwr.containsKey("charge_soc_start")) {
       float val = pwr["charge_soc_start"];
       if (val >= 0.0f && val <= 90.0f) tempPowerConfig.charge_soc_start = val;
+      else addError("power.charge_soc_start", "must be 0-90 %");
     }
     if (pwr.containsKey("charge_soc_stop")) {
       float val = pwr["charge_soc_stop"];
       if (val >= 50.0f && val <= 100.0f) tempPowerConfig.charge_soc_stop = val;
+      else addError("power.charge_soc_stop", "must be 50-100 %");
     }
     if (pwr.containsKey("max_discharge_current")) {
       uint16_t val = pwr["max_discharge_current"];
-      if (val <= 20000) tempPowerConfig.max_discharge_current = val;
+      if (val > 0 && val <= 20000) tempPowerConfig.max_discharge_current = val;
+      else addError("power.max_discharge_current", "must be 1-20000 mA");
     }
     if (pwr.containsKey("discharge_soc_stop")) {
       float val = pwr["discharge_soc_stop"];
       if (val >= 0.0f && val <= 30.0f) tempPowerConfig.discharge_soc_stop = val;
+      else addError("power.discharge_soc_stop", "must be 0-30 %");
     }
     if (pwr.containsKey("enable_hybrid_boost")) {
       tempPowerConfig.enable_hybrid_boost = pwr["enable_hybrid_boost"];
@@ -1331,22 +1602,27 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     if (pwr.containsKey("over_current_threshold")) {
       uint16_t val = pwr["over_current_threshold"];
       if (val <= 20000) tempPowerConfig.over_current_threshold = val;
+      else addError("power.over_current_threshold", "must be <= 20000 mA");
     }
     if (pwr.containsKey("over_temp_threshold")) {
       float val = pwr["over_temp_threshold"];
       if (val >= 40.0f && val <= 100.0f) tempPowerConfig.over_temp_threshold = val;
+      else addError("power.over_temp_threshold", "must be 40-100 C");
     }
     if (pwr.containsKey("charge_temp_high_limit")) {
       float val = pwr["charge_temp_high_limit"];
       if (val >= 30.0f && val <= 60.0f) tempPowerConfig.charge_temp_high_limit = val;
+      else addError("power.charge_temp_high_limit", "must be 30-60 C");
     }
     if (pwr.containsKey("charge_temp_low_limit")) {
       float val = pwr["charge_temp_low_limit"];
       if (val >= -20.0f && val <= 10.0f) tempPowerConfig.charge_temp_low_limit = val;
+      else addError("power.charge_temp_low_limit", "must be -20 to 10 C");
     }
     if (pwr.containsKey("vsys_min_mV")) {
       uint16_t val = pwr["vsys_min_mV"];
       if (val >= 5888 && val <= 16128) tempPowerConfig.vsys_min_mV = val; // 23*256 ~ 63*256
+      else addError("power.vsys_min_mV", "must be 5888-16128 mV");
     }
 
     // ========== 处理时间窗口配置 ==========
@@ -1383,12 +1659,13 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
             tempPowerConfig.charging_windows[validWindowCount].end_hour = endHour;
             
             validWindowCount++;
-            
+
             DBG.printf_P(PSTR("[Config] Window %d: mask=0x%02X, %02d:00-%02d:00\n"),
                            validWindowCount, dayMask, startHour, endHour);
           } else {
-            DBG.printf_P(PSTR("[Config] Invalid window %d: mask=%d, %d:00-%d:00 (skipped)\n"),
+            DBG.printf_P(PSTR("[Config] Invalid window %d: mask=%d, %d:00-%d:00\n"),
                            i, dayMask, startHour, endHour);
+            addError("power.charging_windows", "invalid window: day_mask 1-127, start_hour < end_hour <= 24");
           }
         }
       }
@@ -1399,12 +1676,35 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
     }
     // ======================================
     
-    if (!configManager->updatePowerConfig(tempPowerConfig, false)) {
-      DBG.println(F("Error: Failed to update power config"));
-      success = false;
-    }
   }
   
+  // ========== 字段级校验汇总 ==========
+  // 任何字段非法则整体拒绝，不提交任何配置（两阶段：先全部校验，后统一提交）
+  if (errors.size() > 0) {
+    DBG.printf_P(PSTR("[Config] Validation failed with %d field error(s), nothing applied\n"),
+                   (int)errors.size());
+    return false;
+  }
+
+  // ========== 统一提交阶段 ==========
+  bool success = true;
+  if (doc.containsKey("system") && !configManager->updateSystemConfig(tempSysConfig, false)) {
+    DBG.println(F("Error: Failed to update system config"));
+    success = false;
+  }
+  if (doc.containsKey("bms") && !configManager->updateBMSConfig(tempBmsConfig, false)) {
+    DBG.println(F("Error: Failed to update BMS config"));
+    success = false;
+  }
+  if (doc.containsKey("power") && !configManager->updatePowerConfig(tempPowerConfig, false)) {
+    DBG.println(F("Error: Failed to update power config"));
+    success = false;
+  }
+  if (!success) {
+    errorDoc["message"] = "Configuration rejected by ConfigManager validation";
+    return false;
+  }
+
   // ========== 处理语言配置 ==========
   if (doc.containsKey("lang")) {
     const char* lang = doc["lang"];
@@ -1417,8 +1717,8 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc) {
   }
   // =================================
 
-  DBG.println(success ? F("All configs updated successfully") : F("Some config updates failed"));
-  return success;
+  DBG.println(F("All configs updated successfully"));
+  return true;
 }
 
 void WebServer::replaceStringInBuffer(char* buffer, size_t bufferSize, const char* search, 
@@ -1689,11 +1989,7 @@ void WebServer::handleCalibrationPost(AsyncWebServerRequest* request) {
   }
 
   String jsonString;
-  if (request->_tempObject != nullptr) {
-    jsonString = *(String*)request->_tempObject;
-    delete (String*)request->_tempObject;
-    request->_tempObject = nullptr;
-  } else {
+  if (!takeBody(request, jsonString)) {
     sendErrorResponse(request, "Missing request body", 400);
     return;
   }
@@ -1787,6 +2083,14 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
   static size_t  otaBufLen = 0;
 
   const size_t prefixLen = strlen(EXPECTED_SIG_PREFIX);
+
+  // 认证检查必须在上传处理器中进行：上传体处理器先于请求完成处理器执行，
+  // final 分块会调用 Update.end(true) 切换启动分区，仅在完成处理器中鉴权
+  // 无法阻止未认证的固件写入。isAuthenticated 支持 Cookie 会话与 Basic Auth
+  if (!isAuthenticated(request)) {
+    if (!index) DBG.println(F("OTA REJECT: 未认证的固件上传请求"));
+    return;
+  }
 
   if (!index) {
     otaVerified = false;

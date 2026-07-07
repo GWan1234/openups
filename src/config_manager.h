@@ -33,7 +33,14 @@ public:
     
     // Utility methods - 返回加载时确定的配置模式状态
     bool isConfigMode() const { return m_isConfigModeRequired; }
-    
+
+    // Web 访问凭证 - 独立于 Configuration 结构体持久化（单独 NVS key），
+    // 避免结构体尺寸变化导致旧固件升级后整体配置校验失败
+    bool hasWebCredentials() const { return web_username_[0] != '\0' && web_password_[0] != '\0'; }
+    const char* getWebUsername() const { return web_username_; }
+    const char* getWebPassword() const { return web_password_; }
+    bool setWebCredentials(const char* username, const char* password);
+    void clearWebCredentials();
 
 private:
     Preferences preferences;
@@ -45,6 +52,10 @@ private:
     
     // 配置模式状态标志 - 由 loadConfiguration 确定
     bool m_isConfigModeRequired;
+
+    // Web 访问凭证（用户名 1-32 字符，密码 8-64 字符）
+    char web_username_[33];
+    char web_password_[65];
     
     // Private helpers
     void loadDefaults();

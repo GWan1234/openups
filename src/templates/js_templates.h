@@ -15,7 +15,7 @@ var iwCfg={ssid:'',pass:'',ipMode:'dhcp',staticIp:'',staticGateway:'',staticSubn
 var LANG_DATA={
 zh:{
 pageTitle:"UPS 控制中心",connecting:"连接中",connected:"已连接",disconnected:"断开",
-realtime:"实时监控",navStatus:"📊 状态概览",navBms:"🔋 BMS 状态",navPower:"⚡ 电源状态",navConfig:"⚙️ 系统配置",navOta:"📦 固件升级",btnRestart:"重启设备",
+realtime:"实时监控",navStatus:"📊 状态概览",navBms:"🔋 BMS 状态",navPower:"⚡ 电源状态",navConfig:"⚙️ 系统配置",navOta:"📦 固件升级",btnRestart:"重启设备",btnLogout:"退出登录",jsConfirmLogout:"确定要退出登录吗？",
 cardBattery:"🔋 电池状态",cardCells:"📊 单体电压",cardPower:"⚡ 电源状态",cardSystem:"🖥️ 系统状态",
 lblVoltage:"电压",lblCurrent:"电流",lblTemp:"温度",lblHealth:"健康度",lblCycles:"循环次数",lblCapacity:"剩余容量",
 lblMaxMin:"最高 / 最低",lblDiff:"压差",lblBalance:"均衡状态",lblBalTotal:"总均衡次数",
@@ -65,6 +65,9 @@ otaFirmwareUpload:"固件上传",otaSelectFile:"点击选择固件文件或拖�
 wzTitle:"🔧 初始配置",wzSubtitle:"欢迎！请完成以下步骤来配置您的设备",
 wzStepWifi:"WiFi",wzStepNetwork:"网络",wzStepBattery:"电池",wzStepHardware:"硬件",wzStepComplete:"完成",
 wzWifiTitle:"📶 WiFi 设置",wzWifiDesc:"连接到您的家庭或办公室 WiFi 网络",wzWifiSsid:"WiFi 名称 (SSID)",wzWifiPass:"WiFi 密码",wzWifiSsidPh:"输入 WiFi 名称",wzWifiPassPh:"输入 WiFi 密码",
+wzAuthTitle:"🔐 管理账户（必填）",wzAuthDesc:"用于登录设备管理页面，请妥善保管",wzAuthUser:"管理用户名",wzAuthPass:"管理密码（至少 8 位）",wzAuthPass2:"确认管理密码",
+jsAuthUserRequired:"请输入管理用户名",jsAuthPassLen:"管理密码至少 8 位",jsAuthPassMismatch:"两次输入的密码不一致",
+cfgAuth:"🔐 访问账户",cfgAuthDesc:"修改登录设备管理页面的用户名和密码，修改后需重新登录。",cfgAuthUser:"用户名:",cfgAuthPass:"新密码:",cfgAuthPass2:"确认密码:",cfgAuthSave:"修改账户",jsAuthChanged:"账户已修改，请重新登录",
 wzNetworkTitle:"🌐 网络配置",wzIpMode:"IP 地址获取方式",wzDhcp:"动态获取 (DHCP)",wzStaticIp:"固定 IP 地址",wzIpAddress:"IP 地址",wzGateway:"网关",wzSubnet:"子网掩码",wzDns:"DNS 服务器",wzNtp:"NTP 时间服务器",
 wzBatteryTitle:"🔋 电池配置",wzBatteryDesc:"请根据您的电池规格进行配置",wzCellCount:"电池串数 (Cells)",wzCells3:"3 串 (11.1V)",wzCells4:"4 串 (14.8V)",wzCells5:"5 串 (18.5V)",
 wzCapacity:"电池容量",wzChargeCur:"最大充电电流 (mA)",wzDischargeCur:"最大放电电流 (mA)",wzOvThresh:"过压保护阈值 (mV)",wzUvThresh:"欠压保护阈值 (mV)",wzBalancing:"启用电池均衡",
@@ -88,7 +91,7 @@ jsIrCount:"次"
 },
 en:{
 pageTitle:"UPS Control Center",connecting:"Connecting",connected:"Connected",disconnected:"Disconnected",
-realtime:"Realtime",navStatus:"📊 Status",navBms:"🔋 BMS Status",navPower:"⚡ Power Status",navConfig:"⚙️ Configuration",navOta:"📦 Firmware Update",btnRestart:"Restart",
+realtime:"Realtime",navStatus:"📊 Status",navBms:"🔋 BMS Status",navPower:"⚡ Power Status",navConfig:"⚙️ Configuration",navOta:"📦 Firmware Update",btnRestart:"Restart",btnLogout:"Log Out",jsConfirmLogout:"Log out?",
 cardBattery:"🔋 Battery",cardCells:"📊 Cell Voltages",cardPower:"⚡ Power",cardSystem:"🖥️ System",
 lblVoltage:"Voltage",lblCurrent:"Current",lblTemp:"Temperature",lblHealth:"Health",lblCycles:"Cycles",lblCapacity:"Remaining",
 lblMaxMin:"Max / Min",lblDiff:"Delta",lblBalance:"Balancing",lblBalTotal:"Total Balancings",
@@ -138,6 +141,9 @@ otaFirmwareUpload:"Firmware Upload",otaSelectFile:"Click to select or drag firmw
 wzTitle:"🔧 Initial Setup",wzSubtitle:"Welcome! Please complete the following steps to configure your device",
 wzStepWifi:"WiFi",wzStepNetwork:"Network",wzStepBattery:"Battery",wzStepHardware:"Hardware",wzStepComplete:"Done",
 wzWifiTitle:"📶 WiFi Setup",wzWifiDesc:"Connect to your home or office WiFi network",wzWifiSsid:"WiFi Name (SSID)",wzWifiPass:"WiFi Password",wzWifiSsidPh:"Enter WiFi name",wzWifiPassPh:"Enter WiFi password",
+wzAuthTitle:"🔐 Admin Account (Required)",wzAuthDesc:"Used to log in to the device management page",wzAuthUser:"Admin Username",wzAuthPass:"Admin Password (min 8 chars)",wzAuthPass2:"Confirm Password",
+jsAuthUserRequired:"Admin username required",jsAuthPassLen:"Admin password must be at least 8 chars",jsAuthPassMismatch:"Passwords do not match",
+cfgAuth:"🔐 Access Account",cfgAuthDesc:"Change the username/password for this device. Re-login required after change.",cfgAuthUser:"Username:",cfgAuthPass:"New Password:",cfgAuthPass2:"Confirm:",cfgAuthSave:"Change Account",jsAuthChanged:"Account changed, please re-login",
 wzNetworkTitle:"🌐 Network Config",wzIpMode:"IP Address Mode",wzDhcp:"DHCP",wzStaticIp:"Static IP",wzIpAddress:"IP Address",wzGateway:"Gateway",wzSubnet:"Subnet",wzDns:"DNS Server",wzNtp:"NTP Server",
 wzBatteryTitle:"🔋 Battery Config",wzBatteryDesc:"Configure according to your battery specs",wzCellCount:"Cells",wzCells3:"3S (11.1V)",wzCells4:"4S (14.8V)",wzCells5:"5S (18.5V)",
 wzCapacity:"Capacity",wzChargeCur:"Max Charge Current (mA)",wzDischargeCur:"Max Discharge Current (mA)",wzOvThresh:"OV Threshold (mV)",wzUvThresh:"UV Threshold (mV)",wzBalancing:"Enable Balancing",
@@ -205,7 +211,7 @@ document.querySelectorAll('#p-config .pnl').forEach(function(p){p.classList.remo
 document.querySelectorAll('#p-config .si').forEach(function(s){s.classList.remove('active')});
 document.getElementById('p-cfg-'+n).classList.add('active');
 if(el)el.classList.add('active');
-var hide=n==='calibration'||n==='shipping';
+var hide=n==='calibration'||n==='shipping'||n==='auth';
 var bar=$('cfgSaveBar');if(bar)bar.style.display=hide?'none':'';
 var note=$('cfgSaveNote');if(note)note.style.display=hide?'none':'';
 if(n==='calibration')loadCalibration();
@@ -398,7 +404,12 @@ function wzNext(){if(wzCurStep<wzTotalSteps-1){if(!wzValidateStep(wzCurStep))ret
 function wzSaveStep(n){if(n===1)wzToggleIP();}
 function wzGetVal(id){return $(id).value}
 function wzValidateStep(n){
-if(n===0){var ss=$('wz-wifi-ssid').value.trim();if(!ss){alert(L.wzWifiSsidPh);return false}wzData.wifi={ssid:ss,pass:wzGetVal('wz-wifi-pass')}}
+if(n===0){var ss=$('wz-wifi-ssid').value.trim();if(!ss){alert(L.wzWifiSsidPh);return false}wzData.wifi={ssid:ss,pass:wzGetVal('wz-wifi-pass')};
+var au=$('wz-auth-user').value.trim(),ap=$('wz-auth-pass').value,ap2=$('wz-auth-pass2').value;
+if(!au){alert(L.jsAuthUserRequired);return false}
+if(ap.length<8){alert(L.jsAuthPassLen);return false}
+if(ap!==ap2){alert(L.jsAuthPassMismatch);return false}
+wzData.auth={username:au,password:ap}}
 if(n===1){wzData.network.mode=wzGetVal('wz-ip-mode');wzData.network.ntp=wzGetVal('wz-ntp-server');if(wzData.network.mode==='static'){var ip=wzGetVal('wz-static-ip-addr');if(!ip){alert(L.jsEnterStaticIp);return false}wzData.network={ip:ip,gateway:wzGetVal('wz-static-gateway'),subnet:wzGetVal('wz-static-subnet'),dns:wzGetVal('wz-static-dns'),ntp:wzData.network.ntp}}}
 if(n===2){var cap=+$('wz-capacity').value;if(!cap||cap<100){alert(L.jsEnterCapacity);return false}var ov=+$('wz-ov-threshold').value||4200,uv=+$('wz-uv-threshold').value||3000;if(ov<4000||ov>4500){alert(L.jsOvRange);return false}if(uv<2500||uv>3500){alert(L.jsUvRange);return false}wzData.battery={cells:+$('wz-cell-count').value,capacity:cap,chargeCur:+$('wz-charge-current').value||1000,dischargeCur:+$('wz-discharge-current').value||2000,ovThresh:ov,uvThresh:uv,balancing:$('wz-balancing').checked}}
 if(n===3){wzData.hardware={buzzer:$('wz-buzzer').checked,volume:+$('wz-volume').value,brightness:+$('wz-brightness').value,hid:$('wz-hid').checked,hidMode:+$('wz-hid-mode').value}}
@@ -407,6 +418,7 @@ return true;
 function wzToggleIP(){var d=$('wz-static-ip');d.style.display=$('wz-ip-mode').value==='static'?'block':'none'}
 function wzSaveAll(){
 var doc={
+auth:wzData.auth||{},
 system:{wifi_ssid:wzData.wifi.ssid,wifi_pass:wzData.wifi.pass,use_static_ip:wzData.network.mode==='static',static_ip:wzData.network.ip||'',static_gateway:wzData.network.gateway||'',static_subnet:wzData.network.subnet||'',static_dns:wzData.network.dns||'',ntp_server:wzData.network.ntp,buzzer_enabled:wzData.hardware.buzzer,volume_level:wzData.hardware.volume,led_brightness:wzData.hardware.brightness,hid_enabled:wzData.hardware.hid,hid_report_mode:wzData.hardware.hidMode},
 bms:{cell_count:wzData.battery.cells,nominal_capacity_mAh:wzData.battery.capacity,max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur,cell_ov_threshold:wzData.battery.ovThresh,cell_uv_threshold:wzData.battery.uvThresh,balancing_enabled:wzData.battery.balancing},
 power:{max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur}};
@@ -416,6 +428,26 @@ r.onerror=r.ontimeout=function(){startRebootCountdown()};
 r.send(JSON.stringify(doc));
 }
 function startRebootCountdown(){var c=5,el=$('wz-reboot-count');var t=setInterval(function(){c--;el.textContent=c;if(c<=0){clearInterval(t);el.textContent=L.jsRebooting;setTimeout(function(){location.href='/'},3e3)}},1e3)}
+
+// === 退出登录 ===
+function logout(){
+if(!confirm(L.jsConfirmLogout))return;
+fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'}).catch(function(){location.href='/'})
+}
+
+// === 修改访问账户 ===
+function changeAuth(){
+var u=$('auth_user').value.trim(),p=$('auth_pass').value,p2=$('auth_pass2').value,st=$('authStatus');
+st.style.color='#f5222d';
+if(!u){st.textContent=L.jsAuthUserRequired;return}
+if(p.length<8){st.textContent=L.jsAuthPassLen;return}
+if(p!==p2){st.textContent=L.jsAuthPassMismatch;return}
+st.style.color='#1677ff';st.textContent=L.jsProcessing;
+fetch('/api/auth/change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})
+.then(function(r){return r.json()})
+.then(function(r){if(r.success){st.style.color='#52c41a';st.textContent=L.jsAuthChanged;setTimeout(function(){location.reload()},2e3)}else{st.style.color='#f5222d';st.textContent=r.message||L.jsSaveFailed}})
+.catch(function(){st.style.color='#f5222d';st.textContent=L.jsNetworkErr})
+}
 
 // === 清除提示 ===
 function clearTips(){var x=new XMLHttpRequest();x.open('POST','/api/clear-tips',true);x.setRequestHeader('Content-Type','application/json');x.timeout=3e3;x.send('')}

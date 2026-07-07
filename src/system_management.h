@@ -150,6 +150,10 @@ private:
     uint8_t regMismatchCountBQ76920;      // BQ76920 寄存器不匹配连续计数
     bool bq24780sRegWarning;              // BQ24780S 寄存器警告标志
     bool bq76920RegWarning;               // BQ76920 寄存器警告标志
+
+    // 本周期条件检查缓存（decideNextState 中更新，handleState* 复用）
+    bool cachedCriticalCondition_;
+    bool cachedWarningCondition_;
     
     // =============================================================================
     // CRITICAL → NORMAL 恢复防抖计数器

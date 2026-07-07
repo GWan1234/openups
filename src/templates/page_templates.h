@@ -37,6 +37,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="si" data-i18n="navOta" onclick="show('ota',this)">📦 固件升级</div>
 </div>
 <div class="side-restart" data-i18n="btnRestart" onclick="restartDevice()">重启设备</div>
+<div class="side-restart" data-i18n="btnLogout" onclick="logout()" style="margin-top:6px">退出登录</div>
 </div>
 <div class="ct">
 <!-- ===== 面板：状态概览 ===== -->
@@ -169,6 +170,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="si" data-i18n="cfgBms" onclick="showCfg('bms',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔋 BMS 配置</div>
 <div class="si" data-i18n="cfgWindows" onclick="showCfg('windows',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⏰ 充电窗口</div>
 <div class="si" data-i18n="cfgPower" onclick="showCfg('power',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⚡ 电源管理</div>
+<div class="si" data-i18n="cfgAuth" onclick="showCfg('auth',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔐 访问账户</div>
 <div class="si" data-i18n="cfgCalibration" onclick="showCfg('calibration',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📐 校准系数</div>
 <div class="si" data-i18n="cfgShipping" onclick="showCfg('shipping',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📦 运输模式</div>
 </div>
@@ -289,6 +291,17 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </fieldset>
 </div>
 
+<div class="pnl" id="p-cfg-auth">
+<fieldset class="fs">
+<legend class="lg" data-i18n="cfgAuth">🔐 访问账户</legend>
+<p style="color:#aaa;font-size:12px;margin-bottom:8px" data-i18n="cfgAuthDesc">修改登录设备管理页面的用户名和密码，修改后需重新登录。</p>
+<div class="fg"><label data-i18n="cfgAuthUser">用户名:</label><input type="text" id="auth_user" maxlength="32" autocomplete="username"></div>
+<div class="fg"><label data-i18n="cfgAuthPass">新密码:</label><input type="password" id="auth_pass" maxlength="64" placeholder="8-64" autocomplete="new-password"></div>
+<div class="fg"><label data-i18n="cfgAuthPass2">确认密码:</label><input type="password" id="auth_pass2" maxlength="64" autocomplete="new-password"></div>
+<div class="fg"><button type="button" class="btn" style="font-size:12px;padding:4px 12px" onclick="changeAuth()" data-i18n="cfgAuthSave">修改账户</button><span id="authStatus" style="font-size:12px;color:#999;margin-left:10px"></span></div>
+</fieldset>
+</div>
+
 <div class="pnl" id="p-cfg-calibration">
 <fieldset class="fs">
 <legend class="lg" data-i18n="cfgCalibration">📐 ADC 校准系数</legend>
@@ -370,7 +383,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="wz-step" id="wz-step-4"><div class="wz-step-circle">5</div><div class="wz-step-label" data-i18n="wzStepComplete">完成</div></div>
 </div>
 
-<!-- 步骤 1: WiFi 设置 -->
+<!-- 步骤 1: WiFi 设置 + 管理账户 -->
 <div class="wz-card" id="wz-card-0">
 <div class="wz-card-title" data-i18n="wzWifiTitle">📶 WiFi 设置</div>
 <div class="wz-info" data-i18n="wzWifiDesc">连接到您的家庭或办公室 WiFi 网络</div>
@@ -381,6 +394,20 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="wz-field">
 <label data-i18n="wzWifiPass">WiFi 密码</label>
 <input type="password" id="wz-wifi-pass" placeholder="输入 WiFi 密码" autocomplete="off">
+</div>
+<div class="wz-card-title" style="margin-top:20px" data-i18n="wzAuthTitle">🔐 管理账户（必填）</div>
+<div class="wz-info" data-i18n="wzAuthDesc">用于登录设备管理页面，请妥善保管</div>
+<div class="wz-field">
+<label data-i18n="wzAuthUser">管理用户名</label>
+<input type="text" id="wz-auth-user" maxlength="32" placeholder="admin" autocomplete="username">
+</div>
+<div class="wz-field">
+<label data-i18n="wzAuthPass">管理密码（至少 8 位）</label>
+<input type="password" id="wz-auth-pass" maxlength="64" autocomplete="new-password">
+</div>
+<div class="wz-field">
+<label data-i18n="wzAuthPass2">确认管理密码</label>
+<input type="password" id="wz-auth-pass2" maxlength="64" autocomplete="new-password">
 </div>
 </div>
 
