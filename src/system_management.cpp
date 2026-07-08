@@ -1831,7 +1831,7 @@ void SystemManagement::analyzeBurstIR() {
     }
 
     static constexpr uint32_t MAX_BURST_SAMPLES = 50;
-    static constexpr uint8_t  IR_RECENT_COUNT = 3;
+    static constexpr uint8_t  IR_RECENT_COUNT = 10;
     const int CHUNK = 20;
 
     BurstSample* recent_buf = (BurstSample*)malloc(MAX_BURST_SAMPLES * sizeof(BurstSample));

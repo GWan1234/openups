@@ -2217,7 +2217,6 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
   totalBytes += len;
 
   if (totalBytes - lastPrint > 51200) {
-    DBG.printf_P(PSTR("OTA 进度：%lu KB\n"), totalBytes / 1024);
     lastPrint = totalBytes / 1024;
   }
 
