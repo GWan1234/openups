@@ -1,4 +1,6 @@
 #include "bms.h"
+#include "bms_ncm.h"
+#include "bms_lfp.h"
 #include <Arduino.h>
 #include <math.h>
 #include <Preferences.h>
@@ -6,55 +8,6 @@
 #include "event_bus.h"
 #include "time_utils.h"
 #include "debug.h"
-
-// OCV-SOC lookup table (NCM, 密集采样)
-// 基于实际NCM电池放电曲线，中段(20-80%)每3-5%一个点，底部加密
-static const uint16_t OCV_SOC_TABLE[][2] = {
-    //  mV     SOC%
-    {4200, 100},
-    {4185,  98},
-    {4170,  97},
-    {4150,  96},
-    {4125,  93},
-    {4100,  91},
-    {4075,  89},
-    {4050,  87},
-    {4025,  84},
-    {4000,  82},
-    {3975,  79},
-    {3950,  78},
-    {3925,  75},
-    {3900,  73},
-    {3875,  70},
-    {3850,  68},
-    {3830,  65},
-    {3810,  63},
-    {3795,  60},
-    {3780,  58},
-    {3765,  55},
-    {3750,  52},
-    {3735,  49},
-    {3720,  47},
-    {3705,  44},
-    {3690,  41},
-    {3675,  38},
-    {3660,  35},
-    {3645,  31},
-    {3630,  28},
-    {3610,  24},
-    {3590,  21},
-    {3565,  18},
-    {3540,  15},
-    {3510,  12},
-    {3480,  10},
-    {3415,   7},
-    {3350,   5},
-    {3250,   3},
-    {3150,   2},
-    {3060,   1},
-    {3000,   0}
-};
-static const int OCV_TABLE_SIZE = sizeof(OCV_SOC_TABLE) / sizeof(OCV_SOC_TABLE[0]);
 
 // 定义并初始化静态指针
 BMS* BMS::instancePtr = nullptr;
@@ -87,14 +40,27 @@ BMS::BMS(I2CInterface& i2c_interface, const BMS_Config_t& config)
     DBG.println(F("BMS: Constructor done"));
 }
 
-BMS_Config_t BMS::getDefaultConfig(uint8_t cell_count) {
+BMS* BMS::create(BatteryChemistry_t chemistry, I2CInterface& i2c_interface,
+                 const BMS_Config_t& config) {
+    switch (chemistry) {
+        case CHEM_LFP: return new BMS_LFP(i2c_interface, config);
+        case CHEM_NCM:
+        default:
+            return new BMS_NCM(i2c_interface, config);
+    }
+}
+
+BMS_Config_t BMS::getDefaultConfig(uint8_t cell_count, BatteryChemistry_t chemistry) {
+    const ChemistryLimits& L = getChemistryLimits(chemistry);
     return {
+        .config_version = BMS_CONFIG_VERSION,
         .cell_count = cell_count,
+        .chemistry = (uint8_t)chemistry,
         .nominal_capacity_mAh = 2000,
-        .cell_ov_threshold = 4210,
-        .cell_uv_threshold = 3000,
-        .cell_ov_recover = 4180,
-        .cell_uv_recover = 3050,
+        .cell_ov_threshold = L.recommended_ov_mV,
+        .cell_uv_threshold = L.recommended_uv_mV,
+        .cell_ov_recover = L.recommended_ov_rec_mV,
+        .cell_uv_recover = L.recommended_uv_rec_mV,
         .max_charge_current = 2000,
         .max_discharge_current = 12000,
         .short_circuit_threshold = 20000,
@@ -131,7 +97,24 @@ bool BMS::begin() {
     }
 
     loadFromStorage();
-    
+
+    // 学习数据化学一致性校验：SOH/剩余容量/库仑计基准/内阻均绑定具体电池组，
+    // 化学切换后（无论走 Web /save、配置向导还是手改 NVS）旧数据全部失效。
+    // key 缺失按 NCM 处理——LFP 支持之前的存量数据必为 NCM 组所写
+    uint8_t stored_chem = preferences_.getUChar(PREFS_KEY_DATA_CHEM, (uint8_t)CHEM_NCM);
+    if (stored_chem != (uint8_t)chemistry()) {
+        DBG.printf_P(PSTR("BMS: stored data chemistry %u != %u, resetting battery data\n"),
+            stored_chem, (uint8_t)chemistry());
+        initialized_ = true;   // resetBatteryData->saveToStorage 有 initialized_ 门卫，此处临时放行
+        resetBatteryData();
+        initialized_ = false;
+        // 换电池组后旧内阻测量结果同样失效
+        memset(ir_result_mΩ_, 0, sizeof(ir_result_mΩ_));
+        ir_sample_count_ = 0;
+        saveIRData();
+        preferences_.putUChar(PREFS_KEY_DATA_CHEM, (uint8_t)chemistry());
+    }
+
     if (stats_.soh <= 0 || stats_.soh > 100) {
         stats_.soh = 100.0f;
         DBG.println(F("BMS: SOH reset to 100%"));
@@ -183,6 +166,8 @@ void BMS::update(System_Global_State& globalState) {
 
     unsigned long current_time = millis();
     BMS_State& bmsState = globalState.bms;
+    bmsState.chemistry = (uint8_t)chemistry();
+    bmsState.soc_error_est = soc_error_est_pct_;
 
     // 处理待更新的配置（优先执行，确保后续操作使用新配置）
     if (config_update_pending_) {
@@ -205,6 +190,12 @@ void BMS::update(System_Global_State& globalState) {
         handleBmsAlertInterrupt(2);
     }
     
+    // 真零电流窗口判定：AC在位（负载走适配器）+ 充电器已关闭 + 静置态。
+    // 此时流过检流电阻的电池电流物理上为零，CC 读数即零点偏置
+    cc_zero_window_ = globalState.power.ac_present &&
+                      !globalState.power.charger_enabled &&
+                      is_quiescent_;
+
     // 处理所有待处理的库仑计数据
     if (cc_ready_pending_) {
         last_cc_update_ = current_time;
@@ -292,6 +283,17 @@ void BMS::update(System_Global_State& globalState) {
         bmsState.cycle_count = stats_.total_cycles;
         collectRawSample(bmsState);
         flushBurstBuffer();
+
+        // 误差预算超限：发布校准建议（限频24h）。
+        // 订阅方可提示用户/临时突破 charge_soc_stop 充到满充锚点一次
+        if (soc_error_est_pct_ > 5.0f &&
+            (last_calib_recommend_ms_ == 0 ||
+             current_time - last_calib_recommend_ms_ >= 86400000UL)) {
+            last_calib_recommend_ms_ = current_time;
+            EventBus::getInstance().publish(EVT_BMS_CALIBRATION_RECOMMENDED, &soc_error_est_pct_);
+            DBG.printf_P(PSTR("BMS: SOC error budget %.1f%% > 5%%, calibration charge recommended\n"),
+                soc_error_est_pct_);
+        }
 
         // 同步自消耗值到 globalState（通过外部指针访问）
         // 注意：这里只能更新 bmsState，globalState 的同步在 SystemManager 中完成
@@ -405,8 +407,10 @@ static uint16_t balancingHysteresis_mV(uint16_t start_threshold_mV) {
 bool BMS::startBalancing(BMS_State& bmsState) {
     if (!initialized_ || !config_.balancing_enabled) return false;
 
-    bool valid_data = (bmsState.cell_voltage_max > 2500 && bmsState.cell_voltage_max < 4500 &&
-                       bmsState.cell_voltage_min > 2500 && bmsState.cell_voltage_min < 4500);
+    bool valid_data = (bmsState.cell_voltage_max > limits().valid_cell_min_mV &&
+                       bmsState.cell_voltage_max < limits().valid_cell_max_mV &&
+                       bmsState.cell_voltage_min > limits().valid_cell_min_mV &&
+                       bmsState.cell_voltage_min < limits().valid_cell_max_mV);
     if (!valid_data) return false;
 
     uint8_t balance_mask = 0;
@@ -524,12 +528,19 @@ void BMS::evaluateAndExecuteBalancing(BMS_State& bmsState) {
 
     bool valid_reading = false;
     for (uint8_t i = 0; i < config_.cell_count; i++) {
-        if (bmsState.cell_voltages[i] > 2500 && bmsState.cell_voltages[i] < 4500) {
+        if (bmsState.cell_voltages[i] > limits().valid_cell_min_mV &&
+            bmsState.cell_voltages[i] < limits().valid_cell_max_mV) {
             valid_reading = true;
             break;
         }
     }
     if (!valid_reading) {
+        stopBalancing(bmsState);
+        return;
+    }
+
+    // 化学准入：LFP 仅在充电末端上升区允许均衡（平台区压差无意义）
+    if (!balancingPermitted(bmsState)) {
         stopBalancing(bmsState);
         return;
     }
@@ -875,77 +886,13 @@ float BMS::calculateSOC_Voltage(const BMS_State& bmsState) {
         ref_cell_mv = bmsState.cell_voltage_avg;  // 静置时：平均电压
     }
 
-    if (ref_cell_mv < 2500 || ref_cell_mv > 4500) return -1.0f;
-
-    if (ref_cell_mv <= OCV_SOC_TABLE[OCV_TABLE_SIZE - 1][0]) return 0.0f;
-    if (ref_cell_mv >= OCV_SOC_TABLE[0][0]) return 100.0f;
-
-    for (int i = 0; i < OCV_TABLE_SIZE - 1; i++) {
-        uint16_t v1 = OCV_SOC_TABLE[i][0];
-        uint16_t soc1 = OCV_SOC_TABLE[i][1];
-        uint16_t v2 = OCV_SOC_TABLE[i+1][0];
-        uint16_t soc2 = OCV_SOC_TABLE[i+1][1];
-
-        if (ref_cell_mv >= v2 && ref_cell_mv <= v1) {
-            float soc = soc2 + (ref_cell_mv - v2) * (soc1 - soc2) / (float)(v1 - v2);
-            return constrain(soc, 0.0f, 100.0f);
-        }
-    }
-    return -1.0f;
+    return calculateSOC_FromVoltage(ref_cell_mv);
 }
 
 float BMS::calculateSOC_FromVoltage(uint16_t voltage_mv) {
-    if (voltage_mv < 2500 || voltage_mv > 4500) return -1.0f;
-
-    if (voltage_mv <= OCV_SOC_TABLE[OCV_TABLE_SIZE - 1][0]) return 0.0f;
-    if (voltage_mv >= OCV_SOC_TABLE[0][0]) return 100.0f;
-
-    for (int i = 0; i < OCV_TABLE_SIZE - 1; i++) {
-        uint16_t v1 = OCV_SOC_TABLE[i][0];
-        uint16_t soc1 = OCV_SOC_TABLE[i][1];
-        uint16_t v2 = OCV_SOC_TABLE[i+1][0];
-        uint16_t soc2 = OCV_SOC_TABLE[i+1][1];
-
-        if (voltage_mv >= v2 && voltage_mv <= v1) {
-            float soc = soc2 + (voltage_mv - v2) * (soc1 - soc2) / (float)(v1 - v2);
-            return constrain(soc, 0.0f, 100.0f);
-        }
-    }
-    return -1.0f;
-}
-
-void BMS::updateTemporarySOH(BMS_State& bmsState) {
-    uint16_t voltage_diff = bmsState.cell_voltage_max - bmsState.cell_voltage_min;
-
-    // 压差迟滞：进入阈值50mV，退出阈值40mV，避免在临界点反复切换
-    if (temporary_soh_active_) {
-        if (voltage_diff < 40) {
-            temporary_soh_active_ = false;
-            bmsState.temporary_soh = stats_.soh;
-            return;
-        }
-    } else {
-        if (voltage_diff < 50) {
-            bmsState.temporary_soh = stats_.soh;
-            return;
-        }
-        temporary_soh_active_ = true;
-    }
-
-    float soc_min = calculateSOC_FromVoltage(bmsState.cell_voltage_min);
-    float soc_max = calculateSOC_FromVoltage(bmsState.cell_voltage_max);
-
-    // 电压无效时，使用原始SOH
-    if (soc_min < 0 || soc_max < 0) {
-        bmsState.temporary_soh = stats_.soh;
-        return;
-    }
-
-    float charge_space = 1.0f - (soc_max / 100.0f);
-    float discharge_space = soc_min / 100.0f;
-    float effective_capacity_ratio = charge_space + discharge_space;
-
-    bmsState.temporary_soh = stats_.soh * effective_capacity_ratio;
+    if (voltage_mv < limits().valid_cell_min_mV ||
+        voltage_mv > limits().valid_cell_max_mV) return -1.0f;
+    return ocvToSoc(voltage_mv);
 }
 
 float BMS::calculateSOC_Coulomb() {
@@ -958,7 +905,14 @@ float BMS::calculateSOC_Coulomb() {
 
 bool BMS::applyNewConfig(const BMS_Config_t& config) {
     if (!validateConfig(config)) return false;
-    
+
+    // 化学类型切换必须走 重置电池数据 + 重启 流程（Web /save 负责），
+    // 拒绝一切热更新旁路（MQTT/API），防止算法与实例化学不一致
+    if (config.chemistry != config_.chemistry) {
+        DBG.println(F("BMS: chemistry change requires restart - config rejected"));
+        return false;
+    }
+
     // 仅更新内部配置并标记需要更新硬件配置
     pending_config_ = config;
     config_update_pending_ = true;
@@ -1049,7 +1003,8 @@ void BMS::updateSOC(BMS_State& bmsState) {
             // OCV不可用，默认50%
             current_remaining_capacity = q_max * 0.5f;
             last_stable_soc_ = 50.0f;
-            soc_waiting_for_stable_ = false;
+            soc_waiting_for_stable_ = fallbackWaitsForAnchor();  // LFP: 等锚点校准
+            if (soc_waiting_for_stable_) soc_stable_start_time_ = current_time;
             DBG.println(F("BMS: SOC init default 50% (OCV unavailable)"));
         }
         
@@ -1076,41 +1031,9 @@ void BMS::updateSOC(BMS_State& bmsState) {
         }
     }
     
-    // ========== 常规SOC计算 ==========
+    // ========== 常规SOC计算（化学差异集中在 fuseSoc 钩子） ==========
     float soc_coulomb = (current_remaining_capacity / q_max) * 100.0f;
-    float soc_voltage = calculateSOC_Voltage(bmsState);
-    float cutoff_current = config_.nominal_capacity_mAh / 20.0f;
-    
-    // 满充锚定：高压 + 小电流充电
-    if (bmsState.cell_voltage_max > 4150 && bmsState.current > 0 && 
-        bmsState.current < cutoff_current) {
-        current_remaining_capacity = q_max;
-        last_stable_soc_ = 100.0f;
-        DBG.println(F("BMS: SOC anchored to 100% (CV taper)"));
-    }
-    // 放空锚定：低压 + 小电流放电
-    else if (bmsState.cell_voltage_min < 3000 && bmsState.current < 0 && 
-             abs(bmsState.current) < cutoff_current) {
-        current_remaining_capacity = 0;
-        last_stable_soc_ = 0.0f;
-        DBG.println(F("BMS: SOC anchored to 0% (cutoff)"));
-    }
-    // 低电流时用电压收敛
-    else if (abs(bmsState.current) < cutoff_current && soc_voltage > 0) {
-        float diff = soc_voltage - soc_coulomb;
-        if (abs(diff) > 2.0f) {
-            // 使用温和的收敛系数，避免跳跃
-            float convergence_rate = 0.02f;  // 2% per update
-            float delta_cap = (diff / 100.0f) * q_max * convergence_rate;
-            current_remaining_capacity += delta_cap;
-            current_remaining_capacity = constrain(current_remaining_capacity, 0.0f, q_max);
-        }
-        last_stable_soc_ = (current_remaining_capacity / q_max) * 100.0f;
-    }
-    // 充放电中，信任库仑计
-    else {
-        last_stable_soc_ = constrain(soc_coulomb, 0.0f, 100.0f);
-    }
+    fuseSoc(bmsState, soc_coulomb, q_max);
 
     float soc_delta = abs(bmsState.soc - last_stable_soc_);
     bmsState.soc = constrain(last_stable_soc_, 0.0f, 100.0f);
@@ -1123,6 +1046,8 @@ void BMS::updateSOC(BMS_State& bmsState) {
 }
 
 void BMS::updateSOHLearning(BMS_State& bmsState) {
+    if (!restSohLearningEnabled()) return;   // LFP：静置ΔSOC法禁用（循环论证）
+
     float stable_current_threshold = config_.nominal_capacity_mAh / 20.0f;
     float q_nominal = (float)config_.nominal_capacity_mAh;
     float current_soc = bmsState.soc;
@@ -1183,38 +1108,16 @@ void BMS::updateSOHLearning(BMS_State& bmsState) {
 void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
     float cutoff_current = config_.nominal_capacity_mAh / 20.0f;
     unsigned long current_time = millis();
-    
-    // 满充检测：最高单体>4150mV + 充电电流>0且<C/20 + 距上次>10分钟
-    if (bmsState.cell_voltage_max > 4150 && 
-        bmsState.current > 0 && 
-        bmsState.current < cutoff_current &&
+
+    if (isFullChargeAnchor(bmsState, cutoff_current) &&
         (current_time - last_full_charge_time_ > 600000)) {
-        
+
         float q_max = getTemperatureCompensatedCapacity(bmsState.temperature);
         if (q_max <= 0) q_max = (float)config_.nominal_capacity_mAh;
-        
-        // 充电阶段SOH学习：在重置cc_accumulated_raw_mAh_之前计算
-        if (charge_soh_tracking_) {
-            float delta_ah_raw = cc_accumulated_raw_mAh_ - charge_cc_raw_start_;
-            float delta_soc = 100.0f - charge_soc_start_;
-            float q_nominal = (float)config_.nominal_capacity_mAh;
-            
-            if (delta_soc > 1.0f && delta_ah_raw > 10.0f) {
-                float q_actual = delta_ah_raw / (delta_soc / 100.0f);
-                float soh_calc = (q_actual / q_nominal) * 100.0f;
-                float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
-                soh_new = constrain(soh_new, 40.0f, 100.0f);
-                
-                DBG.printf_P(PSTR("BMS: Charge SOH learned: dSOC=%.1f%% dAh_raw=%.1f "
-                    "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
-                    delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
-                
-                stats_.soh = soh_new;
-                bmsState.soh = stats_.soh;
-            }
-            charge_soh_tracking_ = false;
-        }
-        
+
+        // 化学相关的 SOH 结算（必须在重置 cc_accumulated_raw_mAh_ 之前）
+        onFullChargeAnchor(bmsState);
+
         float old_soc = bmsState.soc;
         current_remaining_capacity = q_max;
         last_stable_soc_ = 100.0f;
@@ -1222,13 +1125,13 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
         bmsState.capacity_remaining = current_remaining_capacity;
         full_charge_calibrated_ = true;
         last_full_charge_time_ = current_time;
-        
-        // 重置SOH学习上下文
+
         cc_accumulated_raw_mAh_ = 0.0f;
         soh_learning_ctx_.is_learning = false;
-        
+        soc_error_est_pct_ = 1.0f;   // 满充锚点：误差预算清至最小
+
         saveToStorage();
-        
+
         DBG.printf_P(PSTR("BMS: FULL CHARGE calibration: %.1f%% -> 100%% (cap=%.1fmAh)\n"),
             old_soc, q_max);
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
@@ -1238,72 +1141,34 @@ void BMS::detectFullChargeCalibration(BMS_State& bmsState) {
 void BMS::detectEmptyDischargeCalibration(BMS_State& bmsState) {
     float cutoff_current = config_.nominal_capacity_mAh / 20.0f;
     unsigned long current_time = millis();
-    
-    // 放空检测：最低单体<3000mV + 放电电流<0且<C/20 + 距上次>10分钟
-    if (bmsState.cell_voltage_min < 3000 && 
-        bmsState.current < 0 && 
-        abs(bmsState.current) < cutoff_current &&
+
+    if (isEmptyAnchor(bmsState, cutoff_current) &&
         (current_time - last_empty_discharge_time_ > 600000)) {
-        
+
+        float q_max = getTemperatureCompensatedCapacity(bmsState.temperature);
+        if (q_max <= 0) q_max = (float)config_.nominal_capacity_mAh;
+        float anchor_soc = emptyAnchorSoc(bmsState);   // NCM 恒 0；LFP 大电流路径 5%
+
+        // 化学相关的 SOH 结算（在重置 cc raw 之前）
+        onEmptyDischargeAnchor(bmsState);
+
         float old_soc = bmsState.soc;
-        current_remaining_capacity = 0;
-        last_stable_soc_ = 0.0f;
-        bmsState.soc = 0.0f;
-        bmsState.capacity_remaining = 0;
+        current_remaining_capacity = q_max * anchor_soc / 100.0f;
+        last_stable_soc_ = anchor_soc;
+        bmsState.soc = anchor_soc;
+        bmsState.capacity_remaining = current_remaining_capacity;
         empty_discharge_calibrated_ = true;
         last_empty_discharge_time_ = current_time;
-        
-        // 重置SOH学习上下文
+
         cc_accumulated_raw_mAh_ = 0.0f;
         soh_learning_ctx_.is_learning = false;
-        
+        // 底部锚点本身有残余不确定度（IR补偿路径锚5%），清到2%而非1%
+        soc_error_est_pct_ = 2.0f;
+
         saveToStorage();
-        
-        DBG.printf_P(PSTR("BMS: EMPTY calibration: %.1f%% -> 0%%\n"), old_soc);
+
+        DBG.printf_P(PSTR("BMS: EMPTY calibration: %.1f%% -> %.1f%%\n"), old_soc, anchor_soc);
         EventBus::getInstance().publish(EVT_BMS_SOC_CHANGED, &bmsState.soc);
-    }
-}
-
-void BMS::detectChargeSOHLearning(BMS_State& bmsState) {
-    float cutoff_current = config_.nominal_capacity_mAh / 20.0f;
-    
-    if (bmsState.current > cutoff_current) {
-        // 正在充电
-        if (!charge_soh_tracking_) {
-            // 充电刚开始，记录起点，重置CC累积（排除放电阶段的零漂累积）
-            charge_soh_tracking_ = true;
-            charge_soc_start_ = bmsState.soc;
-            cc_accumulated_raw_mAh_ = 0.0f;
-            charge_cc_raw_start_ = 0.0f;
-            DBG.printf_P(PSTR("BMS: Charge SOH tracking started at SOC=%.1f%%\n"), charge_soc_start_);
-        }
-    } else if (bmsState.current <= 0) {
-        // 充电停止：完成SOH计算（不再依赖满充）
-        if (charge_soh_tracking_) {
-            float delta_ah_raw = cc_accumulated_raw_mAh_ - charge_cc_raw_start_;
-            float delta_soc = bmsState.soc - charge_soc_start_;
-            float q_nominal = (float)config_.nominal_capacity_mAh;
-
-            if (delta_soc >= 20.0f && delta_ah_raw > 10.0f) {
-                float q_actual = delta_ah_raw / (delta_soc / 100.0f);
-                float soh_calc = (q_actual / q_nominal) * 100.0f;
-                float soh_new = 0.7f * stats_.soh + 0.3f * soh_calc;
-                soh_new = constrain(soh_new, 40.0f, 100.0f);
-
-                DBG.printf_P(PSTR("BMS: Charge SOH learned (end): dSOC=%.1f%% dAh_raw=%.1f "
-                    "Q_act=%.1f SOH_calc=%.1f%% -> SOH=%.1f%%\n"),
-                    delta_soc, delta_ah_raw, q_actual, soh_calc, soh_new);
-
-                stats_.soh = soh_new;
-                bmsState.soh = stats_.soh;
-                saveToStorage();
-            } else {
-                DBG.printf_P(PSTR("BMS: Charge SOH skipped (dSOC=%.1f%%, dAh=%.1f)\n"),
-                    delta_soc, delta_ah_raw);
-            }
-
-            charge_soh_tracking_ = false;
-        }
     }
 }
 
@@ -1337,13 +1202,13 @@ void BMS::updateQuiescentState(const BMS_State& bmsState) {
 void BMS::checkCriticalFaults(BMS_State& bmsState) {
     BMS_Fault_t current_fault = BMS_FAULT_NONE;
     
-    // cell_voltages[] 单位为 mV，有效范围与 calculateSOC_Voltage 一致 (2500-4500mV)
+    // cell_voltages[] 单位为 mV，有效范围（窗口按化学 limits() 取）
     uint16_t max_v = 0, min_v = UINT16_MAX;
     bool voltage_valid = false;
 
     for (int i = 0; i < config_.cell_count && i < 5; i++) {
         uint16_t v = bmsState.cell_voltages[i];
-        if (v >= 2500 && v <= 4500) {
+        if (v >= limits().valid_cell_min_mV && v <= limits().valid_cell_max_mV) {
             voltage_valid = true;
             if (v > max_v) max_v = v;
             if (v < min_v) min_v = v;
@@ -1416,8 +1281,9 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
         if (burst_buffer_idx_ < BURST_BUFFER_SIZE) {
             bool old_quiet = (bmsState.current == 0); //之前读取已经处理过，无需再次判断+-5
             bool new_quiet = (current == 0); // up
-            bool old_high = (bmsState.current >= 1000 || bmsState.current <= -1000);
-            bool new_high = (current >= 1000 || current <= -1000);
+            int16_t burst_th = limits().burst_min_delta_mA;
+            bool old_high = (bmsState.current >= burst_th || bmsState.current <= -burst_th);
+            bool new_high = (current >= burst_th || current <= -burst_th);
 
             if ((old_quiet && new_high) || (old_high && new_quiet)) {
                 burst_detected = true;
@@ -1428,6 +1294,7 @@ bool BMS::updateBasicInfo(BMS_State& bmsState) {
         }
 
         bmsState.current = current;
+        latest_current_mA_ = current;
     } else {
         read_success = false;
     }
@@ -1485,7 +1352,7 @@ bool BMS::processCoulombCounterData() {
     i2cPowerOn();
     if (!initialized_ || !bq76920_.isConnected()) return false;
     if (!cc_ready_pending_) return false;
-    
+
     int16_t raw_cc_value = 0;
     if (!bq76920_.readCoulombCounterRaw(raw_cc_value)) {
         DBG.println(F("BMS: CC read failed"));
@@ -1496,12 +1363,55 @@ bool BMS::processCoulombCounterData() {
     bq76920_.clearCoulombCounterFlag();
     cc_ready_pending_ = false;
 
-    // 正确的计算方式：
+    unsigned long now_ms = millis();
+
+    // ---- 零点偏置学习 ----
+    // 真零窗口内原始LSB做块平均（约5分钟/块），EMA并入偏置。
+    // 噪声抖动使块平均具备亚LSB分辨率；|均值|>4LSB(约6.8mA)说明窗口判定
+    // 失效（有隐蔽负载），整块丢弃
+    if (cc_zero_window_) {
+        cc_zero_sum_lsb_ += (float)raw_cc_value;
+        cc_zero_cnt_++;
+        if (cc_zero_cnt_ >= CC_ZERO_BLOCK_SAMPLES) {
+            float block_mean = cc_zero_sum_lsb_ / cc_zero_cnt_;
+            if (fabsf(block_mean) < 4.0f) {
+                cc_offset_lsb_ = 0.9f * cc_offset_lsb_ + 0.1f * block_mean;
+                DBG.printf_P(PSTR("BMS: CC offset learned: block=%.3f -> offset=%.3f LSB\n"),
+                    block_mean, cc_offset_lsb_);
+            }
+            cc_zero_sum_lsb_ = 0.0f;
+            cc_zero_cnt_ = 0;
+        }
+    } else if (cc_zero_cnt_ > 0) {
+        // 窗口中断，未满块的累积作废（避免混入非零电流样本）
+        cc_zero_sum_lsb_ = 0.0f;
+        cc_zero_cnt_ = 0;
+    }
+
     // 每个LSB: 8.44μV, 积分时间250ms, 检流电阻5mΩ
-    // 电荷量(mAh) = raw_cc_value * (8.44μV / 5mΩ) * (0.25s / 3600s/h)
-    //             = raw_cc_value * (8.44f / 5.0f) / 14400.0f
-    //const float CC_LSB_TO_MAH = (8.44f / 5.0f) / 14400.0f;
-    float delta_mah = raw_cc_value * 0.000117222f;
+    // 电荷量(mAh) = LSB * (8.44μV / 5mΩ) * (0.25s / 3600s/h) = LSB * 0.000117222
+    const float CC_LSB_TO_MAH = 0.000117222f;
+    float delta_mah = ((float)raw_cc_value - cc_offset_lsb_) * CC_LSB_TO_MAH;
+
+    // ---- 丢窗补偿 ----
+    // CC连续积分，寄存器只保留最近一个250ms窗，读取延迟不丢数据，
+    // 但两次读取间完成了≥2个窗则中间窗被覆盖丢失（cc_ready_pending_是bool，
+    // 多次中断合并为一次读取）。丢失窗数 = floor(gap/250)-1，
+    // 用上一次电流读数补（电流在百ms尺度连续）。
+    // 上限5s：更长的停顿说明经历了异常（如OTA前夕），不盲补
+    if (last_cc_read_ms_ > 0) {
+        unsigned long gap_ms = now_ms - last_cc_read_ms_;
+        if (gap_ms > 500 && gap_ms <= 5000) {
+            uint32_t lost_windows = (gap_ms / 250) - 1;
+            float gap_mah = latest_current_mA_ * (lost_windows * 250.0f) / 3600000.0f;
+            delta_mah += gap_mah;
+            if (fabsf(gap_mah) > 0.05f) {
+                DBG.printf_P(PSTR("BMS: CC %lu lost windows compensated %.3f mAh\n"),
+                    lost_windows, gap_mah);
+            }
+        }
+    }
+    last_cc_read_ms_ = now_ms;
 
     current_remaining_capacity += delta_mah;
     if (delta_mah > 0) {
@@ -1509,18 +1419,29 @@ bool BMS::processCoulombCounterData() {
     } else {
         accumulated_discharge_mAh -= delta_mah;
     }
-    
+
     // SOH学习用的原始累积（不受SOH缩放影响）
     cc_accumulated_raw_mAh_ += delta_mah;
-    
+
     // 限制范围
     float q_max = getAvailableCapacity();
     if (q_max <= 0) q_max = (float)config_.nominal_capacity_mAh;
     current_remaining_capacity = constrain(current_remaining_capacity, 0.0f, q_max);
-    
+
+    // ---- 误差预算累积 ----
+    // 时间项：残余偏置上界（偏置未学习时按1LSB≈1.7mA计，已学习按0.2LSB残余）
+    // 吞吐项：0.5%——增益误差（检流电阻/ADC）大部分被同源SOH学习自我抵消，
+    // 只计残余的二阶项
+    {
+        float residual_mA = (cc_offset_lsb_ == 0.0f) ? 1.7f : 0.35f;
+        float err_mah = residual_mA * 0.25f / 3600.0f + fabsf(delta_mah) * 0.005f;
+        soc_error_est_pct_ += (err_mah / q_max) * 100.0f;
+        if (soc_error_est_pct_ > 50.0f) soc_error_est_pct_ = 50.0f;
+    }
+
     // 循环计数（累计法：每次CC更新累加分数循环）
     accumulatePartialCycle(delta_mah);
-    
+
     return true;
 }
 
@@ -1577,6 +1498,10 @@ bool BMS::saveToStorage() {
     preferences_.putUInt(PREFS_KEY_CHG_SOH_TRACK, charge_soh_tracking_ ? 1 : 0);
     preferences_.putFloat(PREFS_KEY_CHG_SOH_SOC, charge_soc_start_);
     preferences_.putFloat(PREFS_KEY_CHG_SOH_CC, charge_cc_raw_start_);
+
+    // 保存库仑计零点偏置与误差预算
+    preferences_.putFloat(PREFS_KEY_CC_OFFSET, cc_offset_lsb_);
+    preferences_.putFloat(PREFS_KEY_SOC_ERR_EST, soc_error_est_pct_);
     
     DBG.printf_P(PSTR("BMS: Saved (SOH=%.1f%%, cap=%.1f mAh, acc_ch=%.1f, acc_dch=%.1f)\n"),
         stats_.soh, current_remaining_capacity, accumulated_charge_mAh, accumulated_discharge_mAh);
@@ -1626,6 +1551,12 @@ bool BMS::resetBatteryData() {
     // 重置临时SOH迟滞状态
     temporary_soh_active_ = false;
 
+    // 误差预算重置为高不确定度（新电池组一无所知）；
+    // cc_offset_lsb_ 是板级属性（检流电阻+AFE失调），换电池组不重置
+    soc_error_est_pct_ = 10.0f;
+    cc_zero_sum_lsb_ = 0.0f;
+    cc_zero_cnt_ = 0;
+
     // 持久化到NVS
     bool result = saveToStorage();
 
@@ -1657,6 +1588,12 @@ bool BMS::loadFromStorage() {
     charge_soh_tracking_ = preferences_.getUInt(PREFS_KEY_CHG_SOH_TRACK, 0) != 0;
     charge_soc_start_ = preferences_.getFloat(PREFS_KEY_CHG_SOH_SOC, 0.0f);
     charge_cc_raw_start_ = preferences_.getFloat(PREFS_KEY_CHG_SOH_CC, 0.0f);
+
+    // 恢复库仑计零点偏置与误差预算（重启期间未计数，起始误差加0.5%保守量）
+    cc_offset_lsb_ = preferences_.getFloat(PREFS_KEY_CC_OFFSET, 0.0f);
+    if (fabsf(cc_offset_lsb_) > 10.0f) cc_offset_lsb_ = 0.0f;   // 异常值防御
+    soc_error_est_pct_ = preferences_.getFloat(PREFS_KEY_SOC_ERR_EST, 5.0f) + 0.5f;
+    soc_error_est_pct_ = constrain(soc_error_est_pct_, 0.0f, 50.0f);
     
     if (stats_.soh < 0 || stats_.soh > 100) stats_.soh = 100.0f;
 
@@ -1673,6 +1610,7 @@ bool BMS::validateConfig(const BMS_Config_t& config) {
     if (config.cell_count < 3 || config.cell_count > 5) return false;  // 硬件仅支持3-5串，与ConfigManager保持一致
     if (config.nominal_capacity_mAh == 0) return false;
     if (config.cell_ov_threshold <= config.cell_uv_threshold) return false;
+    if (config.chemistry > CHEM_LFP) return false;
     return true;
 }
 
@@ -1689,4 +1627,38 @@ BQ76920_InitConfig BMS::generateChipConfig(const BMS_Config_t& config) {
         .scd_delay = SCD_DELAY_100_US,
         .coulomb_counter_enabled = true
     };
+}
+
+// =============================================================================
+// 化学常量边界表（与 battery_chemistry.h 配套；数值依据见 docs/lfp-bms-inheritance-plan.md）
+// =============================================================================
+static const ChemistryLimits CHEM_LIMITS_NCM = {
+    .valid_cell_min_mV = 2500, .valid_cell_max_mV = 4500,
+    .ov_range_min_mV = 4000, .ov_range_max_mV = 4500,
+    .ov_rec_min_mV   = 4000, .ov_rec_max_mV   = 4300,
+    .uv_range_min_mV = 2500, .uv_range_max_mV = 3500,
+    .uv_rec_min_mV   = 2800, .uv_rec_max_mV   = 3300,
+    .recommended_ov_mV = 4210, .recommended_ov_rec_mV = 4180,
+    .recommended_uv_mV = 3000, .recommended_uv_rec_mV = 3050,
+    .recommended_charge_cell_mV = 4150,   // 4200 会违反 充电电压<=串数*(OV-30) 交叉校验，取保守值
+    .nominal_cell_mV = 3700,
+    .burst_min_delta_mA = 1000,
+    .name = "NCM",
+};
+static const ChemistryLimits CHEM_LIMITS_LFP = {
+    .valid_cell_min_mV = 2000, .valid_cell_max_mV = 4000,
+    .ov_range_min_mV = 3500, .ov_range_max_mV = 3800,
+    .ov_rec_min_mV   = 3400, .ov_rec_max_mV   = 3600,
+    .uv_range_min_mV = 2000, .uv_range_max_mV = 2900,
+    .uv_rec_min_mV   = 2300, .uv_rec_max_mV   = 3000,
+    .recommended_ov_mV = 3650, .recommended_ov_rec_mV = 3550,
+    .recommended_uv_mV = 2500, .recommended_uv_rec_mV = 2800,
+    .recommended_charge_cell_mV = 3600,
+    .nominal_cell_mV = 3200,
+    .burst_min_delta_mA = 2000,
+    .name = "LiFePO4",
+};
+
+const ChemistryLimits& getChemistryLimits(BatteryChemistry_t chem) {
+    return (chem == CHEM_LFP) ? CHEM_LIMITS_LFP : CHEM_LIMITS_NCM;
 }

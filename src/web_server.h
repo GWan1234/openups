@@ -45,6 +45,9 @@ private:
     uint8_t login_failures_;
     unsigned long login_lockout_until_;
 
+    // 化学类型切换待处理标记
+    bool chemistry_change_pending_ = false;
+
     bool isAuthenticated(AsyncWebServerRequest* request);
     bool ensureAuthenticated(AsyncWebServerRequest* request);
     const char* createSession();                                  // 返回新 token（指向内部存储）

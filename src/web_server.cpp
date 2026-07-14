@@ -470,6 +470,8 @@ void WebServer::buildBmsResponse(DynamicJsonDocument& doc, const System_Global_S
     ir_arr.add(serialized(String(state.bms.cell_internal_resistance[i], 1)));
   }
   doc["ir_sample_count"] = state.bms.ir_sample_count;
+  doc["chemistry"] = getChemistryLimits((BatteryChemistry_t)state.bms.chemistry).name;
+  doc["soc_error_est"] = serialized(String(state.bms.soc_error_est, 1));
 }
 
 void WebServer::buildPowerResponse(DynamicJsonDocument& doc, const System_Global_State& state) {
@@ -594,6 +596,14 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
   metrics += "# HELP ups_bms_cycle_count Battery cycle count\n";
   metrics += "# TYPE ups_bms_cycle_count gauge\n";
   metrics += "ups_bms_cycle_count " + String(state.bms.cycle_count) + "\n\n";
+
+  metrics += "# HELP ups_bms_chemistry Battery chemistry (0=NCM, 1=LiFePO4)\n";
+  metrics += "# TYPE ups_bms_chemistry gauge\n";
+  metrics += "ups_bms_chemistry " + String(state.bms.chemistry) + "\n\n";
+
+  metrics += "# HELP ups_bms_soc_error_est Estimated SOC error budget in percent\n";
+  metrics += "# TYPE ups_bms_soc_error_est gauge\n";
+  metrics += "ups_bms_soc_error_est " + String(state.bms.soc_error_est, 1) + "\n\n";
   
   metrics += "# HELP ups_bms_capacity_full Full battery capacity in mAh\n";
   metrics += "# TYPE ups_bms_capacity_full gauge\n";
@@ -1142,6 +1152,8 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   REPLACE_FMT("%PWR_CHARGE_CURRENT%", "%d", powerConfig->max_charge_current);
   REPLACE_FMT("%PWR_DISCHARGE_CURRENT%", "%d", powerConfig->max_discharge_current);
   
+  REPLACE("%BMS_CHEM_NCM%", (bmsConfig->chemistry == CHEM_NCM) ? " selected" : "");
+  REPLACE("%BMS_CHEM_LFP%", (bmsConfig->chemistry == CHEM_LFP) ? " selected" : "");
   REPLACE("%BMS_CELL_COUNT_3%", (bmsConfig->cell_count == 3) ? " selected" : "");
   REPLACE("%BMS_CELL_COUNT_4%", (bmsConfig->cell_count == 4) ? " selected" : "");
   REPLACE("%BMS_CELL_COUNT_5%", (bmsConfig->cell_count == 5) ? " selected" : "");
@@ -1338,6 +1350,20 @@ void WebServer::handleSaveConfig(AsyncWebServerRequest* request) {
     DBG.println(F("==========================================="));
 
     ESP.restart();
+  } else if (chemistry_change_pending_) {
+    // 化学类型变更：重置电池学习数据（SOH/循环/库仑计基准全部失效）并重启，
+    // 重启后 setup() 按新 chemistry 实例化正确子类
+    chemistry_change_pending_ = false;
+    DBG.println(F("[WebServer] Chemistry changed - resetting battery data & rebooting"));
+    EventBus::getInstance().publish(EVT_BMS_RESET_BATTERY_DATA, nullptr);  // 同步执行
+
+    responseDoc["message"] = "Battery chemistry changed. Battery data reset. Device will reboot...";
+    responseDoc["restart_required"] = true;
+    char responseBuffer[512];
+    serializeJson(responseDoc, responseBuffer);
+    request->send(200, "application/json", responseBuffer);
+    delay(100);
+    ESP.restart();
   } else {
     // 正常运行模式：热更新，不需要重启
     // 事件已经通过 updateSystemConfig/updateBMSConfig/updatePowerConfig 发布
@@ -1498,6 +1524,7 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
   }
 
   // Update BMS Configuration
+  chemistry_change_pending_ = false;  // 每次请求重置
   if (doc.containsKey("bms")) {
     JsonVariantConst bms = doc["bms"];
 
@@ -1506,6 +1533,33 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
       if (val >= 3 && val <= 5) tempBmsConfig.cell_count = val;
       else addError("bms.cell_count", "must be 3-5");
     }
+
+    // ---- 化学类型（变更需 重置电池数据+重启，由 handleSaveConfig 执行） ----
+    if (bms.containsKey("chemistry")) {
+      const char* chem_str = bms["chemistry"];
+      uint8_t chem_new = tempBmsConfig.chemistry;
+      if (chem_str && strcmp(chem_str, "ncm") == 0) chem_new = CHEM_NCM;
+      else if (chem_str && strcmp(chem_str, "lifepo4") == 0) chem_new = CHEM_LFP;
+      else addError("bms.chemistry", "must be 'ncm' or 'lifepo4'");
+
+      if (chem_new != tempBmsConfig.chemistry) {
+        tempBmsConfig.chemistry = chem_new;
+        chemistry_change_pending_ = true;
+        // 请求未携带新阈值时自动填入目标化学推荐值（拒绝混搭旧阈值）
+        const ChemistryLimits& NL = getChemistryLimits((BatteryChemistry_t)chem_new);
+        if (!bms.containsKey("cell_ov_threshold")) tempBmsConfig.cell_ov_threshold = NL.recommended_ov_mV;
+        if (!bms.containsKey("cell_uv_threshold")) tempBmsConfig.cell_uv_threshold = NL.recommended_uv_mV;
+        if (!bms.containsKey("cell_ov_recover"))   tempBmsConfig.cell_ov_recover   = NL.recommended_ov_rec_mV;
+        if (!bms.containsKey("cell_uv_recover"))   tempBmsConfig.cell_uv_recover   = NL.recommended_uv_rec_mV;
+        if (!doc.containsKey("power") || !doc["power"].containsKey("charge_voltage_limit")) {
+          tempPowerConfig.charge_voltage_limit =
+              (uint16_t)(tempBmsConfig.cell_count * NL.recommended_charge_cell_mV);
+        }
+      }
+    }
+    // 后续 OV/UV 校验统一按目标化学的边界表
+    const ChemistryLimits& CL = getChemistryLimits((BatteryChemistry_t)tempBmsConfig.chemistry);
+
     if (bms.containsKey("nominal_capacity_mAh")) {
       uint32_t val = bms["nominal_capacity_mAh"];
       if (val > 0 && val <= 50000) tempBmsConfig.nominal_capacity_mAh = val;
@@ -1513,23 +1567,23 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     }
     if (bms.containsKey("cell_ov_threshold")) {
       uint16_t val = bms["cell_ov_threshold"];
-      if (val >= 4000 && val <= 4500) tempBmsConfig.cell_ov_threshold = val;
-      else addError("bms.cell_ov_threshold", "must be 4000-4500 mV");
+      if (val >= CL.ov_range_min_mV && val <= CL.ov_range_max_mV) tempBmsConfig.cell_ov_threshold = val;
+      else addError("bms.cell_ov_threshold", "out of range for selected chemistry");
     }
     if (bms.containsKey("cell_uv_threshold")) {
       uint16_t val = bms["cell_uv_threshold"];
-      if (val >= 2500 && val <= 3500) tempBmsConfig.cell_uv_threshold = val;
-      else addError("bms.cell_uv_threshold", "must be 2500-3500 mV");
+      if (val >= CL.uv_range_min_mV && val <= CL.uv_range_max_mV) tempBmsConfig.cell_uv_threshold = val;
+      else addError("bms.cell_uv_threshold", "out of range for selected chemistry");
     }
     if (bms.containsKey("cell_ov_recover")) {
       uint16_t val = bms["cell_ov_recover"];
-      if (val >= 4000 && val <= 4300) tempBmsConfig.cell_ov_recover = val;
-      else addError("bms.cell_ov_recover", "must be 4000-4300 mV");
+      if (val >= CL.ov_rec_min_mV && val <= CL.ov_rec_max_mV) tempBmsConfig.cell_ov_recover = val;
+      else addError("bms.cell_ov_recover", "out of range for selected chemistry");
     }
     if (bms.containsKey("cell_uv_recover")) {
       uint16_t val = bms["cell_uv_recover"];
-      if (val >= 2800 && val <= 3300) tempBmsConfig.cell_uv_recover = val;
-      else addError("bms.cell_uv_recover", "must be 2800-3300 mV");
+      if (val >= CL.uv_rec_min_mV && val <= CL.uv_rec_max_mV) tempBmsConfig.cell_uv_recover = val;
+      else addError("bms.cell_uv_recover", "out of range for selected chemistry");
     }
     if (bms.containsKey("max_charge_current")) {
       uint16_t val = bms["max_charge_current"];
@@ -1678,6 +1732,11 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     
   }
   
+  // 交叉校验：充电电压 ≤ 串数×(OV-30mV)
+  if (!configManager->validateCrossConfig(tempBmsConfig, tempPowerConfig, true)) {
+    addError("power.charge_voltage_limit", "must be <= cell_count*(cell_ov_threshold-30mV)");
+  }
+
   // ========== 字段级校验汇总 ==========
   // 任何字段非法则整体拒绝，不提交任何配置（两阶段：先全部校验，后统一提交）
   if (errors.size() > 0) {
@@ -1696,7 +1755,10 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     DBG.println(F("Error: Failed to update BMS config"));
     success = false;
   }
-  if (doc.containsKey("power") && !configManager->updatePowerConfig(tempPowerConfig, false)) {
+  // 化学切换自动派生了 charge_voltage_limit，即使请求未携带 power 段也必须提交，
+  // 否则 NVS 中残留旧化学的充电电压（如 NCM 12450mV 灌 3S LFP），重启后过充
+  if ((doc.containsKey("power") || chemistry_change_pending_) &&
+      !configManager->updatePowerConfig(tempPowerConfig, false)) {
     DBG.println(F("Error: Failed to update power config"));
     success = false;
   }

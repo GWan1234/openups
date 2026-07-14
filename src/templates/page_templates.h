@@ -230,14 +230,15 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <fieldset class="fs">
 <legend class="lg" data-i18n="cfgBms">🔋 BMS 配置</legend>
 <div class="ss"><div class="st" data-i18n="cfgBattParams">📋 电池参数</div>
+<div class="fg"><label data-i18n="cfgChemistry">电池类型:</label><select id="bchem" onchange="onChemChange()"><option value="ncm"%BMS_CHEM_NCM% data-i18n="cfgChemNcm">三元锂 (NCM)</option><option value="lifepo4"%BMS_CHEM_LFP% data-i18n="cfgChemLfp">磷酸铁锂 (LiFePO4)</option></select></div>
 <div class="fg"><label data-i18n="cfgCellCount">电池串数:</label><select id="bc"><option value="3"%BMS_CELL_COUNT_3% data-i18n="cfgCells3">3 串</option><option value="4"%BMS_CELL_COUNT_4% data-i18n="cfgCells4">4 串</option><option value="5"%BMS_CELL_COUNT_5% data-i18n="cfgCells5">5 串</option></select></div>
 <div class="fg"><label data-i18n="cfgNominalCap">标称容量:</label><input type="number" id="bn" value="%BMS_NOMINAL_CAPACITY%" min="100" max="50000" step="100"><span class="u">mAh</span></div>
 </div>
 <div class="ss"><div class="st" data-i18n="cfgVoltProtection">⚡ 电压保护</div>
-<div class="fg"><label data-i18n="cfgOvThreshold">过压阈值:</label><input type="number" id="bo" value="%BMS_CELL_OV%" min="4000" max="4500" step="10"><span class="u">mV</span></div>
-<div class="fg"><label data-i18n="cfgUvThreshold">欠压阈值:</label><input type="number" id="bu" value="%BMS_CELL_UV%" min="2500" max="3500" step="10"><span class="u">mV</span></div>
-<div class="fg"><label data-i18n="cfgOvRecover">过压恢复:</label><input type="number" id="bor" value="%BMS_CELL_OV_RECOVER%" min="4000" max="4300" step="10"><span class="u">mV</span></div>
-<div class="fg"><label data-i18n="cfgUvRecover">欠压恢复:</label><input type="number" id="bur" value="%BMS_CELL_UV_RECOVER%" min="2800" max="3300" step="10"><span class="u">mV</span></div>
+<div class="fg"><label data-i18n="cfgOvThreshold">过压阈值:</label><input type="number" id="bo" value="%BMS_CELL_OV%" step="10"><span class="u">mV</span></div>
+<div class="fg"><label data-i18n="cfgUvThreshold">欠压阈值:</label><input type="number" id="bu" value="%BMS_CELL_UV%" step="10"><span class="u">mV</span></div>
+<div class="fg"><label data-i18n="cfgOvRecover">过压恢复:</label><input type="number" id="bor" value="%BMS_CELL_OV_RECOVER%" step="10"><span class="u">mV</span></div>
+<div class="fg"><label data-i18n="cfgUvRecover">欠压恢复:</label><input type="number" id="bur" value="%BMS_CELL_UV_RECOVER%" step="10"><span class="u">mV</span></div>
 </div>
 <div class="ss"><div class="st" data-i18n="cfgCurrProtection">🔌 电流保护</div>
 <div class="fg"><label data-i18n="cfgMaxCharge">最大充电电流:</label><input type="number" id="bmc" value="%BMS_MAX_CHARGE%" min="100" max="10000" step="100"><span class="u">mA</span></div>
@@ -250,6 +251,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="ss"><div class="st" data-i18n="cfgBalConfig">⚖️ 均衡配置</div>
 <div class="fg"><label data-i18n="cfgBalancing">电池均衡:</label><label class="cl"><input type="checkbox" id="bbe" %BMS_BALANCING_CHECKED%><span style="margin-left:8px" data-i18n="cfgEnabled">启用</span></label></div>
 <div class="fg"><label data-i18n="cfgBalDiff">均衡压差:</label><input type="number" id="bbd" value="%BMS_BALANCING_DIFF%" min="5" max="100" step="5"><span class="u">mV</span></div>
+<div class="hint" data-i18n="cfgBalLfpTip" style="margin-top:4px;font-size:12px;color:#888">磷酸铁锂电池仅在充电末端(单体>3.4V)执行均衡，平台区均衡无意义，属预期行为。</div>
 </div>
 </fieldset>
 </div>
@@ -449,6 +451,13 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="wz-card" id="wz-card-2" style="display:none">
 <div class="wz-card-title" data-i18n="wzBatteryTitle">🔋 电池配置</div>
 <div class="wz-info" data-i18n="wzBatteryDesc">请根据您的电池规格进行配置</div>
+<div class="wz-field">
+<label data-i18n="wzChemistry">电池类型</label>
+<select id="wz-chemistry" onchange="wzChemChange()">
+<option value="ncm" data-i18n="cfgChemNcm">三元锂 (NCM)</option>
+<option value="lifepo4" data-i18n="cfgChemLfp">磷酸铁锂 (LiFePO4)</option>
+</select>
+</div>
 <div class="wz-field">
 <label data-i18n="wzCellCount">电池串数 (Cells)</label>
 <select id="wz-cell-count">

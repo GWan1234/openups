@@ -25,6 +25,9 @@ public:
     bool updateSystemConfig(const Configuration& config, bool immediate = false);
     bool updateBMSConfig(const BMS_Config_t& config, bool immediate = false);
     bool updatePowerConfig(const Power_Config_t& config, bool immediate = false);
+
+    // 交叉校验：充电电压 vs 串数×(OV-30)
+    bool validateCrossConfig(const BMS_Config_t& bms, const Power_Config_t& power, bool strict);
     
     // Direct configuration access for manual updates
     Configuration* getSystemConfig() { return &systemConfig; }

@@ -8,6 +8,7 @@
 #include <esp_task_wdt.h>
 
 #include "src/debug.h"
+#include "src/battery_chemistry.h"
 #include "src/data_structures.h"
 #include "src/pins_config.h"
 #include "src/config_manager.h"
@@ -17,6 +18,7 @@
 #include "src/bq24780s.h"
 #include "src/bq76920.h"
 #include "src/bms.h"
+#include "src/battery_chemistry.h"
 #include "src/power_management.h"
 #include "src/system_management.h"
 #include "src/WiFiManager.h"
@@ -62,7 +64,7 @@ SHTC3* shtc3 = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.1.7";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.2.0";
   strcpy(FIRMWARE_ID_TAG, version);
   DBG.println(F("Checking for factory reset button..."));
   
@@ -189,7 +191,8 @@ bool initializeSystemModules() {
   // Normal mode: full initialization
   // Step 3: BMS
   DBG.println(F("Step 3: Initializing BMS..."));
-  bms = new BMS(hardware->getI2CInterface(), *bmsConfig);
+  bms = BMS::create(static_cast<BatteryChemistry_t>(bmsConfig->chemistry),
+                    hardware->getI2CInterface(), *bmsConfig);
   
   if (!initModule(bms, "BMS")) {
     DBG.println(F("WARNING: BMS not found, running in limited mode"));
@@ -224,7 +227,9 @@ bool initializeSystemModules() {
     upsHidService = new UPS_HID_Service();
     upsHidService->setDeviceIdentifier(systemConfig->identifier);
     upsHidService->setCapacityMode(systemConfig->hid_report_mode);
-    upsHidService->setBatteryConfig(bmsConfig->cell_count, 3700, bmsConfig->nominal_capacity_mAh);
+    upsHidService->setBatteryConfig(bmsConfig->cell_count,
+        getChemistryLimits((BatteryChemistry_t)bmsConfig->chemistry).nominal_cell_mV,
+        bmsConfig->nominal_capacity_mAh);
     //暂不启动，等待系统启动稳定后启动
   } else {
     DBG.println(F("UPS HID Service disabled in configuration"));

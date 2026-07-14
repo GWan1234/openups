@@ -7,6 +7,7 @@
 #include "event_types.h"
 #include "debug.h"
 #include "i18n.h"
+#include "battery_chemistry.h"
 
 #define MQTT_PUBACK_TIMEOUT_MS  90000UL   // 90秒无 PUBACK 判定为幽灵连接（每10s发一次QoS1，90s≈9次未确认）
 
@@ -602,6 +603,7 @@ bool MQTTService::publishStateData() {
     JsonObject bms = doc.createNestedObject("bms");
     bms["soc"] = m_state->bms.soc;
     bms["soh"] = m_state->bms.soh;
+    bms["chemistry"] = getChemistryLimits((BatteryChemistry_t)m_state->bms.chemistry).name;
     bms["voltage"] = m_state->bms.voltage;
     bms["current"] = m_state->bms.current;
     bms["temperature"] = m_state->bms.temperature;

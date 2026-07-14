@@ -7,6 +7,7 @@
 #include "bq76920.h"
 #include "i2c_interface.h"
 #include "data_structures.h"
+#include "battery_chemistry.h"
 #include "event_types.h"
 #include "pins_config.h"
 
@@ -30,6 +31,9 @@
 #define PREFS_KEY_CHG_SOH_TRACK "bms_chg_tr"
 #define PREFS_KEY_CHG_SOH_SOC   "bms_chg_ss"
 #define PREFS_KEY_CHG_SOH_CC    "bms_chg_cc"
+#define PREFS_KEY_DATA_CHEM     "bms_chem"    // 学习数据所属化学类型
+#define PREFS_KEY_CC_OFFSET     "bms_cc_ofs"  // 库仑计零点偏置 (LSB)
+#define PREFS_KEY_SOC_ERR_EST   "bms_soc_err" // SOC 估计误差预算 (%)
 
 // 自消耗计算 NVS keys
 #define PREFS_KEY_SELF_CONSUMP  "sc_mA"
@@ -62,8 +66,12 @@ typedef struct {
     unsigned long learning_start_time;
 } SOH_Learning_Context_t;
 
+#define BMS_CONFIG_VERSION 2
+
 typedef struct {
+    uint16_t config_version;          // = BMS_CONFIG_VERSION，v1 结构无此字段
     uint8_t cell_count;
+    uint8_t chemistry;                // BatteryChemistry_t，v1 结构无此字段，默认 CHEM_NCM
     uint32_t nominal_capacity_mAh;
     uint16_t cell_ov_threshold;
     uint16_t cell_uv_threshold;
@@ -90,8 +98,16 @@ enum PendingFETAction {
 
 class BMS {
 public:
-    explicit BMS(I2CInterface& i2c_interface, const BMS_Config_t& config);
-    
+    // 工厂：按化学类型实例化子类（替代直接 new BMS）
+    static BMS* create(BatteryChemistry_t chemistry,
+                       I2CInterface& i2c_interface, const BMS_Config_t& config);
+    virtual ~BMS() {}
+
+    // 当前实例的化学类型（子类实现）
+    virtual BatteryChemistry_t chemistry() const = 0;
+    // 本化学的常量边界（有效窗口/推荐值等）
+    const ChemistryLimits& limits() const { return getChemistryLimits(chemistry()); }
+
     bool begin();
     void update(System_Global_State& globalState);
     
@@ -100,7 +116,38 @@ public:
     
 private:
     void processAlertStatus(uint8_t fault_reg);
-    
+
+    // ==================== 化学差异 hook（子类实现/覆写） ====================
+protected:
+    explicit BMS(I2CInterface& i2c_interface, const BMS_Config_t& config);
+
+    // OCV 查表：单体电压(mV) -> SOC%；返回 -1 表示该电压区间不可信
+    // （LFP 平台区返回 -1，调用方自动回退库仑计，无需任何化学特判）
+    virtual float ocvToSoc(uint16_t cell_mv) const = 0;
+    // 满充锚点判定（cutoff_mA = C/20）
+    virtual bool isFullChargeAnchor(const BMS_State& s, float cutoff_mA) const = 0;
+    // 放空锚点判定
+    virtual bool isEmptyAnchor(const BMS_State& s, float cutoff_mA) const = 0;
+    // 放空锚点锚定到的 SOC（NCM 恒 0；LFP 大电流 IR 补偿路径锚 5%）
+    virtual float emptyAnchorSoc(const BMS_State& s) const { return 0.0f; }
+    // SOC 融合策略：锚定/OCV 收敛/库仑计 的合成（差异最大的算法点）
+    // 职责：更新 current_remaining_capacity 与 last_stable_soc_
+    virtual void fuseSoc(BMS_State& s, float soc_coulomb, float q_max) = 0;
+    // SOC 初始化 OCV 不可用回退 50% 后，是否保持等待锚点校准
+    virtual bool fallbackWaitsForAnchor() const { return false; }
+    // 临时 SOH（压差折算可用容量）：NCM 用 OCV 斜率法，LFP 禁用
+    virtual void updateTemporarySOH(BMS_State& bmsState) = 0;
+    // 静置 ΔSOC 法 SOH 学习是否启用（LFP 禁用：循环论证）
+    virtual bool restSohLearningEnabled() const { return true; }
+    // 充电阶段 ΔSOC 法 SOH 学习（NCM 实现；LFP 空实现）
+    virtual void detectChargeSOHLearning(BMS_State& bmsState) {}
+    // 锚点事件回调（基类在重置 cc_accumulated_raw_mAh_ 之前调用，
+    // 子类在此结算化学相关的 SOH 学习）
+    virtual void onFullChargeAnchor(BMS_State& s) {}
+    virtual void onEmptyDischargeAnchor(BMS_State& s) {}
+    // 均衡准入（NCM 恒 true；LFP 仅充电末端上升区）
+    virtual bool balancingPermitted(const BMS_State& s) const { return true; }
+
 public:
 
     // DFET Control
@@ -121,7 +168,7 @@ public:
     bool saveToStorage();
     bool loadFromStorage();
     bool resetBatteryData();
-    static BMS_Config_t getDefaultConfig(uint8_t cell_count);
+    static BMS_Config_t getDefaultConfig(uint8_t cell_count, BatteryChemistry_t chemistry);
 
     // 自消耗计算结果 getter
     float getSelfConsumption_mA() const { return self_consumption_mA_; }
@@ -213,6 +260,25 @@ public:
     
     // SOH学习专用的原始库仑计累积(不受SOH缩放影响)
     float cc_accumulated_raw_mAh_;
+
+    // ==================== 库仑计精度：零点偏置/丢窗补偿/误差预算 ====================
+    // 零点偏置是板级属性（检流电阻+AFE失调），不随电池组重置。
+    // 1 LSB = 8.44uV/5mΩ ≈ 1.69mA，偏置1LSB即漂移约40mAh/天
+    float cc_offset_lsb_ = 0.0f;          // 学习到的零点偏置 (LSB)，积分前逐样本扣除
+    bool cc_zero_window_ = false;         // 真零电流窗口：AC在位+充电器关闭+静置
+    float cc_zero_sum_lsb_ = 0.0f;        // 零窗口内原始LSB累加
+    uint16_t cc_zero_cnt_ = 0;            // 零窗口样本数
+    static const uint16_t CC_ZERO_BLOCK_SAMPLES = 1200;  // 块平均样本数（250ms/样 ≈ 5分钟）
+
+    unsigned long last_cc_read_ms_ = 0;   // 上次成功读CC的时刻（丢窗补偿基准）
+    int16_t latest_current_mA_ = 0;       // 最近一次电流读数（丢窗补偿用）
+
+    // SOC 估计误差预算 (%)：时间×残余偏置上界 + 吞吐×增益不确定度累积，
+    // 锚点校准时清小。>5% 时发布校准建议事件（建议充到满充锚点一次）
+    float soc_error_est_pct_ = 5.0f;
+    unsigned long last_calib_recommend_ms_ = 0;   // 校准建议事件限频（24h）
+    float getSocErrorEstimate() const { return soc_error_est_pct_; }
+    float getCCOffsetLsb() const { return cc_offset_lsb_; }
     
     // 充电阶段SOH学习
     bool charge_soh_tracking_;
@@ -245,14 +311,11 @@ public:
     float calculateSOC_Coulomb();
     float getAvailableCapacity() const;
     float getTemperatureCompensatedCapacity(float temperature) const;
-    void updateTemporarySOH(BMS_State& bmsState);
-    
     bool processCoulombCounterData();
     void compensateSelfDischarge(unsigned long delta_time_ms);
     void detectFullChargeCalibration(BMS_State& bmsState);
     void detectEmptyDischargeCalibration(BMS_State& bmsState);
     void updateSOHLearning(BMS_State& bmsState);
-    void detectChargeSOHLearning(BMS_State& bmsState);
     void accumulatePartialCycle(float delta_mah);
     BQ76920_InitConfig generateChipConfig(const BMS_Config_t& config);
     

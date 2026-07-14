@@ -9,6 +9,24 @@
 // 静态实例指针，供事件回调使用
 static ConfigManager* s_configManagerInstance = nullptr;
 
+// 仅用于 NVS 迁移的 v1 冻结布局（对应加 config_version/chemistry 之前的 BMS_Config_t）
+// 注意：sizeof(BMS_Config_v1_t) == sizeof(BMS_Config_t)（对齐填充抵消了新增字段），
+// 因此 v2 使用新 key "bms_cfg2" 区分，绝不能只靠长度判断版本。
+typedef struct {
+    uint8_t cell_count;
+    uint32_t nominal_capacity_mAh;
+    uint16_t cell_ov_threshold;
+    uint16_t cell_uv_threshold;
+    uint16_t cell_ov_recover;
+    uint16_t cell_uv_recover;
+    uint16_t max_charge_current;
+    uint16_t max_discharge_current;
+    uint16_t short_circuit_threshold;
+    float temp_overheat_threshold;
+    bool balancing_enabled;
+    float balancing_voltage_diff;
+} BMS_Config_v1_t;
+
 ConfigManager::ConfigManager() : m_isConfigModeRequired(false) {
     web_username_[0] = '\0';
     web_password_[0] = '\0';
@@ -57,15 +75,54 @@ bool ConfigManager::loadConfiguration(bool forceReset) {
     Power_Config_t loadedPowerConfig;
     
     size_t systemBytes = preferences.getBytes("sys_config", &loadedSystemConfig, sizeof(Configuration));
-    size_t bmsBytes = preferences.getBytes("bms_config", &loadedBMSConfig, sizeof(BMS_Config_t));
+    size_t bmsBytes = preferences.getBytes("bms_cfg2", &loadedBMSConfig, sizeof(BMS_Config_t));
+    bool bmsMigrated = false;
+    if (bmsBytes != sizeof(BMS_Config_t) ||
+        loadedBMSConfig.config_version != BMS_CONFIG_VERSION) {
+        // 尝试旧结构迁移（升级用户绝不能被打回配置模式）
+        BMS_Config_v1_t v1;
+        size_t v1Bytes = preferences.getBytes("bms_config", &v1, sizeof(BMS_Config_v1_t));
+        if (v1Bytes == sizeof(BMS_Config_v1_t) && v1.cell_count >= 3 && v1.cell_count <= 5) {
+            memset(&loadedBMSConfig, 0, sizeof(BMS_Config_t));
+            loadedBMSConfig.config_version        = BMS_CONFIG_VERSION;
+            loadedBMSConfig.chemistry             = CHEM_NCM;   // 旧配置一律 NCM，绝不猜化学
+            loadedBMSConfig.cell_count            = v1.cell_count;
+            loadedBMSConfig.nominal_capacity_mAh  = v1.nominal_capacity_mAh;
+            loadedBMSConfig.cell_ov_threshold     = v1.cell_ov_threshold;
+            loadedBMSConfig.cell_uv_threshold     = v1.cell_uv_threshold;
+            loadedBMSConfig.cell_ov_recover       = v1.cell_ov_recover;
+            loadedBMSConfig.cell_uv_recover       = v1.cell_uv_recover;
+            loadedBMSConfig.max_charge_current    = v1.max_charge_current;
+            loadedBMSConfig.max_discharge_current = v1.max_discharge_current;
+            loadedBMSConfig.short_circuit_threshold = v1.short_circuit_threshold;
+            loadedBMSConfig.temp_overheat_threshold = v1.temp_overheat_threshold;
+            loadedBMSConfig.balancing_enabled     = v1.balancing_enabled;
+            loadedBMSConfig.balancing_voltage_diff = v1.balancing_voltage_diff;
+            bmsBytes = sizeof(BMS_Config_t);   // 让后续有效性判断通过
+            bmsMigrated = true;
+            DBG.println(F("BMS config migrated v1 -> v2 (chemistry=NCM)"));
+        }
+    }
     size_t powerBytes = preferences.getBytes("power_config", &loadedPowerConfig, sizeof(Power_Config_t));
-    
+
     preferences.end();
-    
+
+    // 迁移成功立即回写新 key，下次启动直接走 v2 路径
+    if (bmsMigrated) {
+        preferences.begin("ups_config", false);
+        preferences.putBytes("bms_cfg2", &loadedBMSConfig, sizeof(BMS_Config_t));
+        preferences.end();
+    }
+
     // 3. 检查读取是否成功
     bool systemValid = (systemBytes == sizeof(Configuration)) && validateSystemConfig(loadedSystemConfig);
     bool bmsValid = (bmsBytes == sizeof(BMS_Config_t)) && validateBMSConfig(loadedBMSConfig);
     bool powerValid = (powerBytes == sizeof(Power_Config_t)) && validatePowerConfig(loadedPowerConfig);
+
+    // 交叉校验（仅打日志，不阻断加载）
+    if (bmsValid && powerValid) {
+        validateCrossConfig(loadedBMSConfig, loadedPowerConfig, false);
+    }
 
     // 4. 核心业务完整性判断
     bool allValid = systemValid && bmsValid && powerValid;
@@ -284,12 +341,15 @@ void ConfigManager::loadSystemDefaults() {
 
 void ConfigManager::loadBMSDefaults() {
     // BMS configuration defaults - 使用安全的保守值
-    bmsConfig = BMS::getDefaultConfig(3); // 3 串默认配置
+    bmsConfig = BMS::getDefaultConfig(3, CHEM_NCM); // 3 串三元锂默认配置
 }
 
 void ConfigManager::loadPowerDefaults() {
     // Power configuration defaults - 使用安全的保守值
     powerConfig = PowerManagement::getDefaultConfig();
+    // 充电电压按 BMS 化学与串数派生（loadBMSDefaults 先于本函数执行）
+    powerConfig.charge_voltage_limit = (uint16_t)(bmsConfig.cell_count *
+        getChemistryLimits((BatteryChemistry_t)bmsConfig.chemistry).recommended_charge_cell_mV);
 }
 
 bool ConfigManager::validateSystemConfig(const Configuration& config) {
@@ -420,25 +480,34 @@ bool ConfigManager::validateBMSConfig(const BMS_Config_t& config) {
         DBG.printf_P(PSTR("  Invalid cell count: %d (must be 3-5)\n"), config.cell_count);
         return false;
     }
-    
+
+    if (config.config_version != BMS_CONFIG_VERSION) {
+        DBG.println(F("  Invalid BMS config version"));
+        return false;
+    }
+    if (config.chemistry > CHEM_LFP) {
+        DBG.println(F("  Invalid battery chemistry"));
+        return false;
+    }
+
     // 容量必须有效
     if (config.nominal_capacity_mAh == 0) {
         DBG.println(F("  Invalid nominal capacity: 0"));
         return false;
     }
-    
+
     // 电压阈值必须合理 (单位：mV)
     if (config.cell_ov_threshold <= config.cell_uv_threshold) {
         DBG.println(F("  OV threshold must be greater than UV threshold"));
         return false;
     }
-    
+
     // 充电电流必须大于 0
     if (config.max_charge_current == 0) {
         DBG.println(F("  Max charge current is 0"));
         return false;
     }
-    
+
     return true;
 }
 
@@ -489,6 +558,20 @@ bool ConfigManager::validatePowerConfig(const Power_Config_t& config) {
     return true;
 }
 
+// 交叉校验：充电电压不得高于 串数×(单体OV阈值-30mV)。
+// strict=true 用于 Web 新输入（违反即拒绝）；
+// strict=false 用于 NVS 加载（旧配置可能违反——如 12600 vs 3S/4210，只告警不拒绝，
+// 否则升级用户会被打回配置模式）
+bool ConfigManager::validateCrossConfig(const BMS_Config_t& bms, const Power_Config_t& power, bool strict) {
+    uint32_t max_charge_mv = (uint32_t)bms.cell_count * (bms.cell_ov_threshold - 30);
+    if (power.charge_voltage_limit > max_charge_mv) {
+        DBG.printf_P(PSTR("  Cross-check: charge_voltage %u > cells*(OV-30)=%u %s\n"),
+            power.charge_voltage_limit, max_charge_mv, strict ? "(rejected)" : "(warning)");
+        return !strict;
+    }
+    return true;
+}
+
 // 内部重置方法 - 将所有参数设置为安全的保守值
 void ConfigManager::resetToDefaults() {
     DBG.println(F("Resetting to safe default values..."));
@@ -512,7 +595,7 @@ bool ConfigManager::writeToFlash() {
     Power_Config_t flashPowerConfig;
     
     size_t systemBytes = preferences.getBytes("sys_config", &flashSystemConfig, sizeof(Configuration));
-    size_t bmsBytes = preferences.getBytes("bms_config", &flashBMSConfig, sizeof(BMS_Config_t));
+    size_t bmsBytes = preferences.getBytes("bms_cfg2", &flashBMSConfig, sizeof(BMS_Config_t));
     size_t powerBytes = preferences.getBytes("power_config", &flashPowerConfig, sizeof(Power_Config_t));
     
 
@@ -536,7 +619,7 @@ bool ConfigManager::writeToFlash() {
     }
     
     if (bmsChanged) {
-        if (preferences.putBytes("bms_config", &bmsConfig, sizeof(BMS_Config_t))) {
+        if (preferences.putBytes("bms_cfg2", &bmsConfig, sizeof(BMS_Config_t))) {
             // 发布 BMS 配置变更事件
             EventBus::getInstance().publish(EVT_CONFIG_BMS_CHANGED, &bmsConfig);
             DBG.println(F("BMS configuration saved to flash"));

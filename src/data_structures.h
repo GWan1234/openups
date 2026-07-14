@@ -97,6 +97,8 @@ typedef struct {
                                     // [4]PROTECT1 [5]PROTECT2 [6]PROTECT3 [7]OV_TRIP [8]UV_TRIP [9]CC_CFG
     
     uint32_t last_update_time;      // 最后更新时间戳 (ms)
+    uint8_t chemistry;              // BatteryChemistry_t，由 BMS::update 写入，供 Web/MQTT/metrics 读取
+    float soc_error_est;            // SOC 估计误差预算 (%)，锚点校准时清小，>5% 建议校准充电
 } BMS_State;
 
 typedef struct {
