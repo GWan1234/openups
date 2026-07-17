@@ -558,14 +558,14 @@ bool ConfigManager::validatePowerConfig(const Power_Config_t& config) {
     return true;
 }
 
-// 交叉校验：充电电压不得高于 串数×(单体OV阈值-30mV)。
+// 交叉校验：充电电压不得高于 串数×(单体OV阈值-10mV)。
 // strict=true 用于 Web 新输入（违反即拒绝）；
 // strict=false 用于 NVS 加载（旧配置可能违反——如 12600 vs 3S/4210，只告警不拒绝，
 // 否则升级用户会被打回配置模式）
 bool ConfigManager::validateCrossConfig(const BMS_Config_t& bms, const Power_Config_t& power, bool strict) {
-    uint32_t max_charge_mv = (uint32_t)bms.cell_count * (bms.cell_ov_threshold - 30);
+    uint32_t max_charge_mv = (uint32_t)bms.cell_count * (bms.cell_ov_threshold - 10);
     if (power.charge_voltage_limit > max_charge_mv) {
-        DBG.printf_P(PSTR("  Cross-check: charge_voltage %u > cells*(OV-30)=%u %s\n"),
+        DBG.printf_P(PSTR("  Cross-check: charge_voltage %u > cells*(OV-10)=%u %s\n"),
             power.charge_voltage_limit, max_charge_mv, strict ? "(rejected)" : "(warning)");
         return !strict;
     }

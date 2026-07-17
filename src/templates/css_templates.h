@@ -108,6 +108,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text'
 #p-config .si{border-left:none!important;border-bottom:3px solid transparent;padding:10px 16px;font-weight:500}
 #p-config .si:hover{background:rgba(0,0,0,0.04)}
 #p-config .si.active{background:transparent;color:#007AFF;border-bottom-color:#007AFF;font-weight:600}
+
+/* 配置标签栏 - 窄屏横向滚动 */
+@media(max-width:720px){#p-config>div:first-child{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}#p-config>div:first-child::-webkit-scrollbar{display:none}#p-config .si{white-space:nowrap;flex-shrink:0}}
+
+/* Toast 通知 */
+.toast-container{position:fixed;top:60px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;pointer-events:auto;animation:toast-in .3s ease;max-width:380px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,0.12)}
+.toast.success{background:rgba(52,199,89,0.95);color:#fff}
+.toast.error{background:rgba(255,59,48,0.95);color:#fff}
+.toast.info{background:rgba(0,122,255,0.95);color:#fff}
+.toast.fade-out{animation:toast-out .3s ease forwards}
+@keyframes toast-in{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toast-out{to{opacity:0;transform:translateX(30px)}}
+
+/* 未保存修改指示 */
+.btn-dirty::after{content:'●';color:#ff9500;margin-left:6px;font-size:10px}
+
+/* WS 断线数据过期覆盖 */
+.ws-expired{opacity:.45;pointer-events:none}
 )rawliteral";
 
 // =============================================================================

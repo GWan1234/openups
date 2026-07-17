@@ -121,9 +121,6 @@ public:
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);
 
-    // 辅助函数
-    void replaceStringInBuffer(char* buffer, size_t bufferSize, const char* search, const char* replace, char* tempBuffer);
-
     // WebSocket 事件处理
     void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t * data, size_t len);
 };

@@ -10,6 +10,10 @@ const char SPA_PAGE_JS[] PROGMEM = R"rawliteral(
 var ws,rc=0;
 var curPowerMode=-1;
 var iwCfg={ssid:'',pass:'',ipMode:'dhcp',staticIp:'',staticGateway:'',staticSubnet:'',staticDns:''};
+var cfgDirty=false;
+
+// === Toast 通知（替代 alert） ===
+function toast(msg,type){var c=document.getElementById('toastBox');if(!c)return;var d=document.createElement('div');d.className='toast '+(type||'info');d.textContent=msg;c.appendChild(d);setTimeout(function(){d.classList.add('fade-out');setTimeout(function(){d.remove()},300)},type==='error'?6000:3500)}
 
 // === 多语言支持 ===
 var LANG_DATA={
@@ -87,8 +91,8 @@ jsRunning:"运行：",jsUpdating:"更新：",jsConfigMode:"配置模式",
 jsWindow:"窗口 #",jsWeekday:"星期:",jsStart:"开始:",jsEnd:"结束:",jsDelete:"删除",jsFull:"已满 (5/5)",jsAddWindow:"添加窗口",
 jsNoWindows:"暂无窗口",
 jsSelectBin:"请选择 .bin 文件",jsReady:"就绪，点击升级",jsUploading:"上传中...",jsUpgradeSuccess:"升级成功，重启中...",jsUpgrading:"升级中...",jsRetry:"重新升级",jsNetworkError:"网络错误",
-jsSaveNetChange:"网络变动，保存成功。设备即将重启...",jsSaveSuccess:"保存成功",jsSaveFailed:"保存失败：",jsNetworkErr:"网络错误",
-jsEnterStaticIp:"请输入静态 IP",jsEnterCapacity:"请输入有效的电池容量",jsOvRange:"过压阈值必须在 4000-4500mV 之间",jsUvRange:"欠压阈值必须在 2500-3500mV 之间",
+jsSaveNetChange:"网络变动，保存成功。设备即将重启...",jsSaveSuccess:"保存成功",jsSaveFailed:"保存失败：",jsNetworkErr:"网络错误",jsSaving:"保存中...",
+jsEnterStaticIp:"请输入静态 IP",jsEnterCapacity:"请输入有效的电池容量",
 jsConfirmRestart:"确定要重启设备吗？\n\n设备将在重启后短暂离线。",jsNoAcRestart:"当前非 AC 供电模式，无法重启设备。\n\n请连接电源适配器后再尝试重启。",jsRestarting:"设备即将重启，请等待几秒后刷新页面。",
 jsConfirmShip:"一旦进入此模式，需要点按对应的硬件开关才能启用电池\n\n确定要进入运输模式吗？",jsShipSuccess:"已进入运输模式！\n\nBMS 芯片已进入睡眠模式，需要点按硬件开关才能重新启用电池。",
 jsConfirmReset:"确定要重置电池数据吗？\n\n此操作将重置以下数据：\n- 电池健康度 (SOH) → 100%\n- 循环次数 → 0\n- 均衡统计数据 → 0\n- 库仑计累积值\n- SOH 学习数据\n\n重置后系统将从开路电压重新初始化 SOC。",
@@ -170,8 +174,8 @@ jsRunning:"Uptime: ",jsUpdating:"Updated: ",jsConfigMode:"Config Mode",
 jsWindow:"Window #",jsWeekday:"Week:",jsStart:"Start:",jsEnd:"End:",jsDelete:"Delete",jsFull:"Full (5/5)",jsAddWindow:"Add Window",
 jsNoWindows:"No windows",
 jsSelectBin:"Please select a .bin file",jsReady:"Ready, click to upgrade",jsUploading:"Uploading...",jsUpgradeSuccess:"Upgrade successful, restarting...",jsUpgrading:"Upgrading...",jsRetry:"Retry",jsNetworkError:"Network error",
-jsSaveNetChange:"Network changed, saved. Device will restart...",jsSaveSuccess:"Saved",jsSaveFailed:"Save failed: ",jsNetworkErr:"Network error",
-jsEnterStaticIp:"Please enter static IP",jsEnterCapacity:"Please enter valid battery capacity",jsOvRange:"OV threshold must be 4000-4500mV",jsUvRange:"UV threshold must be 2500-3500mV",
+jsSaveNetChange:"Network changed, saved. Device will restart...",jsSaveSuccess:"Saved",jsSaveFailed:"Save failed: ",jsNetworkErr:"Network error",jsSaving:"Saving...",
+jsEnterStaticIp:"Please enter static IP",jsEnterCapacity:"Please enter valid battery capacity",
 jsConfirmRestart:"Restart device?\n\nDevice will be briefly offline.",jsNoAcRestart:"Cannot restart: not on AC power.\n\nPlease connect the power adapter first.",jsRestarting:"Device restarting, please wait and refresh.",
 jsConfirmShip:"Entering ship mode requires a hardware button press to re-enable the battery.\n\nAre you sure?",jsShipSuccess:"Ship mode entered!\n\nBMS chip is now sleeping. Hardware button required to re-enable.",
 jsConfirmReset:"Reset battery data?\n\nThis will reset:\n- SOH → 100%\n- Cycle count → 0\n- Balancing stats → 0\n- Coulomb counter\n- SOH learning data\n\nSOC will be re-initialized from OCV.",
@@ -206,7 +210,14 @@ applyLang(lang);
 fetch('/api/set-lang',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lang:lang})}).catch(function(){});
 }
 
-document.addEventListener('DOMContentLoaded',function(){iwCfg={ssid:$('ws').value,pass:$('wp').value,ipMode:$('ipMode').value,staticIp:$('sip').value,staticGateway:$('sgw').value,staticSubnet:$('ssn').value,staticDns:$('sdns').value};var cl=window.CURLANG||'zh';applyLang(cl);var ls=$('langSel');if(ls)ls.value=cl;var wl=$('wz-lang');if(wl)wl.value=cl});
+document.addEventListener('DOMContentLoaded',function(){iwCfg={ssid:$('ws').value,pass:$('wp').value,ipMode:$('ipMode').value,staticIp:$('sip').value,staticGateway:$('sgw').value,staticSubnet:$('ssn').value,staticDns:$('sdns').value};var cl=window.CURLANG||'zh';applyLang(cl);var ls=$('langSel');if(ls)ls.value=cl;var wl=$('wz-lang');if(wl)wl.value=cl;
+// 脏标记：配置面板所有 input/select/change 事件
+var cfgPanel=$('p-config');if(cfgPanel){cfgPanel.addEventListener('input',function(e){if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')cfgDirty=true});cfgPanel.addEventListener('change',function(){cfgDirty=true})}
+// 恢复上次配置 tab
+var savedTab=sessionStorage.getItem('cfgTab');if(savedTab){var tabEl=document.querySelector('#p-config .si[data-tab="'+savedTab+'"]');if(tabEl)showCfg(savedTab,tabEl)}
+});
+// 页面离开提醒
+window.addEventListener('beforeunload',function(e){if(cfgDirty){e.preventDefault();e.returnValue=''}});
 
 // === 化学类型边界表（与 bms.cpp CHEM_LIMITS_* 保持一致） ===
 var CHEM={ncm:{ovMin:4000,ovMax:4500,uvMin:2500,uvMax:3500,ovrMin:4000,ovrMax:4300,uvrMin:2800,uvrMax:3300,recOv:4210,recUv:3000,recOvR:4180,recUvR:3050,recCellV:4150,cellV:[11.1,14.8,18.5]},
@@ -220,12 +231,13 @@ sb('bo',c.ovMin,c.ovMax);sb('bu',c.uvMin,c.uvMax);sb('bor',c.ovrMin,c.ovrMax);sb
 document.addEventListener('DOMContentLoaded',function(){var s=$('bchem');if(s)setChemBounds(s.value)});
 
 function onChemChange(){
-var sel=$('bchem'),t=sel.value;
-if(!confirm(L.jsChemSwitchConfirm)){sel.value=t==='ncm'?'lifepo4':'ncm';return}
-var c=CHEM[t];
+var sel=$('bchem'),newVal=sel.value,oldVal=newVal==='ncm'?'lifepo4':'ncm';
+if(!confirm(L.jsChemSwitchConfirm)){sel.value=oldVal;return}
+var c=CHEM[newVal];
 $('bo').value=c.recOv;$('bu').value=c.recUv;$('bor').value=c.recOvR;$('bur').value=c.recUvR;
 $('pcv').value=$('bc').value*c.recCellV;
-setChemBounds(t);
+setChemBounds(newVal);
+cfgDirty=true;
 }
 function wzChemChange(){
 var t=$('wz-chemistry').value,c=CHEM[t];
@@ -243,8 +255,10 @@ document.querySelectorAll('.side .si').forEach(function(s){s.classList.remove('a
 document.getElementById('p-'+n).classList.add('active');
 if(el)el.classList.add('active');
 if(n==='config'){
-var first=document.getElementById('p-cfg-system');if(first)first.classList.add('active');
-var tabs=document.querySelectorAll('#p-config .si');if(tabs.length){tabs.forEach(function(t){t.classList.remove('active')});tabs[0].classList.add('active')}
+var savedTab=sessionStorage.getItem('cfgTab');
+var tabName=savedTab||'system';
+var tabPanel=document.getElementById('p-cfg-'+tabName);if(tabPanel)tabPanel.classList.add('active');
+var tabs=document.querySelectorAll('#p-config .si');if(tabs.length){tabs.forEach(function(t){t.classList.remove('active')});var activeTab=document.querySelector('#p-config .si[data-tab="'+tabName+'"]');if(activeTab)activeTab.classList.add('active');else tabs[0].classList.add('active')}
 var bar=$('cfgSaveBar');if(bar)bar.style.display='';
 var note=$('cfgSaveNote');if(note)note.style.display='';
 }
@@ -258,22 +272,24 @@ var hide=n==='calibration'||n==='shipping'||n==='auth';
 var bar=$('cfgSaveBar');if(bar)bar.style.display=hide?'none':'';
 var note=$('cfgSaveNote');if(note)note.style.display=hide?'none':'';
 if(n==='calibration')loadCalibration();
+sessionStorage.setItem('cfgTab',n);
 }
 // === WebSocket ===
 function conn(){
-ws=new WebSocket('ws://'+location.host+'/ws');
-ws.onopen=function(){document.getElementById('wsSt').className='ws-st ok';document.getElementById('wsSt').textContent=L.connected;rc=0};
-ws.onclose=function(){document.getElementById('wsSt').className='ws-st fail';document.getElementById('wsSt').textContent=L.disconnected;setTimeout(conn,Math.min(1e3*Math.pow(2,rc++),3e4))};
+var proto=location.protocol==='https:'?'wss:':'ws:';
+ws=new WebSocket(proto+'//'+location.host+'/ws');
+ws.onopen=function(){document.getElementById('wsSt').className='ws-st ok';document.getElementById('wsSt').textContent=L.connected;rc=0;var ct=document.querySelector('.ct');if(ct)ct.classList.remove('ws-expired')};
+ws.onclose=function(){document.getElementById('wsSt').className='ws-st fail';document.getElementById('wsSt').textContent=L.disconnected;var ct=document.querySelector('.ct');if(ct)ct.classList.add('ws-expired');setTimeout(conn,Math.min(1e3*Math.pow(2,rc++),3e4))};
 ws.onmessage=function(e){upd(JSON.parse(e.data))};
 }
 function badge(c,t){return'<span class="badge '+c+'">'+t+'</span>'}
-function renderCells(cs,max,min,balCounts,irArr){var h='';for(var i=0;i<5;i++){var v=cs[i]||0;var bc=balCounts?balCounts[i]:0;var ir=irArr?irArr[i]:0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'/'+bc+'</div>'+(ir>0?'<div class="ir">'+ir.toFixed(1)+' mΩ</div>':'')+'</div>'}return h}
-function getBalancingCells(mask){if(!mask)return[];var cells=[];for(var i=0;i<5;i++){if(mask&(1<<i))cells.push('Cell'+(i+1))}return cells}
+function renderCells(cs,max,min,balCounts,irArr,cc){var n=cc||window.CELL_COUNT||5;var h='';for(var i=0;i<n;i++){var v=cs[i]||0;var bc=balCounts?(balCounts[i]||0):0;var ir=irArr?irArr[i]:0;h+='<div class="cell"><div class="cn">C'+(i+1)+'</div><div class="cv" style="color:'+(v===max?'#52c41a':v===min?'#f5222d':'#333')+'">'+v+'/'+bc+'</div>'+(ir>0?'<div class="ir">'+ir.toFixed(1)+' mΩ</div>':'')+'</div>'}return h}
+function getBalancingCells(mask){if(!mask)return[];var cells=[],n=window.CELL_COUNT||5;for(var i=0;i<n;i++){if(mask&(1<<i))cells.push('Cell'+(i+1))}return cells}
 function setStat(id,val,c){var e=$(id);e.textContent=val+' mV';e.className='stat-value'+c}
 // === 数据刷新 ===
 var $=function(id){return document.getElementById(id)}
 function upd(d){
-if(d.status==='config_mode'){$('hSt').textContent=L.jsConfigMode;return}
+if(d.status==='config_mode'){$('wsSt').textContent=L.jsConfigMode;return}
 var b=d.bms||{},p=d.power||{},s=d.system||{};
 curPowerMode=d.power_mode;
 $('uptime').textContent=L.jsRunning+fmtUp(s.uptime||0);
@@ -286,7 +302,7 @@ $('battV').textContent=(b.voltage||0)+' mV';
 var ci=b.current||0;$('battI').textContent=ci+' mA';$('battI').className='vl'+(ci>0?' g':ci<0?' w':'');
 $('battT').textContent=(b.temperature||0).toFixed(1)+' °C';$('soh').textContent=(b.soh||0).toFixed(1)+' %';
 $('cycles').textContent=b.cycle_count||0;$('capR').textContent=(b.capacity_remaining||0)+' mAh';
-var cs=b.cell_voltages||[],bcs=b.cell_balancing_count||[],irs=b.cell_ir||[];$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs,irs);
+var cs=b.cell_voltages||[],bcs=b.cell_balancing_count||[],irs=b.cell_ir||[],cc=window.CELL_COUNT||5;$('cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs,irs,cc);$('cells').style.gridTemplateColumns='repeat('+cc+',1fr)';
 $('cellMM').textContent=(b.cell_voltage_max||0)+'/'+(b.cell_voltage_min||0)+' mV';
 $('cellD').textContent=((b.cell_voltage_max||0)-(b.cell_voltage_min||0))+' mV';
 // 更新均衡状态显示
@@ -309,7 +325,7 @@ $('b_bal').innerHTML=b.balancing_active?badge('g',L.badgeBalancing):badge('b',L.
 // 更新BMS面板的总均衡次数
 $('b_bal_total').textContent=b.balancing_events_total||0;
 $('b_fault').textContent=b.fault_type||0;$('b_mode').textContent=b.bms_mode||0;
-var bcs2=b.cell_balancing_count||[];$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs2,irs);
+var bcs2=b.cell_balancing_count||[];$('b_cells').innerHTML=renderCells(cs,b.cell_voltage_max||0,b.cell_voltage_min||0,bcs2,irs,cc);$('b_cells').style.gridTemplateColumns='repeat('+cc+',1fr)';
 setStat('b_max',b.cell_voltage_max||0,' g');setStat('b_min',b.cell_voltage_min||0,' r');setStat('b_avg',b.cell_voltage_avg||0,' b');
 setStat('b_dlt',(b.cell_voltage_max||0)-(b.cell_voltage_min||0),' w');
 $('b_ir_cnt').textContent=(b.ir_sample_count||0)+L.jsIrCount;
@@ -406,13 +422,26 @@ function gChk(id){return $(id).checked}
 
 function isWifiCfgChg(){return gVal('ws')!==iwCfg.ssid||gVal('wp')!==iwCfg.pass||$('ipMode').value!==iwCfg.ipMode||gVal('sip')!==iwCfg.staticIp||gVal('sgw')!==iwCfg.staticGateway||gVal('ssn')!==iwCfg.staticSubnet||gVal('sdns')!==iwCfg.staticDns}
 
+function fmtSaveErr(r){var m=(r&&r.message)||'';if(r&&r.errors&&r.errors.length){for(var i=0;i<r.errors.length;i++){m+='\n'+r.errors[i].field+': '+r.errors[i].message}}return m}
 function save(){
+var btn=$('cfgSaveBtn');if(btn){btn.disabled=true;btn.textContent=L.jsSaving||'保存中...'}
 var d={
 system:{wifi_ssid:gVal('ws'),wifi_pass:gVal('wp'),use_static_ip:$('ipMode').value==='static',static_ip:gVal('sip'),static_gateway:gVal('sgw'),static_subnet:gVal('ssn'),static_dns:gVal('sdns'),ntp_server:gVal('ntp'),buzzer_enabled:gChk('be'),volume_level:+gVal('vl'),led_brightness:+gVal('lb'),hid_enabled:gChk('hid_en'),hid_report_mode:+gVal('hid_mode'),mqtt_enabled:gChk('mqtt_en'),mqtt_broker:gVal('mqtt_brk'),mqtt_port:+gVal('mqtt_port'),mqtt_username:gVal('mqtt_usr'),mqtt_password:gVal('mqtt_pwd'),xiaomi_sensor_enabled:gChk('xiaomi_en')},
 bms:{chemistry:gVal('bchem'),cell_count:+gVal('bc'),nominal_capacity_mAh:+gVal('bn'),cell_ov_threshold:+gVal('bo'),cell_uv_threshold:+gVal('bu'),cell_ov_recover:+gVal('bor'),cell_uv_recover:+gVal('bur'),max_charge_current:+gVal('bmc'),max_discharge_current:+gVal('bmd'),short_circuit_threshold:+gVal('bsc'),temp_overheat_threshold:+gVal('both'),balancing_enabled:gChk('bbe'),balancing_voltage_diff:+gVal('bbd')},
 power:{max_charge_current:+gVal('pmc'),charge_voltage_limit:+gVal('pcv'),charge_soc_start:+gVal('pcs'),charge_soc_stop:+gVal('pcp'),max_discharge_current:+gVal('pmd'),discharge_soc_stop:+gVal('pds'),enable_hybrid_boost:gChk('phe'),vsys_min_mV:+gVal('pvsm'),over_current_threshold:+gVal('poc'),over_temp_threshold:+gVal('pot'),charge_temp_high_limit:+gVal('pth'),charge_temp_low_limit:+gVal('ptl'),charging_windows:cw,charging_window_count:cw.length}};
 
-if(isWifiCfgChg()){alert(L.jsSaveNetChange);fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).catch(function(){});setTimeout(function(){location.href='/'},2e3)}else{fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(r){if(r.success){var msg=r.message||L.jsSaveSuccess;if(r.restart_required){alert(msg+' '+L.jsRestarting);setTimeout(function(){location.href='/'},3e3)}else{alert(msg)}}else{alert(L.jsSaveFailed+(r.message||''))}}).catch(function(){alert(L.jsNetworkErr)})}
+function resetBtn(){if(btn){btn.disabled=false;btn.textContent=L.cfgSave||'保存配置'}}
+// WiFi 配置变更时后端应用新配置后立即重连，响应可能到不了：等响应但设 5s 兜底；
+// 校验失败的 400 在应用配置前发出，一定能收到，错误信息不再丢失
+var wifiChg=isWifiCfgChg(),done=false;
+function finishNet(){if(done)return;done=true;cfgDirty=false;toast(L.jsSaveNetChange,'success');setTimeout(function(){location.href='/'},2e3)}
+var tmr=wifiChg?setTimeout(finishNet,5e3):null;
+fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(r){
+if(tmr)clearTimeout(tmr);
+if(done)return;done=true;resetBtn();
+if(r.success){var msg=r.message||L.jsSaveSuccess;cfgDirty=false;if(r.restart_required){toast(msg+' '+L.jsRestarting,'success');setTimeout(function(){location.href='/'},3e3)}else if(wifiChg){toast(L.jsSaveNetChange,'success');setTimeout(function(){location.href='/'},2e3)}else{toast(msg,'success')}}
+else{toast(L.jsSaveFailed+fmtSaveErr(r),'error')}
+}).catch(function(){if(tmr)clearTimeout(tmr);resetBtn();if(wifiChg){finishNet()}else{toast(L.jsNetworkErr,'error')}})
 }
 // === OTA: 固件上传 ===
 var sel=null,area=$('upArea');
@@ -427,7 +456,7 @@ if(!sel)return;var fd=new FormData();fd.append('firmware',sel,sel.name);var xhr=
 xhr.open('POST','/firmware',true);
 xhr.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*100);$('prgF').style.width=p+'%';$('prgF').textContent=p+'%'}};
 xhr.onloadstart=function(){$('prgC').style.display='block';$('upBtn').disabled=true;$('upBtn').textContent=L.jsUpgrading;showOtaMsg(L.jsUploading,'nf')};
-xhr.onload=function(){if(xhr.status===200){showOtaMsg(L.jsUpgradeSuccess,'ok');setTimeout(function(){location.href='/'},3e3)}else{showOtaMsg('HTTP '+xhr.status,'er');$('upBtn').disabled=false;$('upBtn').textContent=L.jsRetry}};
+xhr.onload=function(){if(xhr.status===200){showOtaMsg(L.jsUpgradeSuccess,'ok');setTimeout(function(){var poll=0;var checkUp=setInterval(function(){poll++;fetch('/api/status').then(function(){clearInterval(checkUp);location.href='/'}).catch(function(){});if(poll>30){clearInterval(checkUp);location.href='/'}},3e3)},8e3)}else{showOtaMsg('HTTP '+xhr.status,'er');$('upBtn').disabled=false;$('upBtn').textContent=L.jsRetry}};
 xhr.onerror=function(){showOtaMsg(L.jsNetworkError,'er');$('upBtn').disabled=false;$('upBtn').textContent=L.jsRetry};
 xhr.send(fd);}
 
@@ -447,14 +476,14 @@ function wzNext(){if(wzCurStep<wzTotalSteps-1){if(!wzValidateStep(wzCurStep))ret
 function wzSaveStep(n){if(n===1)wzToggleIP();}
 function wzGetVal(id){return $(id).value}
 function wzValidateStep(n){
-if(n===0){var ss=$('wz-wifi-ssid').value.trim();if(!ss){alert(L.wzWifiSsidPh);return false}wzData.wifi={ssid:ss,pass:wzGetVal('wz-wifi-pass')};
+if(n===0){var ss=$('wz-wifi-ssid').value.trim();if(!ss){toast(L.wzWifiSsidPh,'error');return false}wzData.wifi={ssid:ss,pass:wzGetVal('wz-wifi-pass')};
 var au=$('wz-auth-user').value.trim(),ap=$('wz-auth-pass').value,ap2=$('wz-auth-pass2').value;
-if(!au){alert(L.jsAuthUserRequired);return false}
-if(ap.length<8){alert(L.jsAuthPassLen);return false}
-if(ap!==ap2){alert(L.jsAuthPassMismatch);return false}
+if(!au){toast(L.jsAuthUserRequired,'error');return false}
+if(ap.length<8){toast(L.jsAuthPassLen,'error');return false}
+if(ap!==ap2){toast(L.jsAuthPassMismatch,'error');return false}
 wzData.auth={username:au,password:ap}}
-if(n===1){wzData.network.mode=wzGetVal('wz-ip-mode');wzData.network.ntp=wzGetVal('wz-ntp-server');if(wzData.network.mode==='static'){var ip=wzGetVal('wz-static-ip-addr');if(!ip){alert(L.jsEnterStaticIp);return false}wzData.network={ip:ip,gateway:wzGetVal('wz-static-gateway'),subnet:wzGetVal('wz-static-subnet'),dns:wzGetVal('wz-static-dns'),ntp:wzData.network.ntp}}}
-if(n===2){var cap=+$('wz-capacity').value;if(!cap||cap<100){alert(L.jsEnterCapacity);return false}var ct=wzGetVal('wz-chemistry')||'ncm',cm=CHEM[ct];var ov=+$('wz-ov-threshold').value||cm.recOv,uv=+$('wz-uv-threshold').value||cm.recUv;if(ov<cm.ovMin||ov>cm.ovMax){alert(L.jsOvRange);return false}if(uv<cm.uvMin||uv>cm.uvMax){alert(L.jsUvRange);return false}wzData.battery={chemistry:ct,cells:+$('wz-cell-count').value,capacity:cap,chargeCur:+$('wz-charge-current').value||1000,dischargeCur:+$('wz-discharge-current').value||2000,ovThresh:ov,uvThresh:uv,balancing:$('wz-balancing').checked}}
+if(n===1){wzData.network.mode=wzGetVal('wz-ip-mode');wzData.network.ntp=wzGetVal('wz-ntp-server');if(wzData.network.mode==='static'){var ip=wzGetVal('wz-static-ip-addr');if(!ip){toast(L.jsEnterStaticIp,'error');return false}wzData.network={ip:ip,gateway:wzGetVal('wz-static-gateway'),subnet:wzGetVal('wz-static-subnet'),dns:wzGetVal('wz-static-dns'),ntp:wzData.network.ntp}}}
+if(n===2){var cap=+$('wz-capacity').value;if(!cap||cap<100){toast(L.jsEnterCapacity,'error');return false}var ct=wzGetVal('wz-chemistry')||'ncm',cm=CHEM[ct];var ov=+$('wz-ov-threshold').value||cm.recOv,uv=+$('wz-uv-threshold').value||cm.recUv;if(ov<cm.ovMin||ov>cm.ovMax){toast(L.jsOvRange,'error');return false}if(uv<cm.uvMin||uv>cm.uvMax){toast(L.jsUvRange,'error');return false}wzData.battery={chemistry:ct,cells:+$('wz-cell-count').value,capacity:cap,chargeCur:+$('wz-charge-current').value||1000,dischargeCur:+$('wz-discharge-current').value||2000,ovThresh:ov,uvThresh:uv,balancing:$('wz-balancing').checked}}
 if(n===3){wzData.hardware={buzzer:$('wz-buzzer').checked,volume:+$('wz-volume').value,brightness:+$('wz-brightness').value,hid:$('wz-hid').checked,hidMode:+$('wz-hid-mode').value}}
 return true;
 }
@@ -466,7 +495,7 @@ system:{wifi_ssid:wzData.wifi.ssid,wifi_pass:wzData.wifi.pass,use_static_ip:wzDa
 bms:{chemistry:wzData.battery.chemistry||'ncm',cell_count:wzData.battery.cells,nominal_capacity_mAh:wzData.battery.capacity,max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur,cell_ov_threshold:wzData.battery.ovThresh,cell_uv_threshold:wzData.battery.uvThresh,balancing_enabled:wzData.battery.balancing},
 power:{max_charge_current:wzData.battery.chargeCur,max_discharge_current:wzData.battery.dischargeCur}};
 var r=new XMLHttpRequest();r.open('POST','/save',true);r.setRequestHeader('Content-Type','application/json');r.timeout=15000;
-r.onload=function(){try{var j=JSON.parse(r.responseText);if(j.success){$('wz-nav').style.display='none';startRebootCountdown()}else{alert(L.jsSaveFailed+(j.message||''))}}catch(e){startRebootCountdown()}};
+r.onload=function(){try{var j=JSON.parse(r.responseText);if(j.success){$('wz-nav').style.display='none';startRebootCountdown()}else{toast(L.jsSaveFailed+fmtSaveErr(j),'error')}}catch(e){startRebootCountdown()}};
 r.onerror=r.ontimeout=function(){startRebootCountdown()};
 r.send(JSON.stringify(doc));
 }
@@ -485,6 +514,7 @@ st.style.color='#f5222d';
 if(!u){st.textContent=L.jsAuthUserRequired;return}
 if(p.length<8){st.textContent=L.jsAuthPassLen;return}
 if(p!==p2){st.textContent=L.jsAuthPassMismatch;return}
+cfgDirty=false;
 st.style.color='#1677ff';st.textContent=L.jsProcessing;
 fetch('/api/auth/change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})
 .then(function(r){return r.json()})
@@ -496,19 +526,19 @@ fetch('/api/auth/change',{method:'POST',headers:{'Content-Type':'application/jso
 function clearTips(){var x=new XMLHttpRequest();x.open('POST','/api/clear-tips',true);x.setRequestHeader('Content-Type','application/json');x.timeout=3e3;x.send('')}
 
 // === 运输模式 ===
-function enterShipMode(){if(!confirm(L.jsConfirmShip))return;var x=new XMLHttpRequest();x.open('POST','/bms/shipmode',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){alert(L.jsShipSuccess)}else{alert(L.jsResetFailed+(j.message||''))}}catch(e){alert(L.jsShipSuccess)}}else{alert('HTTP '+x.status)}};x.onerror=function(){alert(L.jsNetworkError)};x.ontimeout=function(){alert(L.jsNetworkError)};x.send('')}
+function enterShipMode(){if(!confirm(L.jsConfirmShip))return;var x=new XMLHttpRequest();x.open('POST','/bms/shipmode',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){toast(L.jsShipSuccess,'success')}else{toast(L.jsResetFailed+(j.message||''),'error')}}catch(e){toast(L.jsShipSuccess,'success')}}else{toast('HTTP '+x.status,'error')}};x.onerror=function(){toast(L.jsNetworkError,'error')};x.ontimeout=function(){toast(L.jsNetworkError,'error')};x.send('')}
 
 // === 电池数据重置 ===
-function resetBatteryData(){if(!confirm(L.jsConfirmReset))return;$('resetBmsStatus').style.color='#1677ff';$('resetBmsStatus').textContent=L.jsProcessing;var x=new XMLHttpRequest();x.open('POST','/bms/reset-data',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent=L.jsResetSuccess}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsResetFailed+(j.message||'')}}catch(e){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent=L.jsResetSuccess}}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='HTTP '+x.status}};x.onerror=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsNetworkError};x.ontimeout=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsNetworkError};x.send('')}
+function resetBatteryData(){if(!confirm(L.jsConfirmReset))return;$('resetBmsStatus').style.color='#1677ff';$('resetBmsStatus').textContent=L.jsProcessing;var x=new XMLHttpRequest();x.open('POST','/bms/reset-data',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent=L.jsResetSuccess;toast(L.jsResetSuccess,'success')}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsResetFailed+(j.message||'');toast(L.jsResetFailed+(j.message||''),'error')}}catch(e){$('resetBmsStatus').style.color='#52c41a';$('resetBmsStatus').textContent=L.jsResetSuccess}}else{$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent='HTTP '+x.status}};x.onerror=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsNetworkError};x.ontimeout=function(){$('resetBmsStatus').style.color='#f5222d';$('resetBmsStatus').textContent=L.jsNetworkError};x.send('')}
 
 // === 重启设备 ===
 function restartDevice(){
-if(curPowerMode!==0){alert(L.jsNoAcRestart);return}
+if(curPowerMode!==0){toast(L.jsNoAcRestart,'error');return}
 if(!confirm(L.jsConfirmRestart))return;
 var x=new XMLHttpRequest();x.open('POST','/api/restart',true);x.setRequestHeader('Content-Type','application/json');x.timeout=5e3;
-x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){alert(L.jsRestarting)}else{alert(L.jsResetFailed+(j.message||''))}}catch(e){alert(L.jsRestarting)}}else if(x.status===403){alert(L.jsNoAcRestart)}else{alert('HTTP '+x.status)}};
-x.onerror=function(){alert(L.jsNetworkError)};
-x.ontimeout=function(){alert(L.jsNetworkError)};
+x.onload=function(){if(x.status===200){try{var j=JSON.parse(x.responseText);if(j.success){toast(L.jsRestarting,'success')}else{toast(L.jsResetFailed+(j.message||''),'error')}}catch(e){toast(L.jsRestarting,'success')}}else if(x.status===403){toast(L.jsNoAcRestart,'error')}else{toast('HTTP '+x.status,'error')}};
+x.onerror=function(){toast(L.jsNetworkError,'error')};
+x.ontimeout=function(){toast(L.jsNetworkError,'error')};
 x.send('')}
 
 // === ADC 校准系数 ===
@@ -517,7 +547,7 @@ var calPins=[{name:'BQ24780S_IADP',pin:1},{name:'BQ24780S_IDCHG',pin:2},{name:'B
 var calData=null;
 function loadCalibration(){$('calStatus').textContent='';fetch('/api/calibration').then(function(r){return r.json()}).then(function(d){if(d.success){calData=d.calibration;renderCalibration()}}).catch(function(){$('calStatus').textContent='加载失败'})}
 function renderCalibration(){var c=$('calContainer');c.innerHTML='';calPins.forEach(function(p,i){var v=calData[i]||100;c.innerHTML+='<div style="border:1px solid #e8e8e8;border-radius:6px;padding:12px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">'+calDescs[i]+'</div><div style="font-size:11px;color:#888;margin-bottom:8px">'+p.name+' (GPIO'+p.pin+')</div><div style="display:flex;align-items:center;gap:8px"><input type="range" min="50" max="255" value="'+v+'" id="cal_'+i+'" style="flex:1" oninput="document.getElementById(\'calv_'+i+'\').textContent=(this.value/100).toFixed(2)+\'x\'"><span id="calv_'+i+'" style="min-width:50px;font-weight:600;color:#1677ff">'+(v/100).toFixed(2)+'x</span></div></div>'})}
-function saveCalibration(){var vals=[];for(var i=0;i<calPins.length;i++){var v=+$('cal_'+i).value;if(v<50||v>255){alert(L.jsCalRange);return}vals.push(v)}fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calibration:vals})}).then(function(r){return r.json()}).then(function(d){if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent=L.jsCalSaved}else{$('calStatus').style.color='#f5222d';$('calStatus').textContent=L.jsCalFailed+(d.message||'')}}).catch(function(){$('calStatus').textContent=L.jsNetworkError})}
+function saveCalibration(){var vals=[];for(var i=0;i<calPins.length;i++){var v=+$('cal_'+i).value;if(v<50||v>255){toast(L.jsCalRange,'error');return}vals.push(v)}fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calibration:vals})}).then(function(r){return r.json()}).then(function(d){if(d.success){$('calStatus').style.color='#52c41a';$('calStatus').textContent=L.jsCalSaved;toast(L.jsCalSaved,'success')}else{$('calStatus').style.color='#f5222d';$('calStatus').textContent=L.jsCalFailed+(d.message||'');toast(L.jsCalFailed+(d.message||''),'error')}}).catch(function(){$('calStatus').textContent=L.jsNetworkError})}
 
 if(window.CONFIG_MODE===1){document.addEventListener('DOMContentLoaded',function(){var m=document.querySelector('.main-wrap'),sd=document.querySelector('.side'),ct=document.querySelector('.ct'),w=$('wz-page'),f=document.querySelector('.foot'),t=document.querySelector('.topbar-info');if(sd)sd.style.display='none';if(ct)ct.style.display='none';if(m){m.style.display='block';m.style.overflow='auto'}if(w)w.style.display='block';if(f)f.style.display='none';if(t)t.style.display='none'})}
 

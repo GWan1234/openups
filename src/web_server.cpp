@@ -49,12 +49,16 @@ WebServer::~WebServer() {
 // =============================================================================
 
 // 请求体分块收集器：累积到 request->_tempObject（String*），由 handler 取走并释放
+// 上限 8KB：/save 最大合法请求 ~3KB，超限直接停止累积（login/setup 免认证，需防内存耗尽）
+static const size_t BODY_MAX_LEN = 8192;
 static void collectBody(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
   if (!request->_tempObject) {
     request->_tempObject = new String();
     ((String*)request->_tempObject)->reserve(512);
   }
   String* body = (String*)request->_tempObject;
+  if (body->length() >= BODY_MAX_LEN) return;
+  if (body->length() + len > BODY_MAX_LEN) len = BODY_MAX_LEN - body->length();
   for (size_t i = 0; i < len; i++) {
     body->concat((char)data[i]);
   }
@@ -891,6 +895,12 @@ void WebServer::sendJsonWithNewSession(AsyncWebServerRequest* request, const cha
 }
 
 void WebServer::handleAuthLogin(AsyncWebServerRequest* request) {
+  // 请求体大小检查：防止未认证客户端发送超大 body 耗尽内存
+  if (request->_tempObject && ((String*)request->_tempObject)->length() >= BODY_MAX_LEN) {
+    sendErrorResponse(request, "Request body too large", 413);
+    discardBody(request);
+    return;
+  }
   // 暴力破解限制：锁定期内直接拒绝
   unsigned long now = millis();
   if (login_lockout_until_ != 0 && (long)(login_lockout_until_ - now) > 0) {
@@ -939,6 +949,12 @@ void WebServer::handleAuthLogout(AsyncWebServerRequest* request) {
 }
 
 void WebServer::handleAuthSetup(AsyncWebServerRequest* request) {
+  // 请求体大小检查
+  if (request->_tempObject && ((String*)request->_tempObject)->length() >= BODY_MAX_LEN) {
+    sendErrorResponse(request, "Request body too large", 413);
+    discardBody(request);
+    return;
+  }
   // 仅允许在凭证未设置时调用（首次设置无需认证；已设置后必须走 /api/auth/change）
   if (configManager->hasWebCredentials()) {
     sendErrorResponse(request, "Credentials already configured, use /api/auth/change", 403);
@@ -1019,235 +1035,198 @@ static String buildChargingWindowsJson(const void* windows, uint8_t count) {
   return json;
 }
 
+// HTML 属性值转义（防 XSS）：仅处理 " < > &
+static void escapeHtmlAttr(const char* in, char* out, size_t outSize) {
+  size_t j = 0;
+  for (size_t i = 0; in[i] && j + 6 < outSize; i++) {
+    char c = in[i];
+    if      (c == '"')  { memcpy(out+j, "&quot;", 6); j += 6; }
+    else if (c == '<')  { memcpy(out+j, "&lt;", 4);   j += 4; }
+    else if (c == '>')  { memcpy(out+j, "&gt;", 4);   j += 4; }
+    else if (c == '&')  { memcpy(out+j, "&amp;", 5);  j += 5; }
+    else { out[j++] = c; }
+  }
+  out[j] = '\0';
+}
+
 void WebServer::renderSPA(AsyncWebServerRequest* request) {
   const Configuration* sysConfig = configManager->getSystemConfig();
   const BMS_Config_t* bmsConfig = configManager->getBMSConfig();
   const Power_Config_t* powerConfig = configManager->getPowerConfig();
 
-  // 配置模式检测
   bool isConfigMode = (systemManager == nullptr);
-
-  // 获取系统状态（仅正常模式使用）
   const System_Global_State* statePtr = nullptr;
   if (!isConfigMode) {
     statePtr = &systemManager->getGlobalState();
   }
 
-  // 计算总缓冲区大小：HTML模板 + CSS + JavaScript + 大量额外空间用于替换和拼接
-  size_t htmlSize = strlen_P(SPA_PAGE_TEMPLATE);
-  size_t cssSize = strlen_P(COMMON_CSS) + strlen_P(CONFIG_CSS) + strlen_P(OTA_CSS) + strlen_P(WIZARD_CSS);
-  size_t jsSize = strlen_P(SPA_PAGE_JS);
-  // 增加安全余量：原始大小的 3 倍，确保 REPLACE 操作有足够空间
-  size_t totalSize = (htmlSize + cssSize + jsSize) * 3;
-  
-  char* buffer = new char[totalSize];
-  char* tempBuffer = new char[totalSize];
-  
-  // 第一步：复制 HTML 模板
-  strcpy_P(buffer, SPA_PAGE_TEMPLATE);
-  
-  // 第二步：替换 CSS 占位符
-  // 找到 <style id="dynamic-css"></style> 并替换内容
-  const char* cssPlaceholderStart = strstr_P(buffer, PSTR("<style id=\"dynamic-css\"></style>"));
-
-  if (cssPlaceholderStart) {
-    // 找到占位符位置
-    size_t placeholderPos = cssPlaceholderStart - buffer;
-    const char* afterCss = cssPlaceholderStart + strlen("<style id=\"dynamic-css\"></style>");
-    size_t afterCssLen = strlen(afterCss);
-    
-    // 创建临时缓冲区保存后半部分
-    char* afterPart = new char[afterCssLen + 1];
-    strcpy(afterPart, afterCss);
-    
-    // 在占位符处截断
-    buffer[placeholderPos] = '\0';
-    
-    // 拼接：前半部分 + <style> + CSS + </style> + 后半部分
-    strcat(buffer, "<style>");
-    strcat_P(buffer, COMMON_CSS);
-    strcat_P(buffer, CONFIG_CSS);
-    strcat_P(buffer, OTA_CSS);
-    strcat_P(buffer, WIZARD_CSS);
-    strcat(buffer, "</style>");
-    strcat(buffer, afterPart);
-    
-    delete[] afterPart;
-  }
-
-  // 第三步：替换 JavaScript 占位符
-  const char* jsPlaceholderStart = strstr_P(buffer, PSTR("<script id=\"dynamic-js\"></script>"));
-  
-  if (jsPlaceholderStart) {
-    // 找到占位符位置
-    size_t placeholderPos = jsPlaceholderStart - buffer;
-    const char* afterJs = jsPlaceholderStart + strlen("<script id=\"dynamic-js\"></script>");
-    size_t afterJsLen = strlen(afterJs);
-    
-    // 创建临时缓冲区保存后半部分
-    char* afterPart = new char[afterJsLen + 1];
-    strcpy(afterPart, afterJs);
-    
-    // 在占位符处截断
-    buffer[placeholderPos] = '\0';
-    
-    // 拼接：前半部分 + <script> + JS + </script> + 后半部分
-    strcat(buffer, "<script>");
-    strcat_P(buffer, SPA_PAGE_JS);
-    strcat(buffer, "</script>");
-    strcat(buffer, afterPart);
-    
-    delete[] afterPart;
-  }
-  
-  strcpy(tempBuffer, buffer);
-  
-  #define REPLACE(key, val) do { replaceStringInBuffer(tempBuffer, totalSize, key, val, buffer); strcpy(tempBuffer, buffer); } while(0)
-  #define REPLACE_FMT(key, fmt, val) do { char tmp[32]; snprintf(tmp, sizeof(tmp), fmt, val); REPLACE(key, tmp); } while(0)
-  #define REPLACE_CHK(cond) REPLACE("%" #cond "_CHECKED%", (cond) ? "checked" : "")
-  
-  // System config
-  
-  // System config
-  REPLACE("%WIFI_SSID%", sysConfig->wifi_ssid);
-  REPLACE("%WIFI_PASS%", sysConfig->wifi_pass[0] ? sysConfig->wifi_pass : "");
-  REPLACE("%BUZZER_STATUS%", sysConfig->buzzer_enabled ? I18n::get(STR_ENABLED) : I18n::get(STR_DISABLED));
-  REPLACE("%BUZZER_CHECKED%", sysConfig->buzzer_enabled ? "checked" : "");
-  REPLACE_FMT("%VOLUME_VALUE%", "%d", sysConfig->buzzer_volume);
-  REPLACE_FMT("%VOLUME_LEVEL%", "%d%%", sysConfig->buzzer_volume);
-  REPLACE_FMT("%LIGHT_VALUE%", "%d", sysConfig->led_brightness);
-  REPLACE_FMT("%LIGHT_BRIGHTNESS%", "%d%%", sysConfig->led_brightness);
-  
-  // HID 配置
-  REPLACE("%HID_CHECKED%", sysConfig->hid_enabled ? "checked" : "");
-  REPLACE("%HID_MODE_MAH%", sysConfig->hid_report_mode == 0 ? " selected" : "");
-  REPLACE("%HID_MODE_MWH%", sysConfig->hid_report_mode == 1 ? " selected" : "");
-  REPLACE("%HID_MODE_PCT%", sysConfig->hid_report_mode == 2 ? " selected" : "");
-
-  // MQTT 配置
-  REPLACE("%MQTT_CHECKED%", (sysConfig->mqtt_broker[0] != '\0' && sysConfig->mqtt_port > 0) ? "checked" : "");
-  REPLACE("%MQTT_BROKER%", sysConfig->mqtt_broker);
-  REPLACE_FMT("%MQTT_PORT%", "%d", sysConfig->mqtt_port);
-  REPLACE("%MQTT_USERNAME%", sysConfig->mqtt_username);
-  REPLACE("%MQTT_PASSWORD%", sysConfig->mqtt_password);
-
-  // 小米传感器桥接配置
-  REPLACE("%XIAOMI_CHECKED%", sysConfig->xiaomi_sensor_enabled ? "checked" : "");
-  REPLACE("%XIAOMI_SECTION_DISPLAY%", g_is_new_board ? "block" : "none");
-
-  // IP 模式配置 - 新增
-  REPLACE("%IP_MODE_DHCP%", sysConfig->use_static_ip ? "" : " selected");
-  REPLACE("%IP_MODE_STATIC%", sysConfig->use_static_ip ? " selected" : "");
-  REPLACE("%STATIC_IP_DISPLAY%", sysConfig->use_static_ip ? "block" : "none");
-   REPLACE("%STATIC_IP%", sysConfig->static_ip);
-   REPLACE("%STATIC_GATEWAY%", sysConfig->static_gateway);
-   REPLACE("%STATIC_SUBNET%", sysConfig->static_subnet);
-   REPLACE("%STATIC_DNS%", sysConfig->static_dns);
-   REPLACE("%NTP_SERVER%", sysConfig->ntp_server);
-
-   // BMS config
-  REPLACE_FMT("%CELL_COUNT%", "%d", bmsConfig->cell_count);
-  REPLACE_FMT("%CAPACITY%", "%d", bmsConfig->nominal_capacity_mAh);
-  REPLACE_FMT("%BMS_CHARGE_CURRENT%", "%d", bmsConfig->max_charge_current);
-  REPLACE_FMT("%PWR_CHARGE_CURRENT%", "%d", powerConfig->max_charge_current);
-  REPLACE_FMT("%PWR_DISCHARGE_CURRENT%", "%d", powerConfig->max_discharge_current);
-  
-  REPLACE("%BMS_CHEM_NCM%", (bmsConfig->chemistry == CHEM_NCM) ? " selected" : "");
-  REPLACE("%BMS_CHEM_LFP%", (bmsConfig->chemistry == CHEM_LFP) ? " selected" : "");
-  REPLACE("%BMS_CELL_COUNT_3%", (bmsConfig->cell_count == 3) ? " selected" : "");
-  REPLACE("%BMS_CELL_COUNT_4%", (bmsConfig->cell_count == 4) ? " selected" : "");
-  REPLACE("%BMS_CELL_COUNT_5%", (bmsConfig->cell_count == 5) ? " selected" : "");
-  
-  REPLACE_FMT("%BMS_NOMINAL_CAPACITY%", "%d", bmsConfig->nominal_capacity_mAh);
-  REPLACE_FMT("%BMS_CELL_OV%", "%d", bmsConfig->cell_ov_threshold);
-  REPLACE_FMT("%BMS_CELL_UV%", "%d", bmsConfig->cell_uv_threshold);
-  REPLACE_FMT("%BMS_CELL_OV_RECOVER%", "%d", bmsConfig->cell_ov_recover);
-  REPLACE_FMT("%BMS_CELL_UV_RECOVER%", "%d", bmsConfig->cell_uv_recover);
-  REPLACE_FMT("%BMS_MAX_CHARGE%", "%d", bmsConfig->max_charge_current);
-  REPLACE_FMT("%BMS_MAX_DISCHARGE%", "%d", bmsConfig->max_discharge_current);
-  REPLACE_FMT("%BMS_SHORT_CIRCUIT%", "%d", bmsConfig->short_circuit_threshold);
-  REPLACE_FMT("%BMS_OVERHEAT_THRESHOLD%", "%.1f", bmsConfig->temp_overheat_threshold);
-  
-
-  // 正常运行模式：完整替换所有配置
-  REPLACE("%BMS_BALANCING_CHECKED%", bmsConfig->balancing_enabled ? "checked" : "");
-  REPLACE_FMT("%BMS_BALANCING_DIFF%", "%.1f", bmsConfig->balancing_voltage_diff);
-  REPLACE_FMT("%POWER_MAX_CHARGE%", "%d", powerConfig->max_charge_current);
-  REPLACE_FMT("%POWER_CHARGE_VOLTAGE%", "%d", powerConfig->charge_voltage_limit);
-  REPLACE_FMT("%POWER_CHARGE_SOC_START%", "%.0f", powerConfig->charge_soc_start);
-  REPLACE_FMT("%POWER_CHARGE_SOC_STOP%", "%.0f", powerConfig->charge_soc_stop);
-  REPLACE_FMT("%POWER_MAX_DISCHARGE%", "%d", powerConfig->max_discharge_current);
-  REPLACE_FMT("%POWER_DISCHARGE_SOC_STOP%", "%.0f", powerConfig->discharge_soc_stop);
-  REPLACE("%POWER_HYBRID_CHECKED%", powerConfig->enable_hybrid_boost ? "checked" : "");
-  REPLACE_FMT("%POWER_VSYS_MIN%", "%d", powerConfig->vsys_min_mV);
-  REPLACE_FMT("%POWER_OVER_CURRENT%", "%d", powerConfig->over_current_threshold);
-  REPLACE_FMT("%POWER_OVER_TEMP%", "%.1f", powerConfig->over_temp_threshold);
-  REPLACE_FMT("%POWER_CHARGE_TEMP_HIGH%", "%.1f", powerConfig->charge_temp_high_limit);
-  REPLACE_FMT("%POWER_CHARGE_TEMP_LOW%", "%.1f", powerConfig->charge_temp_low_limit);
-
-  if (!isConfigMode && statePtr != nullptr) {
-    String firmwareVersion = String(statePtr->system.firmware_version);
-    char versionBuf[32];
-    snprintf(versionBuf, sizeof(versionBuf), "%s", firmwareVersion.c_str());
-    REPLACE("%FIRMWARE_VERSION%", versionBuf);
-  } else {
-    REPLACE("%FIRMWARE_VERSION%", "Config Mode");
-  }
-
-  char spaceBuf[32];
-  snprintf(spaceBuf, sizeof(spaceBuf), "%lu", (unsigned long)(ESP.getFreeSketchSpace() / 1024));
-  REPLACE("%FREE_SKETCH_SPACE%", spaceBuf);
-  char flashBuf[32];
-  snprintf(flashBuf, sizeof(flashBuf), "%lu", (unsigned long)(ESP.getFlashChipSize() / (1024 * 1024)));
-  REPLACE("%FLASH_SIZE%", flashBuf);
-
-
-  // 将时间窗口数据注入到 HTML 页面
+  // CSS（从 PROGMEM 拼接到 RAM）
+  size_t cssLen = strlen_P(COMMON_CSS) + strlen_P(CONFIG_CSS) + strlen_P(OTA_CSS) + strlen_P(WIZARD_CSS);
+  char* cssBuf = new char[cssLen + 1];
+  cssBuf[0] = '\0';
+  strcat_P(cssBuf, COMMON_CSS);
+  strcat_P(cssBuf, CONFIG_CSS);
+  strcat_P(cssBuf, OTA_CSS);
+  strcat_P(cssBuf, WIZARD_CSS);
+  // JS
+  size_t jsLen = strlen_P(SPA_PAGE_JS);
+  char* jsBuf = new char[jsLen + 1];
+  jsBuf[0] = '\0';
+  strcat_P(jsBuf, SPA_PAGE_JS);
+  // 充电窗口 + cell_count 注入脚本
   String windowsJson = isConfigMode ? "[]" : buildChargingWindowsJson(powerConfig->charging_windows, powerConfig->charging_window_count);
-  char windowInitCode[2048];
-  snprintf(windowInitCode, sizeof(windowInitCode),
-           "<script>window.IW=%s;</script>",
-           windowsJson.c_str());
+  size_t injLen = windowsJson.length() + 128;
+  char* injectBuf = new char[injLen];
+  snprintf(injectBuf, injLen,
+    "<script>window.CONFIG_MODE=%d;window.CURLANG='%s';window.CELL_COUNT=%d;window.IW=%s;</script>",
+    isConfigMode ? 1 : 0, I18n::getLangCode(),
+    isConfigMode ? 3 : bmsConfig->cell_count,
+    windowsJson.c_str());
 
-  #undef REPLACE
-  #undef REPLACE_FMT
-  #undef REPLACE_CHK
+  // 临时缓冲区（esc 需容纳最长字段 64 字符全转义的最坏情况 64×6=384）
+  char esc[512];
+  char tmp[64];
 
-  // 注入配置模式标记和当前语言到 </head> 后（确保在 JS 执行前定义）
-  char configModeScript[128];
-  snprintf(configModeScript, sizeof(configModeScript),
-    "<script>window.CONFIG_MODE=%d;window.CURLANG='%s';</script>",
-    isConfigMode ? 1 : 0, I18n::getLangCode());
-  char* headEndPos = strstr(tempBuffer, "</head>");
-  if (headEndPos) {
-    size_t headPos = headEndPos - tempBuffer + strlen("</head>");
-    size_t afterHeadLen = strlen(headEndPos);
-    char* afterHead = new char[afterHeadLen + strlen(configModeScript) + 1];
-    strcpy(afterHead, headEndPos);
+  // ---- 将模板从 PROGMEM 复制到 RAM，后续用 strstr 做占位符匹配 ----
+  size_t tplLen = strlen_P(SPA_PAGE_TEMPLATE);
+  char* tpl = new char[tplLen + 1];
+  memcpy_P(tpl, SPA_PAGE_TEMPLATE, tplLen + 1);
 
-    headEndPos[0] = '\0';
-    strcat(tempBuffer, configModeScript);
-    strcat(tempBuffer, afterHead);
-    delete[] afterHead;
+  // 输出缓冲区：模板 + CSS/JS + 替换值余量
+  size_t outCap = tplLen + cssLen + jsLen + 16384;
+  char* out = new char[outCap];
+  size_t j = 0;
+
+  // 追加辅助宏（C++11 兼容，不使用泛型 lambda）
+  #define AP_S(s) do { size_t _l = strlen(s); if (j + _l < outCap) { memcpy(out+j, s, _l); j += _l; } } while(0)
+  #define AP_V(s) do { escapeHtmlAttr(s, esc, sizeof(esc)); AP_S(esc); } while(0)
+  #define AP_N(v) do { snprintf(tmp, sizeof(tmp), "%d", (int)(v)); AP_S(tmp); } while(0)
+  #define AP_F(v) do { snprintf(tmp, sizeof(tmp), "%.1f", (float)(v)); AP_S(tmp); } while(0)
+  #define AP_L(v) do { snprintf(tmp, sizeof(tmp), "%lu", (unsigned long)(v)); AP_S(tmp); } while(0)
+
+  // 单遍扫描：从 pos 开始，找到下一个 % 或特殊标签，输出前缀 + 替换值
+  const char* pos = tpl;
+
+  while (*pos && j + 512 < outCap) {
+    // 检查特殊标签：匹配开标签，注入完整内容，闭合标签自然跳过
+    if (pos[0] == '<') {
+      if (strncmp(pos, "<style id=\"dynamic-css\">", 24) == 0) {
+        AP_S("<style>"); AP_S(cssBuf); AP_S("</style>");
+        pos += 32; continue;
+      }
+      if (strncmp(pos, "<script id=\"dynamic-js\">", 24) == 0) {
+        AP_S("<script>"); AP_S(jsBuf); AP_S("</script>");
+        pos += 33; continue;
+      }
+      if (strncmp(pos, "</head>", 7) == 0) {
+        AP_S(injectBuf); AP_S("</head>");
+        pos += 7; continue;
+      }
+    }
+
+    // 检查 %...% 占位符
+    if (pos[0] == '%') {
+      // 匹配辅助：检查 pos 是否以 "%name%" 开头，是则执行 body 并 continue
+      #define TRY_PH(name, body) \
+        if (strncmp(pos, "%" name "%", strlen(name) + 2) == 0) { body; pos += strlen(name) + 2; continue; }
+
+      // --- 系统配置 ---
+      TRY_PH("WIFI_SSID",          AP_V(sysConfig->wifi_ssid))
+      TRY_PH("WIFI_PASS",           AP_V(sysConfig->wifi_pass[0] ? sysConfig->wifi_pass : ""))
+      TRY_PH("BUZZER_STATUS",       AP_S(sysConfig->buzzer_enabled ? I18n::get(STR_ENABLED) : I18n::get(STR_DISABLED)))
+      TRY_PH("BUZZER_CHECKED",      AP_S(sysConfig->buzzer_enabled ? "checked" : ""))
+      TRY_PH("VOLUME_VALUE",        AP_N(sysConfig->buzzer_volume))
+      TRY_PH("VOLUME_LEVEL",        do { snprintf(tmp, sizeof(tmp), "%d%%", sysConfig->buzzer_volume); AP_S(tmp); } while(0))
+      TRY_PH("LIGHT_VALUE",         AP_N(sysConfig->led_brightness))
+      TRY_PH("LIGHT_BRIGHTNESS",    do { snprintf(tmp, sizeof(tmp), "%d%%", sysConfig->led_brightness); AP_S(tmp); } while(0))
+      TRY_PH("HID_CHECKED",         AP_S(sysConfig->hid_enabled ? "checked" : ""))
+      TRY_PH("HID_MODE_MAH",        AP_S(sysConfig->hid_report_mode == 0 ? " selected" : ""))
+      TRY_PH("HID_MODE_MWH",        AP_S(sysConfig->hid_report_mode == 1 ? " selected" : ""))
+      TRY_PH("HID_MODE_PCT",        AP_S(sysConfig->hid_report_mode == 2 ? " selected" : ""))
+      TRY_PH("MQTT_CHECKED",        AP_S((sysConfig->mqtt_broker[0] != '\0' && sysConfig->mqtt_port > 0) ? "checked" : ""))
+      TRY_PH("MQTT_BROKER",         AP_V(sysConfig->mqtt_broker))
+      TRY_PH("MQTT_PORT",           AP_N(sysConfig->mqtt_port))
+      TRY_PH("MQTT_USERNAME",       AP_V(sysConfig->mqtt_username))
+      TRY_PH("MQTT_PASSWORD",       AP_V(sysConfig->mqtt_password))
+      TRY_PH("XIAOMI_CHECKED",      AP_S(sysConfig->xiaomi_sensor_enabled ? "checked" : ""))
+      TRY_PH("XIAOMI_SECTION_DISPLAY", AP_S(g_is_new_board ? "block" : "none"))
+      TRY_PH("IP_MODE_DHCP",        AP_S(sysConfig->use_static_ip ? "" : " selected"))
+      TRY_PH("IP_MODE_STATIC",      AP_S(sysConfig->use_static_ip ? " selected" : ""))
+      TRY_PH("STATIC_IP_DISPLAY",   AP_S(sysConfig->use_static_ip ? "block" : "none"))
+      TRY_PH("STATIC_IP",           AP_V(sysConfig->static_ip))
+      TRY_PH("STATIC_GATEWAY",      AP_V(sysConfig->static_gateway))
+      TRY_PH("STATIC_SUBNET",       AP_V(sysConfig->static_subnet))
+      TRY_PH("STATIC_DNS",          AP_V(sysConfig->static_dns))
+      TRY_PH("NTP_SERVER",          AP_V(sysConfig->ntp_server))
+      // --- BMS 配置 ---
+      TRY_PH("CELL_COUNT",          AP_N(bmsConfig->cell_count))
+      TRY_PH("CAPACITY",            AP_N(bmsConfig->nominal_capacity_mAh))
+      TRY_PH("BMS_CHARGE_CURRENT",  AP_N(bmsConfig->max_charge_current))
+      TRY_PH("PWR_CHARGE_CURRENT",  AP_N(powerConfig->max_charge_current))
+      TRY_PH("PWR_DISCHARGE_CURRENT", AP_N(powerConfig->max_discharge_current))
+      TRY_PH("BMS_CHEM_NCM",        AP_S(bmsConfig->chemistry == CHEM_NCM ? " selected" : ""))
+      TRY_PH("BMS_CHEM_LFP",        AP_S(bmsConfig->chemistry == CHEM_LFP ? " selected" : ""))
+      TRY_PH("BMS_CELL_COUNT_3",    AP_S(bmsConfig->cell_count == 3 ? " selected" : ""))
+      TRY_PH("BMS_CELL_COUNT_4",    AP_S(bmsConfig->cell_count == 4 ? " selected" : ""))
+      TRY_PH("BMS_CELL_COUNT_5",    AP_S(bmsConfig->cell_count == 5 ? " selected" : ""))
+      TRY_PH("BMS_NOMINAL_CAPACITY", AP_N(bmsConfig->nominal_capacity_mAh))
+      TRY_PH("BMS_CELL_OV",         AP_N(bmsConfig->cell_ov_threshold))
+      TRY_PH("BMS_CELL_UV",         AP_N(bmsConfig->cell_uv_threshold))
+      TRY_PH("BMS_CELL_OV_RECOVER", AP_N(bmsConfig->cell_ov_recover))
+      TRY_PH("BMS_CELL_UV_RECOVER", AP_N(bmsConfig->cell_uv_recover))
+      TRY_PH("BMS_MAX_CHARGE",      AP_N(bmsConfig->max_charge_current))
+      TRY_PH("BMS_MAX_DISCHARGE",   AP_N(bmsConfig->max_discharge_current))
+      TRY_PH("BMS_SHORT_CIRCUIT",   AP_N(bmsConfig->short_circuit_threshold))
+      TRY_PH("BMS_OVERHEAT_THRESHOLD", AP_F(bmsConfig->temp_overheat_threshold))
+      TRY_PH("BMS_BALANCING_CHECKED", AP_S(bmsConfig->balancing_enabled ? "checked" : ""))
+      TRY_PH("BMS_BALANCING_DIFF",  AP_F(bmsConfig->balancing_voltage_diff))
+      // --- Power 配置 ---
+      TRY_PH("POWER_MAX_CHARGE",    AP_N(powerConfig->max_charge_current))
+      TRY_PH("POWER_CHARGE_VOLTAGE", AP_N(powerConfig->charge_voltage_limit))
+      TRY_PH("POWER_CHARGE_SOC_START", do { snprintf(tmp, sizeof(tmp), "%.0f", powerConfig->charge_soc_start); AP_S(tmp); } while(0))
+      TRY_PH("POWER_CHARGE_SOC_STOP", do { snprintf(tmp, sizeof(tmp), "%.0f", powerConfig->charge_soc_stop); AP_S(tmp); } while(0))
+      TRY_PH("POWER_MAX_DISCHARGE", AP_N(powerConfig->max_discharge_current))
+      TRY_PH("POWER_DISCHARGE_SOC_STOP", do { snprintf(tmp, sizeof(tmp), "%.0f", powerConfig->discharge_soc_stop); AP_S(tmp); } while(0))
+      TRY_PH("POWER_HYBRID_CHECKED", AP_S(powerConfig->enable_hybrid_boost ? "checked" : ""))
+      TRY_PH("POWER_VSYS_MIN",      AP_N(powerConfig->vsys_min_mV))
+      TRY_PH("POWER_OVER_CURRENT",  AP_N(powerConfig->over_current_threshold))
+      TRY_PH("POWER_OVER_TEMP",     AP_F(powerConfig->over_temp_threshold))
+      TRY_PH("POWER_CHARGE_TEMP_HIGH", AP_F(powerConfig->charge_temp_high_limit))
+      TRY_PH("POWER_CHARGE_TEMP_LOW", AP_F(powerConfig->charge_temp_low_limit))
+      // --- OTA ---
+      TRY_PH("FIRMWARE_VERSION",
+        if (!isConfigMode && statePtr != nullptr) AP_V(statePtr->system.firmware_version);
+        else AP_S("Config Mode");
+      )
+      TRY_PH("FREE_SKETCH_SPACE",   AP_L(ESP.getFreeSketchSpace() / 1024))
+      TRY_PH("FLASH_SIZE",          AP_L(ESP.getFlashChipSize() / (1024 * 1024)))
+
+      #undef TRY_PH
+
+      // 未知占位符：原样输出 %
+      out[j++] = *pos++;
+      continue;
+    }
+
+    // 普通字符
+    out[j++] = *pos++;
   }
 
-  // 注入初始化脚本到 </body> 前
-  char* bodyEndPos = strstr(tempBuffer, "</body>");
-  if (bodyEndPos) {
-    size_t bodyPos = bodyEndPos - tempBuffer;
-    size_t afterBodyLen = strlen(bodyEndPos);
-    char* afterBody = new char[afterBodyLen + strlen(windowInitCode) + 1];
-    strcpy(afterBody, bodyEndPos);
+  out[j] = '\0';
 
-    tempBuffer[bodyPos] = '\0';
-    strcat(tempBuffer, windowInitCode);
-    strcat(tempBuffer, afterBody);
-    delete[] afterBody;
-  }
+  #undef AP_S
+  #undef AP_V
+  #undef AP_N
+  #undef AP_F
+  #undef AP_L
 
-  request->send(200, "text/html", tempBuffer);
-  delete[] buffer;
-  delete[] tempBuffer;
+  request->send(200, "text/html", out);
+
+  delete[] cssBuf;
+  delete[] jsBuf;
+  delete[] injectBuf;
+  delete[] tpl;
+  delete[] out;
 }
 
 // =============================================================================
@@ -1461,23 +1440,27 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     if (sys.containsKey("mqtt_enabled")) {
       bool mqtt_en = sys["mqtt_enabled"];
       if (mqtt_en) {
-        // 启用 MQTT，需要填写 broker 和 port
-        if (sys.containsKey("mqtt_broker") && strlen(sys["mqtt_broker"].as<const char*>()) > 0) {
+        // 启用 MQTT，需要填写 broker 和 port（先取指针判空再 strlen，防 JSON null 崩溃）
+        if (sys.containsKey("mqtt_broker")) {
           const char* broker = sys["mqtt_broker"];
-          if (broker) strlcpy(tempSysConfig.mqtt_broker, broker, sizeof(tempSysConfig.mqtt_broker));
+          if (broker && broker[0]) strlcpy(tempSysConfig.mqtt_broker, broker, sizeof(tempSysConfig.mqtt_broker));
         }
         if (sys.containsKey("mqtt_port")) {
           uint32_t port = sys["mqtt_port"];
           if (port > 0 && port <= 65535) tempSysConfig.mqtt_port = (uint16_t)port;
           else addError("system.mqtt_port", "must be 1-65535");
         }
-        if (sys.containsKey("mqtt_username") && strlen(sys["mqtt_username"].as<const char*>()) > 0) {
+        if (sys.containsKey("mqtt_username")) {
           const char* usr = sys["mqtt_username"];
-          if (usr) strlcpy(tempSysConfig.mqtt_username, usr, sizeof(tempSysConfig.mqtt_username));
+          if (usr && usr[0]) strlcpy(tempSysConfig.mqtt_username, usr, sizeof(tempSysConfig.mqtt_username));
         }
-        if (sys.containsKey("mqtt_password") && strlen(sys["mqtt_password"].as<const char*>()) > 0) {
+        if (sys.containsKey("mqtt_password")) {
           const char* pwd = sys["mqtt_password"];
-          if (pwd) strlcpy(tempSysConfig.mqtt_password, pwd, sizeof(tempSysConfig.mqtt_password));
+          if (pwd && pwd[0]) strlcpy(tempSysConfig.mqtt_password, pwd, sizeof(tempSysConfig.mqtt_password));
+        }
+        // 启用但 broker 为空 → 校验失败，避免前端勾选但未填地址导致配置前后不一致
+        if (tempSysConfig.mqtt_broker[0] == '\0' || tempSysConfig.mqtt_port == 0) {
+          addError("system.mqtt_broker", "MQTT broker and port required when enabled");
         }
       } else {
         // 禁用 MQTT，清空配置
@@ -1499,25 +1482,25 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     if (sys.containsKey("use_static_ip")) {
       tempSysConfig.use_static_ip = sys["use_static_ip"];
     }
-    if (sys.containsKey("static_ip") && strlen(sys["static_ip"].as<const char*>()) > 0) {
+    if (sys.containsKey("static_ip")) {
       const char* ip = sys["static_ip"];
-      if (ip) strlcpy(tempSysConfig.static_ip, ip, sizeof(tempSysConfig.static_ip));
+      if (ip && ip[0]) strlcpy(tempSysConfig.static_ip, ip, sizeof(tempSysConfig.static_ip));
     }
-    if (sys.containsKey("static_gateway") && strlen(sys["static_gateway"].as<const char*>()) > 0) {
+    if (sys.containsKey("static_gateway")) {
       const char* gw = sys["static_gateway"];
-      if (gw) strlcpy(tempSysConfig.static_gateway, gw, sizeof(tempSysConfig.static_gateway));
+      if (gw && gw[0]) strlcpy(tempSysConfig.static_gateway, gw, sizeof(tempSysConfig.static_gateway));
     }
-    if (sys.containsKey("static_subnet") && strlen(sys["static_subnet"].as<const char*>()) > 0) {
+    if (sys.containsKey("static_subnet")) {
       const char* sn = sys["static_subnet"];
-      if (sn) strlcpy(tempSysConfig.static_subnet, sn, sizeof(tempSysConfig.static_subnet));
+      if (sn && sn[0]) strlcpy(tempSysConfig.static_subnet, sn, sizeof(tempSysConfig.static_subnet));
     }
-    if (sys.containsKey("static_dns") && strlen(sys["static_dns"].as<const char*>()) > 0) {
+    if (sys.containsKey("static_dns")) {
       const char* dns = sys["static_dns"];
-      if (dns) strlcpy(tempSysConfig.static_dns, dns, sizeof(tempSysConfig.static_dns));
+      if (dns && dns[0]) strlcpy(tempSysConfig.static_dns, dns, sizeof(tempSysConfig.static_dns));
     }
-    if (sys.containsKey("ntp_server") && strlen(sys["ntp_server"].as<const char*>()) > 0) {
+    if (sys.containsKey("ntp_server")) {
       const char* ntp = sys["ntp_server"];
-      if (ntp) strlcpy(tempSysConfig.ntp_server, ntp, sizeof(tempSysConfig.ntp_server));
+      if (ntp && ntp[0]) strlcpy(tempSysConfig.ntp_server, ntp, sizeof(tempSysConfig.ntp_server));
     }
     // ======================================
     
@@ -1732,9 +1715,9 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
     
   }
   
-  // 交叉校验：充电电压 ≤ 串数×(OV-30mV)
+  // 交叉校验：充电电压 ≤ 串数×(OV-10mV)
   if (!configManager->validateCrossConfig(tempBmsConfig, tempPowerConfig, true)) {
-    addError("power.charge_voltage_limit", "must be <= cell_count*(cell_ov_threshold-30mV)");
+    addError("power.charge_voltage_limit", "must be <= cell_count*(cell_ov_threshold-10mV)");
   }
 
   // ========== 字段级校验汇总 ==========
@@ -1781,43 +1764,6 @@ bool WebServer::updateConfigurationFromRequest(const JsonDocument& doc, JsonDocu
 
   DBG.println(F("All configs updated successfully"));
   return true;
-}
-
-void WebServer::replaceStringInBuffer(char* buffer, size_t bufferSize, const char* search, 
-                                      const char* replace, char* tempBuffer) {
-  if (!buffer || !search || !replace || !tempBuffer) return;
-  
-  size_t searchLen = strlen(search);
-  if (searchLen == 0) return; // 防止空搜索字符串
-  
-  size_t replaceLen = strlen(replace);
-  
-  // 使用迭代而非递归，避免栈溢出
-  while (true) {
-    char* pos = strstr(buffer, search);
-    if (!pos) break; // 没有更多匹配项，退出循环
-    
-    size_t prefixLen = pos - buffer;
-    
-    // 检查缓冲区是否足够
-    size_t currentLen = strlen(buffer);
-    size_t newLen = currentLen - searchLen + replaceLen;
-    if (newLen >= bufferSize) {
-      break; // 防止缓冲区溢出
-    }
-    
-    // 复制前缀部分
-    strncpy(tempBuffer, buffer, prefixLen);
-    tempBuffer[prefixLen] = '\0';
-    
-    // 拼接替换内容
-    strlcat(tempBuffer, replace, bufferSize);
-    strlcat(tempBuffer, pos + searchLen, bufferSize);
-    
-    // 复制回原缓冲区
-    strncpy(buffer, tempBuffer, bufferSize);
-    buffer[bufferSize - 1] = '\0';
-  }
 }
 
 // =============================================================================

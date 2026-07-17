@@ -17,6 +17,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <style id="dynamic-css"></style>
 </head>
 <body>
+<div class="toast-container" id="toastBox"></div>
 <div class="topbar">
 <h1 data-i18n="pageTitle">UPS 控制中心</h1>
 <div class="topbar-info">
@@ -165,14 +166,14 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <!-- ===== 面板：系统配置 ===== -->
 <div class="pnl" id="p-config">
 <div style="display:flex;gap:0;margin-bottom:14px;background:#fff;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden">
-<div class="si active" data-i18n="cfgSystem" onclick="showCfg('system',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⚙️ 系统设置</div>
-<div class="si" data-i18n="cfgHardware" onclick="showCfg('hardware',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔊 硬件控制</div>
-<div class="si" data-i18n="cfgBms" onclick="showCfg('bms',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔋 BMS 配置</div>
-<div class="si" data-i18n="cfgWindows" onclick="showCfg('windows',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⏰ 充电窗口</div>
-<div class="si" data-i18n="cfgPower" onclick="showCfg('power',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⚡ 电源管理</div>
-<div class="si" data-i18n="cfgAuth" onclick="showCfg('auth',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔐 访问账户</div>
-<div class="si" data-i18n="cfgCalibration" onclick="showCfg('calibration',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📐 校准系数</div>
-<div class="si" data-i18n="cfgShipping" onclick="showCfg('shipping',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📦 运输模式</div>
+<div class="si active" data-i18n="cfgSystem" data-tab="system" onclick="showCfg('system',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⚙️ 系统设置</div>
+<div class="si" data-i18n="cfgHardware" data-tab="hardware" onclick="showCfg('hardware',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔊 硬件控制</div>
+<div class="si" data-i18n="cfgBms" data-tab="bms" onclick="showCfg('bms',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔋 BMS 配置</div>
+<div class="si" data-i18n="cfgWindows" data-tab="windows" onclick="showCfg('windows',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⏰ 充电窗口</div>
+<div class="si" data-i18n="cfgPower" data-tab="power" onclick="showCfg('power',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">⚡ 电源管理</div>
+<div class="si" data-i18n="cfgAuth" data-tab="auth" onclick="showCfg('auth',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">🔐 访问账户</div>
+<div class="si" data-i18n="cfgCalibration" data-tab="calibration" onclick="showCfg('calibration',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📐 校准系数</div>
+<div class="si" data-i18n="cfgShipping" data-tab="shipping" onclick="showCfg('shipping',this)" style="border-left:none;border-bottom:3px solid transparent;padding:8px 14px">📦 运输模式</div>
 </div>
 
 <div class="pnl active" id="p-cfg-system">
@@ -208,7 +209,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="fg"><label data-i18n="cfgMqttBroker">Broker 地址:</label><input type="text" id="mqtt_brk" value="%MQTT_BROKER%" placeholder="192.168.1.100"></div>
 <div class="fg"><label data-i18n="cfgMqttPort">端口:</label><input type="number" id="mqtt_port" value="%MQTT_PORT%" min="1" max="65535" placeholder="1883"></div>
 <div class="fg"><label data-i18n="cfgMqttUser">用户名:</label><input type="text" id="mqtt_usr" value="%MQTT_USERNAME%" placeholder="Optional"></div>
-<div class="fg"><label data-i18n="cfgMqttPass">密码:</label><input type="text" id="mqtt_pwd" value="%MQTT_PASSWORD%" placeholder="Optional"></div>
+<div class="fg"><label data-i18n="cfgMqttPass">密码:</label><input type="password" id="mqtt_pwd" value="%MQTT_PASSWORD%" placeholder="Optional" autocomplete="new-password"></div>
 </fieldset>
 </div>
 
@@ -331,7 +332,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </div>
 
 <div class="fa" id="cfgSaveBar">
-<button type="button" class="btn" onclick="save()" data-i18n="cfgSave">保存配置</button>
+<button type="button" class="btn" id="cfgSaveBtn" onclick="save()" data-i18n="cfgSave">保存配置</button>
 </div>
 <div class="nt" id="cfgSaveNote"><strong data-i18n="cfgSaveNote">⚠️ 注意：</strong><span data-i18n="cfgSaveNoteText">事关安全，保护参数请谨慎设置。</span></div>
 </div>
