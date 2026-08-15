@@ -13,13 +13,14 @@ An intelligent lithium battery UPS control system based on ESP32-S3, using BQ247
 > **Will it explode?** The original motivation was to think — why are lithium batteries unsafe? Two factors: battery management and psychological perception. On management: we abandon crude float charging, allowing configurable charge start/stop ranges to keep batteries in optimal zones, with precise voltage/current limits and time windows. Quality battery management chips matter — many have large error margins. On perception: display all information transparently and make it monitorable — you can even integrate with Home Assistant or Xiaomi Home. Actually, many household devices use lithium batteries — laptops, vacuums, robot vacuums, floor washers, electric toothbrushes, razors... If we're talking about safety risks, they all have them. Moreover, this project keeps batteries in the safe middle range (40%~80%), with very few charge cycles per year — just a few times.
 
 > **为什么不用磷酸铁锂？** 磷酸铁锂长期处于浅充浅放状态，库仑计会有巨大积累误差，也许某天真正停电就失速了。综合来说，还是三元锂更符合预期。
+>
 > **Why not LiFePO4?** LiFePO4 in long-term shallow charge/discharge cycles causes huge accumulated errors in the coulomb counter — when a real power outage occurs, it may fail unexpectedly. Overall, ternary lithium (NCM/NCA) better meets expectations.
 >
 > ----------------------------------------------------------
 >
-> 最新代码新增了磷酸铁锂的支持，可我没有磷酸铁锂电池，所以并没有测试，请自行评估。
+> **最新代码新增了磷酸铁锂的支持，可我没有磷酸铁锂电池，所以并没有测试，请自行评估。**
 >
-> The latest commit adds support for LFP (LiFePO₄) batteries. However, since I don't have an LFP battery on hand, this feature has not been tested. Use at your own risk.
+> **The latest commit adds support for LFP (LiFePO₄) batteries. However, since I don't have an LFP battery on hand, this feature has not been tested. Use at your own risk.**
 
 > **怎么接入米家？** 把米家温湿度计上的传感器拆掉，通过 I2C 连接到主板。系统模拟 I2C Slave（SHTC3 协议），将电池温度和 SOC（用湿度字段替代）传送给米家温湿度计，从而接入米家智能家居生态。当然这个功能是可选的——毕竟要拆一只温湿度计来实现。详见 [版本说明 - v2 特性变化](#v2-特性变化)。
 > **How to integrate with Xiaomi Home?** Remove the sensor from a Xiaomi temperature/humidity monitor and connect it to the mainboard via I2C. The system simulates an I2C Slave (SHTC3 protocol), transmitting battery temperature and SOC (using the humidity field) to the Xiaomi monitor, thereby integrating into the Xiaomi smart home ecosystem. This feature is optional — it requires disassembling a monitor. See [Version Notes - v2 Feature Changes](#v2-feature-changes).
@@ -109,7 +110,13 @@ The CN6 position can also directly accept a through-hole NTC resistor soldered i
 启动时按住 **BOOT** 按键（从上到下第二个按钮），再按第三个按钮 **REBOOT**，即可进入下载模式。之后都可以直接通过网页 OTA 更新。
 Hold the **BOOT** button (second button from top) during startup, then press the third button **REBOOT** to enter download mode. After that, updates can be done directly via web OTA.
 
-### 焊接提示
+从上往下，v1版本的按键依次是：**电池的激活按键，网络与配置重置按键**
+
+v2版本的按键依次是：**电池的激活按键，esp32s3的boot引导按键，esp32s3的reset按键，网络与配置的重置按键**
+
+led灯从左往右依次为：**ACpower，充电，放电，wifi指示（红色表示未连接，绿色表示已连接wifi）**
+
+### **焊接提示**
 ### Soldering Tips
 
 焊接板子时，**LDO 5V→3.3V 先不要焊**，先确认 5V 供电正常后再焊上去，以免一波带走芯片。
