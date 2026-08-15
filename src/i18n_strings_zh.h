@@ -93,6 +93,68 @@ static const char s_zh_67[] PROGMEM = "HID报告模式";
 static const char s_zh_68[] PROGMEM = "电芯%d内阻";
 static const char s_zh_69[] PROGMEM = "内阻采样次数";
 
+// Webhook：API 响应
+static const char s_zh_70[] PROGMEM = "Webhook 模块未初始化";
+static const char s_zh_71[] PROGMEM = "缺少请求体";
+static const char s_zh_72[] PROGMEM = "JSON 解析失败";
+static const char s_zh_73[] PROGMEM = "无效端点索引";
+static const char s_zh_74[] PROGMEM = "配置验证失败";
+static const char s_zh_75[] PROGMEM = "配置保存失败";
+static const char s_zh_76[] PROGMEM = "Webhook 配置已保存";
+
+// Webhook：测试发送
+static const char s_zh_77[] PROGMEM = "WiFi 未连接";
+static const char s_zh_78[] PROGMEM = "端点未启用";
+static const char s_zh_79[] PROGMEM = "Webhook 测试";
+static const char s_zh_80[] PROGMEM = "这是一条 Webhook 测试消息，来自 ESP32-S3 UPS";
+
+// Webhook：触发器消息模板
+static const char s_zh_81[] PROGMEM = "%s 当前 %.1f 超过阈值 %.1f";
+static const char s_zh_82[] PROGMEM = "%s 当前 %.1f 低于阈值 %.1f";
+static const char s_zh_83[] PROGMEM = "%s 已恢复，当前 %.1f";
+static const char s_zh_84[] PROGMEM = "%s 已恢复: %s";
+
+// Webhook：状态字符串
+static const char s_zh_85[] PROGMEM = "AC 已连接";
+static const char s_zh_86[] PROGMEM = "AC 已断开";
+static const char s_zh_87[] PROGMEM = "充电已开启";
+static const char s_zh_88[] PROGMEM = "充电已关闭";
+static const char s_zh_89[] PROGMEM = "BMS 故障";
+static const char s_zh_90[] PROGMEM = "BMS 正常";
+static const char s_zh_91[] PROGMEM = "电源故障";
+static const char s_zh_92[] PROGMEM = "电源正常";
+static const char s_zh_93[] PROGMEM = "初始化";
+static const char s_zh_94[] PROGMEM = "正常";
+static const char s_zh_95[] PROGMEM = "警告";
+static const char s_zh_96[] PROGMEM = "严重";
+static const char s_zh_97[] PROGMEM = "AC 供电";
+static const char s_zh_98[] PROGMEM = "电池供电";
+static const char s_zh_99[] PROGMEM = "混合供电";
+static const char s_zh_100[] PROGMEM = "充电中";
+static const char s_zh_101[] PROGMEM = "紧急关机";
+static const char s_zh_102[] PROGMEM = "均衡中";
+static const char s_zh_103[] PROGMEM = "均衡停止";
+static const char s_zh_104[] PROGMEM = "未知";
+
+// Webhook：模板变量
+static const char s_zh_105[] PROGMEM = "连接";
+static const char s_zh_106[] PROGMEM = "断开";
+
+// Webhook：配置验证失败原因
+static const char s_zh_107[] PROGMEM = "配置版本不匹配";
+static const char s_zh_108[] PROGMEM = "端点数量超限";
+static const char s_zh_109[] PROGMEM = "端点 %u URL 不能为空";
+static const char s_zh_110[] PROGMEM = "端点 %u 请求方式无效";
+static const char s_zh_111[] PROGMEM = "端点 %u 冷却时间不能小于 10 秒";
+static const char s_zh_112[] PROGMEM = "端点 %u 触发器数量超限";
+static const char s_zh_113[] PROGMEM = "端点 %u 触发器类型无效";
+static const char s_zh_114[] PROGMEM = "端点 %u 比较运算符无效";
+static const char s_zh_115[] PROGMEM = "端点 %u 值触发只能用大于/小于";
+static const char s_zh_116[] PROGMEM = "端点 %u 状态触发只能用等于/变化";
+static const char s_zh_117[] PROGMEM = "端点 %u 监测值无效";
+static const char s_zh_118[] PROGMEM = "端点 %u 监测状态无效";
+static const char s_zh_119[] PROGMEM = "端点 %u 告警级别无效";
+
 // 指针数组（按 StrId 顺序）
 const char* const I18n::strings_zh_[] = {
     s_zh_0,  s_zh_1,  s_zh_2,  s_zh_3,  s_zh_4,  s_zh_5,  s_zh_6,  s_zh_7,
@@ -104,6 +166,13 @@ const char* const I18n::strings_zh_[] = {
     s_zh_48, s_zh_49, s_zh_50, s_zh_51, s_zh_52, s_zh_53, s_zh_54, s_zh_55,
     s_zh_56, s_zh_57, s_zh_58, s_zh_59, s_zh_60, s_zh_61, s_zh_62, s_zh_63,
     s_zh_64, s_zh_65, s_zh_66, s_zh_67, s_zh_68, s_zh_69,
+    s_zh_70, s_zh_71, s_zh_72, s_zh_73, s_zh_74, s_zh_75, s_zh_76, s_zh_77,
+    s_zh_78, s_zh_79, s_zh_80, s_zh_81, s_zh_82, s_zh_83, s_zh_84, s_zh_85,
+    s_zh_86, s_zh_87, s_zh_88, s_zh_89, s_zh_90, s_zh_91, s_zh_92, s_zh_93,
+    s_zh_94, s_zh_95, s_zh_96, s_zh_97, s_zh_98, s_zh_99, s_zh_100, s_zh_101,
+    s_zh_102, s_zh_103, s_zh_104, s_zh_105, s_zh_106, s_zh_107, s_zh_108, s_zh_109,
+    s_zh_110, s_zh_111, s_zh_112, s_zh_113, s_zh_114, s_zh_115, s_zh_116, s_zh_117,
+    s_zh_118, s_zh_119,
 };
 
 #endif

@@ -5,6 +5,14 @@
 #include "event_types.h"
 #include "debug.h"
 #include "i18n.h"
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
+
+// SPIFFS 互斥锁（定义于 system_management.cpp，保护 /log /raw 等并发文件访问）
+extern SemaphoreHandle_t g_spiffs_mutex;
+
+// Webhook 配置在 SPIFFS 中的存储路径（NVS 20KB 无法容纳 3849 字节的结构体）
+#define WEBHOOK_CONFIG_PATH "/webhook_cfg.json"
 
 // 静态实例指针，供事件回调使用
 static ConfigManager* s_configManagerInstance = nullptr;
@@ -700,4 +708,215 @@ void ConfigManager::onConfigChangeRequest(EventType type, void* param) {
     if (!s_configManagerInstance || !param) return;
     const Configuration* config = static_cast<const Configuration*>(param);
     s_configManagerInstance->updateSystemConfig(*config, true);
+}
+
+// =============================================================================
+// Webhook 配置管理
+// =============================================================================
+
+bool ConfigManager::loadWebhookConfig(WebhookConfig_t& config) {
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+
+    File f = SPIFFS.open(WEBHOOK_CONFIG_PATH, FILE_READ);
+    if (!f) {
+        if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+        DBG.println(F("[ConfigMgr] Webhook config file not found"));
+        return false;
+    }
+
+    String raw = f.readString();
+    f.close();
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+    DynamicJsonDocument doc(16384);
+    DeserializationError err = deserializeJson(doc, raw);
+    if (err) {
+        DBG.printf("[ConfigMgr] Webhook config JSON parse failed: %s\n", err.c_str());
+        return false;
+    }
+
+    memset(&config, 0, sizeof(config));
+    config.config_version = doc["config_version"] | (uint16_t)WH_CONFIG_VERSION;
+    config.global_enabled = doc["global_enabled"] | false;
+
+    JsonArray endpoints = doc["endpoints"].as<JsonArray>();
+    uint8_t count = 0;
+    for (JsonObject ep : endpoints) {
+        if (count >= WH_MAX_ENDPOINTS) break;
+        WebhookEndpoint_t& dest = config.endpoints[count];
+
+        dest.enabled = ep["enabled"] | false;
+        dest.verify_tls = ep["verify_tls"] | true;
+        dest.method = ep["method"] | (uint8_t)WH_METHOD_POST;
+        strlcpy(dest.name, ep["name"] | "", sizeof(dest.name));
+        strlcpy(dest.url, ep["url"] | "", sizeof(dest.url));
+        strlcpy(dest.auth_token, ep["auth_token"] | "", sizeof(dest.auth_token));
+        strlcpy(dest.device_key, ep["device_key"] | "", sizeof(dest.device_key));
+        strlcpy(dest.auth_header, ep["auth_header"] | "", sizeof(dest.auth_header));
+        dest.cooldown_ms = ep["cooldown_ms"] | (uint32_t)WH_DEFAULT_COOLDOWN;
+        strlcpy(dest.message_template, ep["message_template"] | "", sizeof(dest.message_template));
+
+        JsonArray triggers = ep["triggers"].as<JsonArray>();
+        uint8_t trigCount = 0;
+        for (JsonObject t : triggers) {
+            if (trigCount >= WH_MAX_TRIGGERS) break;
+            WebhookTrigger_t& tDest = dest.triggers[trigCount];
+
+            tDest.enabled = t["enabled"] | false;
+            tDest.alert_level = t["alert_level"] | (uint8_t)0;
+            tDest.condition.trigger_type = t["trigger_type"] | (uint8_t)0;
+            tDest.condition.source = t["source"] | (uint8_t)0;
+            tDest.condition.compare_op = t["compare_op"] | (uint8_t)0;
+            tDest.condition.threshold = t["threshold"] | 0.0f;
+            strlcpy(tDest.dedup_key, t["dedup_key"] | "", sizeof(tDest.dedup_key));
+            strlcpy(tDest.title, t["title"] | "", sizeof(tDest.title));
+            strlcpy(tDest.description, t["description"] | "", sizeof(tDest.description));
+            tDest.fired = false;
+
+            trigCount++;
+        }
+        dest.trigger_count = trigCount;
+
+        count++;
+    }
+    config.endpoint_count = count;
+
+    if (!validateWebhookConfig(config)) {
+        DBG.println(F("[ConfigMgr] Webhook config validation failed"));
+        return false;
+    }
+
+    DBG.printf("[ConfigMgr] Webhook config loaded from SPIFFS: %u endpoints\n", config.endpoint_count);
+    return true;
+}
+
+bool ConfigManager::saveWebhookConfig(const WebhookConfig_t& config) {
+    if (!validateWebhookConfig(config)) {
+        DBG.println(F("[ConfigMgr] Webhook config validation failed, not saving"));
+        return false;
+    }
+
+    DynamicJsonDocument doc(16384);
+    doc["config_version"] = config.config_version;
+    doc["global_enabled"] = config.global_enabled;
+
+    JsonArray endpoints = doc.createNestedArray("endpoints");
+    for (uint8_t i = 0; i < config.endpoint_count && i < WH_MAX_ENDPOINTS; i++) {
+        const WebhookEndpoint_t& ep = config.endpoints[i];
+        JsonObject obj = endpoints.createNestedObject();
+
+        obj["enabled"] = ep.enabled;
+        obj["verify_tls"] = ep.verify_tls;
+        obj["method"] = ep.method;
+        obj["name"] = ep.name;
+        obj["url"] = ep.url;
+        obj["auth_token"] = ep.auth_token;
+        obj["device_key"] = ep.device_key;
+        obj["auth_header"] = ep.auth_header;
+        obj["cooldown_ms"] = ep.cooldown_ms;
+        obj["message_template"] = ep.message_template;
+
+        JsonArray triggers = obj.createNestedArray("triggers");
+        for (uint8_t j = 0; j < ep.trigger_count && j < WH_MAX_TRIGGERS; j++) {
+            const WebhookTrigger_t& trig = ep.triggers[j];
+            JsonObject tObj = triggers.createNestedObject();
+
+            tObj["enabled"] = trig.enabled;
+            tObj["alert_level"] = trig.alert_level;
+            tObj["trigger_type"] = trig.condition.trigger_type;
+            tObj["source"] = trig.condition.source;
+            tObj["compare_op"] = trig.condition.compare_op;
+            tObj["threshold"] = trig.condition.threshold;
+            tObj["dedup_key"] = trig.dedup_key;
+            tObj["title"] = trig.title;
+            tObj["description"] = trig.description;
+        }
+    }
+
+    String out;
+    serializeJson(doc, out);
+
+    if (g_spiffs_mutex) xSemaphoreTake(g_spiffs_mutex, portMAX_DELAY);
+    File f = SPIFFS.open(WEBHOOK_CONFIG_PATH, FILE_WRITE);
+    bool ok = false;
+    if (f) {
+        ok = (f.print(out) == out.length());
+        f.close();
+    } else {
+        DBG.println(F("[ConfigMgr] Failed to open webhook config file for write"));
+    }
+    if (g_spiffs_mutex) xSemaphoreGive(g_spiffs_mutex);
+
+    DBG.println(ok ? F("[ConfigMgr] Webhook config saved to SPIFFS")
+                   : F("[ConfigMgr] Failed to save webhook config to SPIFFS"));
+    return ok;
+}
+
+void ConfigManager::loadWebhookDefaults(WebhookConfig_t& config) {
+    memset(&config, 0, sizeof(WebhookConfig_t));
+    config.config_version = WH_CONFIG_VERSION;
+    config.global_enabled = false;
+    config.endpoint_count = 0;
+
+    // 初始化每个端点的默认值
+    for (int i = 0; i < WH_MAX_ENDPOINTS; i++) {
+        config.endpoints[i].cooldown_ms = WH_DEFAULT_COOLDOWN;
+        config.endpoints[i].verify_tls = true;   // 默认开启证书校验
+        config.endpoints[i].method = WH_METHOD_POST; // 默认 POST
+        config.endpoints[i].trigger_count = 0;
+    }
+}
+
+bool ConfigManager::validateWebhookConfig(const WebhookConfig_t& config, char* reason) {
+    #define WH_FAIL(id, ...) do { if (reason) snprintf(reason, 64, I18n::get(id), ##__VA_ARGS__); } while(0)
+
+    if (config.config_version != WH_CONFIG_VERSION) { WH_FAIL(STR_WH_V_VERSION); return false; }
+    if (config.endpoint_count > WH_MAX_ENDPOINTS) { WH_FAIL(STR_WH_V_ENDPOINT_COUNT); return false; }
+
+    for (uint8_t i = 0; i < config.endpoint_count; i++) {
+        const WebhookEndpoint_t& ep = config.endpoints[i];
+
+        // URL 非空检查 (启用的端点)
+        if (ep.enabled && ep.url[0] == '\0') { WH_FAIL(STR_WH_V_URL_EMPTY, i + 1); return false; }
+
+        // 请求方式检查
+        if (ep.method > WH_METHOD_GET) { WH_FAIL(STR_WH_V_METHOD, i + 1); return false; }
+
+        // 冷却时间下限 10 秒
+        if (ep.cooldown_ms < 10000) { WH_FAIL(STR_WH_V_COOLDOWN, i + 1); return false; }
+
+        // 触发器数量检查
+        if (ep.trigger_count > WH_MAX_TRIGGERS) { WH_FAIL(STR_WH_V_TRIGGER_COUNT, i + 1); return false; }
+
+        for (uint8_t j = 0; j < ep.trigger_count; j++) {
+            const WebhookTrigger_t& trig = ep.triggers[j];
+
+            // 触发器类型检查
+            if (trig.condition.trigger_type > WH_TRIGGER_STATE) { WH_FAIL(STR_WH_V_TRIGGER_TYPE, i + 1); return false; }
+
+            // 比较运算符检查
+            if (trig.condition.compare_op > WH_CMP_CHANGE) { WH_FAIL(STR_WH_V_CMP_OP, i + 1); return false; }
+
+            // 交叉校验: 值触发只能用 GT/LT，状态触发只能用 EQ/CHANGE
+            if (trig.condition.trigger_type == WH_TRIGGER_VALUE) {
+                if (trig.condition.compare_op != WH_CMP_GT &&
+                    trig.condition.compare_op != WH_CMP_LT) { WH_FAIL(STR_WH_V_VALUE_OP, i + 1); return false; }
+            } else {
+                if (trig.condition.compare_op != WH_CMP_EQ &&
+                    trig.condition.compare_op != WH_CMP_CHANGE) { WH_FAIL(STR_WH_V_STATE_OP, i + 1); return false; }
+            }
+
+            // 值源/状态源范围检查
+            if (trig.condition.trigger_type == WH_TRIGGER_VALUE &&
+                trig.condition.source >= WH_VALUE_SOURCE_MAX) { WH_FAIL(STR_WH_V_SOURCE_VALUE, i + 1); return false; }
+            if (trig.condition.trigger_type == WH_TRIGGER_STATE &&
+                trig.condition.source >= WH_STATE_SOURCE_MAX) { WH_FAIL(STR_WH_V_SOURCE_STATE, i + 1); return false; }
+
+            // 告警级别检查
+            if (trig.alert_level > WH_LEVEL_CRITICAL) { WH_FAIL(STR_WH_V_LEVEL, i + 1); return false; }
+        }
+    }
+
+    #undef WH_FAIL
+    return true;
 }

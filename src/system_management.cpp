@@ -17,6 +17,7 @@
 #include "bms.h"
 #include "power_management.h"
 #include "web_server.h"
+#include "webhook_manager.h"
 #include "pins_config.h"
 #include "ups_hid_service.h"
 #include "mqtt_service.h"
@@ -26,6 +27,8 @@
 #include "debug.h"
 #include <WiFi.h>
 #include <SPIFFS.h>
+
+extern WebhookManager* webhookManager;
 #include <math.h>
 #include "time_utils.h"
 
@@ -373,6 +376,12 @@ void SystemManagement::executeStateActions() {
     // 小米传感器桥接更新
     if (xiaomiBridge != nullptr) {
         xiaomiBridge->update(globalState);
+    }
+
+    // Webhook 触发器求值
+    if (webhookManager != nullptr) {
+        webhookManager->setFsmState((uint8_t)currentState);
+        webhookManager->evaluateTriggers(globalState);
     }
 }
 
@@ -1131,6 +1140,16 @@ void SystemManagement::onDelayedStart() {
     } else {
         DBG.println("[SysMgr] MQTT service not created (config not enabled)");
     }
+
+    // Webhook 延迟启动 (与 HID / MQTT / XiaomiBridge 一起，等系统稳定后再启动)
+    if (webhookManager == nullptr) {
+        webhookManager = new WebhookManager(*configManager);
+        if (!webhookManager->begin()) {
+            DBG.println("[SysMgr] WARNING: Webhook start failed");
+            delete webhookManager;
+            webhookManager = nullptr;
+        }
+    }
 }
 
 // =============================================================================
@@ -1495,6 +1514,8 @@ void SystemManagement::scAnalysisTask(void* param) {
 void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_result) {
     if (!bms) return;
 
+    DBG.printf_P(PSTR("SC: free heap=%u bytes\n"), (unsigned)ESP.getFreeHeap());
+
     uint32_t now = getTimestamp();
     if (now < 1000000000) return;
 
@@ -1502,7 +1523,7 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
     if (!findQuiescentSegments(now, scan_result, result)) {
         // 分析失败，更新检查时间和总段数
         bms->updateSCLastCheck(now, result.total_segments);
-        DBG.printf_P(PSTR("SC: 分析未通过，共 %d 段\n"), result.total_segments);
+        DBG.printf_P(PSTR("SC: 分析未通过，共 %d 段, free heap=%u\n"), result.total_segments, (unsigned)ESP.getFreeHeap());
         return;
     }
 
@@ -1510,6 +1531,8 @@ void SystemManagement::runSelfConsumptionAnalysis(const RawScanResult& scan_resu
         bms->updateSelfConsumption(result.self_consumption_mA, result.segment_count,
                                    result.total_segments, now, now);
     }
+
+    DBG.printf_P(PSTR("SC: done, free heap=%u\n"), (unsigned)ESP.getFreeHeap());
 }
 
 // =============================================================================

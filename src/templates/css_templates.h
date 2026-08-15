@@ -113,7 +113,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text'
 @media(max-width:720px){#p-config>div:first-child{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}#p-config>div:first-child::-webkit-scrollbar{display:none}#p-config .si{white-space:nowrap;flex-shrink:0}}
 
 /* Toast 通知 */
-.toast-container{position:fixed;top:60px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast-container{position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
 .toast{padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;pointer-events:auto;animation:toast-in .3s ease;max-width:380px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,0.12)}
 .toast.success{background:rgba(52,199,89,0.95);color:#fff}
 .toast.error{background:rgba(255,59,48,0.95);color:#fff}
@@ -287,6 +287,41 @@ const char OTA_CSS[] PROGMEM = R"rawliteral(
 .ota-btn:hover{box-shadow:0 4px 16px rgba(0,122,255,0.35);transform:translateY(-1px)}
 .ota-btn:active{transform:translateY(0);box-shadow:0 2px 8px rgba(0,122,255,0.25)}
 .ota-btn:disabled{background:linear-gradient(135deg,#d1d1d6 0%,#8e8e93 100%);box-shadow:none;cursor:not-allowed;transform:none}
+
+/* Webhook 面板 */
+.wh-endpoint{border-left:3px solid #007AFF}
+.wh-trigger{border-left:3px solid #34C759;background:#f8f9fa;border-radius:6px;padding:10px;margin:8px 0}
+.wh-field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.btn-sm{padding:4px 10px;font-size:11px;border-radius:6px}
+/* Webhook 折叠 */
+.wh-ep-head,.wh-trig-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.wh-ep-head{padding:4px 0}
+.wh-trig-head{padding:0}
+.wh-chevron{display:inline-block;width:14px;flex:none;text-align:center;color:#888}
+.wh-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+.wh-ep-body{margin-top:12px}
+.wh-trig-body{margin-top:8px}
+fieldset.fs{background:#fff;border:1px solid #e8e8e8;border-radius:8px;padding:12px;margin:8px 0}
+legend.lg{font-size:13px;font-weight:600;padding:0 6px;color:#333}
+/* Webhook 表单：标签左对齐、输入框自适应宽度 */
+#p-webhook .fg{flex-direction:column!important;align-items:stretch!important}
+#p-webhook .fg label{text-align:left!important;min-width:0!important;margin:0 0 4px 0!important;width:auto}
+/* Webhook 全部输入控件统一 macOS 风格（含 URL、触发器字段） */
+#p-webhook input[type=text],#p-webhook input[type=url],#p-webhook input[type=password],#p-webhook input[type=number],#p-webhook select,#p-webhook textarea{width:100%!important;padding:8px 12px;border:1.5px solid #d1d1d6;border-radius:8px;font-size:13px;background:#fff;color:#1d1d1f;outline:none;transition:all .2s ease;font-weight:500;font-family:inherit}
+#p-webhook input[type=text]:focus,#p-webhook input[type=url]:focus,#p-webhook input[type=password]:focus,#p-webhook input[type=number]:focus,#p-webhook select:focus,#p-webhook textarea:focus{border-color:#007AFF;box-shadow:0 0 0 3px rgba(0,122,255,0.12)}
+/* 消息模板：样式与其他一致，高度至少为普通输入框 3 倍 */
+#p-webhook textarea{min-height:108px;resize:vertical}
+/* 触发器字段标签 */
+#p-webhook .wh-field-grid label,#p-webhook .wh-trig-body label{display:block;color:#86868b;font-weight:600;font-size:11px;margin-bottom:4px}
+/* 模板变量说明 */
+.wh-vars{margin-top:4px;border-top:1px solid rgba(0,0,0,0.06);padding-top:10px}
+.wh-vars summary{cursor:pointer;font-size:13px;font-weight:600;color:#1d1d1f;outline:none}
+.wh-vars-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 16px;margin-top:8px}
+.wh-var{display:flex;align-items:baseline;gap:8px;font-size:12px;cursor:pointer}
+.wh-var code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:#f5f5f7;border:1px solid #e8e8ed;border-radius:4px;padding:1px 5px;color:#007AFF;white-space:nowrap;transition:background .15s}
+.wh-var span{color:#666}
+.wh-var:hover code{background:#e6f0ff}
+.wh-var:active code{background:#d0e5ff}
 )rawliteral";
 
 #endif // CSS_TEMPLATES_H

@@ -93,6 +93,68 @@ static const char s_en_67[] PROGMEM = "HID Report Mode";
 static const char s_en_68[] PROGMEM = "Cell %d Internal Resistance";
 static const char s_en_69[] PROGMEM = "IR Sample Count";
 
+// Webhook: API responses
+static const char s_en_70[] PROGMEM = "Webhook module not initialized";
+static const char s_en_71[] PROGMEM = "Missing request body";
+static const char s_en_72[] PROGMEM = "JSON parse failed";
+static const char s_en_73[] PROGMEM = "Invalid endpoint index";
+static const char s_en_74[] PROGMEM = "Config validation failed";
+static const char s_en_75[] PROGMEM = "Config save failed";
+static const char s_en_76[] PROGMEM = "Webhook config saved";
+
+// Webhook: test send
+static const char s_en_77[] PROGMEM = "WiFi not connected";
+static const char s_en_78[] PROGMEM = "Endpoint disabled";
+static const char s_en_79[] PROGMEM = "Webhook test";
+static const char s_en_80[] PROGMEM = "This is a Webhook test message from ESP32-S3 UPS";
+
+// Webhook: trigger message templates
+static const char s_en_81[] PROGMEM = "%s current %.1f exceeds threshold %.1f";
+static const char s_en_82[] PROGMEM = "%s current %.1f below threshold %.1f";
+static const char s_en_83[] PROGMEM = "%s recovered, current %.1f";
+static const char s_en_84[] PROGMEM = "%s recovered: %s";
+
+// Webhook: state strings
+static const char s_en_85[] PROGMEM = "AC connected";
+static const char s_en_86[] PROGMEM = "AC disconnected";
+static const char s_en_87[] PROGMEM = "Charging on";
+static const char s_en_88[] PROGMEM = "Charging off";
+static const char s_en_89[] PROGMEM = "BMS fault";
+static const char s_en_90[] PROGMEM = "BMS normal";
+static const char s_en_91[] PROGMEM = "Power fault";
+static const char s_en_92[] PROGMEM = "Power normal";
+static const char s_en_93[] PROGMEM = "Init";
+static const char s_en_94[] PROGMEM = "Normal";
+static const char s_en_95[] PROGMEM = "Warning";
+static const char s_en_96[] PROGMEM = "Critical";
+static const char s_en_97[] PROGMEM = "AC power";
+static const char s_en_98[] PROGMEM = "Battery power";
+static const char s_en_99[] PROGMEM = "Hybrid power";
+static const char s_en_100[] PROGMEM = "Charging";
+static const char s_en_101[] PROGMEM = "Emergency shutdown";
+static const char s_en_102[] PROGMEM = "Balancing";
+static const char s_en_103[] PROGMEM = "Balancing stopped";
+static const char s_en_104[] PROGMEM = "Unknown";
+
+// Webhook: template variables
+static const char s_en_105[] PROGMEM = "connected";
+static const char s_en_106[] PROGMEM = "disconnected";
+
+// Webhook: validation failure reasons
+static const char s_en_107[] PROGMEM = "Config version mismatch";
+static const char s_en_108[] PROGMEM = "Too many endpoints";
+static const char s_en_109[] PROGMEM = "Endpoint %u URL cannot be empty";
+static const char s_en_110[] PROGMEM = "Endpoint %u invalid method";
+static const char s_en_111[] PROGMEM = "Endpoint %u cooldown cannot be less than 10s";
+static const char s_en_112[] PROGMEM = "Endpoint %u too many triggers";
+static const char s_en_113[] PROGMEM = "Endpoint %u invalid trigger type";
+static const char s_en_114[] PROGMEM = "Endpoint %u invalid compare op";
+static const char s_en_115[] PROGMEM = "Endpoint %u value trigger only supports GT/LT";
+static const char s_en_116[] PROGMEM = "Endpoint %u state trigger only supports EQ/CHANGE";
+static const char s_en_117[] PROGMEM = "Endpoint %u invalid value source";
+static const char s_en_118[] PROGMEM = "Endpoint %u invalid state source";
+static const char s_en_119[] PROGMEM = "Endpoint %u invalid alert level";
+
 // Pointer array (ordered by StrId)
 const char* const I18n::strings_en_[] = {
     s_en_0,  s_en_1,  s_en_2,  s_en_3,  s_en_4,  s_en_5,  s_en_6,  s_en_7,
@@ -104,6 +166,13 @@ const char* const I18n::strings_en_[] = {
     s_en_48, s_en_49, s_en_50, s_en_51, s_en_52, s_en_53, s_en_54, s_en_55,
     s_en_56, s_en_57, s_en_58, s_en_59, s_en_60, s_en_61, s_en_62, s_en_63,
     s_en_64, s_en_65, s_en_66, s_en_67, s_en_68, s_en_69,
+    s_en_70, s_en_71, s_en_72, s_en_73, s_en_74, s_en_75, s_en_76, s_en_77,
+    s_en_78, s_en_79, s_en_80, s_en_81, s_en_82, s_en_83, s_en_84, s_en_85,
+    s_en_86, s_en_87, s_en_88, s_en_89, s_en_90, s_en_91, s_en_92, s_en_93,
+    s_en_94, s_en_95, s_en_96, s_en_97, s_en_98, s_en_99, s_en_100, s_en_101,
+    s_en_102, s_en_103, s_en_104, s_en_105, s_en_106, s_en_107, s_en_108, s_en_109,
+    s_en_110, s_en_111, s_en_112, s_en_113, s_en_114, s_en_115, s_en_116, s_en_117,
+    s_en_118, s_en_119,
 };
 
 #endif

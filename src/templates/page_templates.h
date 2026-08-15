@@ -34,6 +34,7 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="si active" data-i18n="navStatus" onclick="show('status',this)">📊 状态概览</div>
 <div class="si" data-i18n="navBms" onclick="show('bms',this)">🔋 BMS 状态</div>
 <div class="si" data-i18n="navPower" onclick="show('power',this)">⚡ 电源状态</div>
+<div class="si" data-i18n="navWebhook" onclick="show('webhook',this)">🔔 Webhook</div>
 <div class="si" data-i18n="navConfig" onclick="show('config',this)">⚙️ 系统配置</div>
 <div class="si" data-i18n="navOta" onclick="show('ota',this)">📦 固件升级</div>
 </div>
@@ -162,6 +163,134 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 <div class="card-t" id="regTitle" style="margin:20px 0 12px;font-size:14px;font-weight:600">BQ24780S <span data-i18n="wzRegTitle">寄存器状态</span></div>
 <div id="r24" class="grid"></div>
 </div>
+
+<!-- ===== 面板：Webhook 告警配置 ===== -->
+<div class="pnl" id="p-webhook">
+<div class="card" style="margin-bottom:16px">
+<div class="card-t" data-i18n="whPanelTitle">🔔 Webhook 告警配置</div>
+<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px"><input type="checkbox" id="wh_global_en" onchange="whToggleGlobal()"><span data-i18n="whGlobalEnable">全局启用</span></label>
+<p style="color:#888;font-size:12px;margin:0 0 10px" data-i18n="whDesc">配置自定义 Webhook 告警推送，支持值阈值和状态变化触发。Token / Key 可嵌入 URL、Header 与消息模板</p>
+<details class="wh-vars" open>
+<summary data-i18n="whVarsTitle">📖 可用模板变量说明</summary>
+<div class="wh-vars-grid" id="whVars"></div>
+</details>
+</div>
+
+<div id="wh_endpoints"></div>
+
+<div style="margin-top:12px;display:flex;gap:8px">
+<button class="btn" onclick="whAddEndpoint()" id="wh_add_btn" data-i18n="whAddEndpoint">添加推送规则</button>
+<button class="btn" onclick="whSave()" data-i18n="whSave">保存配置</button>
+</div>
+</div>
+
+<!-- Webhook 推送编辑模板 -->
+<template id="wh_endpoint_tpl">
+<div class="card wh-endpoint" style="margin-bottom:12px;border-left:3px solid #007AFF">
+<div class="wh-ep-head" onclick="whToggleSection(this)">
+<span class="wh-chevron">▸</span>
+<span class="wh-ep-title" style="font-weight:600;font-size:14px">推送 #1</span>
+<div class="wh-head-actions" onclick="event.stopPropagation()">
+<label style="font-size:12px"><input type="checkbox" class="wh-ep-en" checked> <span data-i18n="whEnabled">启用</span></label>
+<button class="btn btn-r btn-sm wh-ep-del" onclick="whDeleteEndpoint(this)" data-i18n="whDelete">删除</button>
+</div>
+</div>
+
+<div class="wh-ep-body" style="display:none">
+<fieldset class="fs">
+<legend class="lg" data-i18n="whBasicConfig">基础配置</legend>
+<div class="fg"><label data-i18n="whName">自定义名</label><input type="text" class="wh-ep-name" placeholder="如" oninput="whNameChanged(this)"></div>
+<div class="fg"><label data-i18n="whUrl">URL</label><input type="url" class="wh-ep-url" placeholder="https://api.day.app/{key}/{title}/{description}"></div>
+<div class="fg"><label data-i18n="whMethod">请求方式</label><select class="wh-ep-method"><option value="0">POST</option><option value="1">GET</option></select></div>
+<div class="fg"><label data-i18n="whToken">认证 Token</label><input type="password" class="wh-ep-token" placeholder="输入 Token，可嵌入 {token}" autocomplete="off"><span class="wh-saved-hint" data-i18n="whSavedHint" style="font-size:11px;color:#888;display:none">已保存（留空则清除）</span></div>
+<div class="fg"><label data-i18n="whKey">设备密钥 (Key)</label><input type="password" class="wh-ep-key" placeholder="输入 Device Key，可嵌入 {key}" autocomplete="off"><span class="wh-saved-hint" data-i18n="whSavedHint" style="font-size:11px;color:#888;display:none">已保存（留空则清除）</span></div>
+<div class="fg"><label data-i18n="whAuthHeader">认证头 (Header)</label><input type="text" class="wh-ep-auth-header" placeholder="如 Authorization 或 Authorization: Bearer {token}"></div>
+<div class="fg"><label data-i18n="whCooldown">冷却时间 (秒)</label><input type="number" class="wh-ep-cooldown" value="60" min="10" max="3600"></div>
+<div class="fg"><label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" class="wh-ep-verify" checked> <span data-i18n="whVerifyTls">校验 HTTPS 证书</span></label></div>
+</fieldset>
+
+<fieldset class="fs" style="margin-top:10px">
+<legend class="lg" data-i18n="whTrigger">触发器</legend>
+<div class="wh-triggers"></div>
+<button class="btn btn-sm" onclick="whAddTrigger(this)" style="margin-top:8px" data-i18n="whAddTrigger">＋ 添加触发器</button>
+</fieldset>
+
+<fieldset class="fs" style="margin-top:10px">
+<legend class="lg" data-i18n="whMsgTemplateOverride">消息模板 (可选覆盖)</legend>
+<div class="fg"><label data-i18n="whMsgTemplate">模板</label><textarea class="wh-ep-tpl" rows="2" placeholder="{title}: {description} SOC={soc}% V={voltage}mV"></textarea></div>
+</fieldset>
+
+<div style="margin-top:12px;display:flex;align-items:center;gap:12px">
+<button class="btn btn-sm" onclick="whTestEndpoint(this)" data-i18n="whTestSend">🧪 测试发送</button>
+<span class="wh-ep-status" style="font-size:12px"></span>
+<span class="wh-ep-stats" style="font-size:11px;color:#888"></span>
+</div>
+</div>
+</div>
+</template>
+
+<!-- Webhook 触发器编辑模板 -->
+<template id="wh_trigger_tpl">
+<div class="wh-trigger" style="border-left:3px solid #34C759;background:#f8f9fa;border-radius:6px;padding:10px;margin:8px 0">
+<div class="wh-trig-head" onclick="whToggleSection(this)">
+<span class="wh-chevron">▸</span>
+<span class="wh-trig-title" style="font-size:12px;font-weight:600">触发器 #1</span>
+<div class="wh-head-actions" onclick="event.stopPropagation()">
+<label style="font-size:11px"><input type="checkbox" class="wh-trig-en" checked> <span data-i18n="whEnabled">启用</span></label>
+<button class="btn btn-r btn-sm" onclick="whDeleteTrigger(this)" style="padding:2px 8px;font-size:10px" data-i18n="whDelete">删除</button>
+</div>
+</div>
+
+<div class="wh-trig-body" style="display:none">
+<div class="wh-field-grid">
+<div><label data-i18n="whType">类型</label><select class="wh-trig-type" onchange="whTriggerTypeChanged(this)">
+<option value="0" data-i18n="whTrigValue">值阈值触发</option>
+<option value="1" data-i18n="whTrigState">状态变化触发</option>
+</select></div>
+
+<div class="wh-value-fields"><label data-i18n="whMonitorValue">监测值</label><select class="wh-trig-value-src">
+<option value="0" data-i18n="whValTemp">电池温度 (°C)</option>
+<option value="1" data-i18n="whValCurrent">电池电流 (mA)</option>
+<option value="2" data-i18n="whValVoltage">电池电压 (mV)</option>
+<option value="3" data-i18n="whValSoc">SOC (%)</option>
+<option value="4" data-i18n="whValSoh">SOH (%)</option>
+<option value="5" data-i18n="whValInputVoltage">输入电压 (mV)</option>
+<option value="6" data-i18n="whValBoardTemp">板温 (°C)</option>
+</select></div>
+
+<div class="wh-state-fields" style="display:none"><label data-i18n="whMonitorState">监测状态</label><select class="wh-trig-state-src">
+<option value="0" data-i18n="whStateAc">AC 电源</option>
+<option value="1" data-i18n="whStateCharger">充电器</option>
+<option value="2" data-i18n="whStateBmsFault">BMS 故障</option>
+<option value="3" data-i18n="whStatePowerFault">电源故障</option>
+<option value="4" data-i18n="whStateSystem">系统状态</option>
+<option value="5" data-i18n="whStatePowerMode">电源模式</option>
+<option value="6" data-i18n="whStateEmergency">紧急关机</option>
+<option value="7" data-i18n="whStateBalancing">电池均衡</option>
+</select></div>
+
+<div class="wh-op-field"><label data-i18n="whCondition">条件</label><select class="wh-trig-op">
+<option value="0" data-i18n="whGt">大于</option>
+<option value="1" data-i18n="whLt">小于</option>
+</select></div>
+
+<div class="wh-threshold-field"><label data-i18n="whThreshold">阈值</label><input type="number" class="wh-trig-threshold" step="0.1" value="0"></div>
+
+<div><label data-i18n="whAlertLevel">告警级别</label><select class="wh-trig-level">
+<option value="0" data-i18n="whLevelInfo">信息</option>
+<option value="1" selected data-i18n="whLevelWarn">警告</option>
+<option value="2" data-i18n="whLevelCrit">严重</option>
+</select></div>
+</div>
+
+<div style="margin-top:6px">
+<div><label data-i18n="whTitle">标题</label><input type="text" class="wh-trig-title-input" placeholder="UPS 温度告警" oninput="whTrigTitleChanged(this)"></div>
+<div style="margin-top:4px"><label data-i18n="whDescription">描述</label><input type="text" class="wh-trig-desc" placeholder="电池温度超过安全范围"></div>
+<div style="margin-top:4px"><label data-i18n="whDedupKey">去重键</label><input type="text" class="wh-trig-dedup" placeholder="UPS_TEMP_HIGH"></div>
+</div>
+</div>
+</div>
+</template>
 
 <!-- ===== 面板：系统配置 ===== -->
 <div class="pnl" id="p-config">
@@ -369,6 +498,8 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 
 </div>
 </div>
+
+
 
 <!-- ===== 配置向导页面 (手机适配) ===== -->
 <div class="wz-container" id="wz-page" style="display:none">

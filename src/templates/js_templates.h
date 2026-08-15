@@ -98,7 +98,9 @@ jsConfirmShip:"一旦进入此模式，需要点按对应的硬件开关才能�
 jsConfirmReset:"确定要重置电池数据吗？\n\n此操作将重置以下数据：\n- 电池健康度 (SOH) → 100%\n- 循环次数 → 0\n- 均衡统计数据 → 0\n- 库仑计累积值\n- SOH 学习数据\n\n重置后系统将从开路电压重新初始化 SOC。",
 jsLoading:"加载中...",jsNoData:"暂无数据文件",jsLoadFailed:"加载失败",jsCalSaved:"保存成功！",jsCalFailed:"保存失败：",jsCalRange:"系数范围 50-255",
 jsRebooting:"重启中...",jsProcessing:"处理中...",jsResetSuccess:"重置成功！",jsResetFailed:"失败：",
-jsIrCount:"次"
+jsIrCount:"次",
+navWebhook:"🔔 Webhook",whGlobalEnable:"全局启用",whDesc:"配置自定义 Webhook 告警推送，支持值阈值和状态变化触发。Token / Key 可嵌入 URL、Header 与消息模板",whEnabled:"启用",whSaveOk:"✅ 配置已保存",whSaveFail:"保存失败：",whTesting:"发送中...",whTestOk:"✅ 发送成功",whTestFail:"❌ 发送失败",whTestQueued:"已加入发送队列，稍后刷新统计：",whMaxEndpoints:"最多支持 5 个端点",whMaxTriggers:"每端点最多 3 个触发器",whConfirmDelete:"确定删除此端点？",whConfirmDeleteTrig:"确定删除此触发器？",whVerifyTls:"校验 HTTPS 证书",whTokenClear:"清除已保存的 Token",whKeyClear:"清除已保存的 Key",whName:"自定义名",whToken:"认证 Token",whKey:"设备密钥 (Key)",whUrl:"URL",whMethod:"请求方式",whCooldown:"冷却时间 (秒)",whMsgTemplate:"消息模板",whAuthHeader:"认证 Header（支持 {token}/{key}）",whSent:"已发送",whFailed:"失败",whResolved:"已解除",whVarsTitle:"📖 可用模板变量",whSavedHint:"已保存（留空则清除）",whCopied:"已复制",whCopyVarHint:"点击复制",
+whPanelTitle:"🔔 Webhook 告警配置",whAddEndpoint:"添加推送规则",whSave:"保存配置",whDelete:"删除",whBasicConfig:"基础配置",whTrigger:"触发器",whAddTrigger:"＋ 添加触发器",whMsgTemplateOverride:"消息模板 (可选覆盖)",whTestSend:"🧪 测试发送",whType:"类型",whTrigValue:"值阈值触发",whTrigState:"状态变化触发",whMonitorValue:"监测值",whValTemp:"电池温度 (°C)",whValCurrent:"电池电流 (mA)",whValVoltage:"电池电压 (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"输入电压 (mV)",whValBoardTemp:"板温 (°C)",whMonitorState:"监测状态",whStateAc:"AC 电源",whStateCharger:"充电器",whStateBmsFault:"BMS 故障",whStatePowerFault:"电源故障",whStateSystem:"系统状态",whStatePowerMode:"电源模式",whStateEmergency:"紧急关机",whStateBalancing:"电池均衡",whCondition:"条件",whGt:"大于",whLt:"小于",whEq:"等于",whChange:"变化",whThreshold:"阈值",whAlertLevel:"告警级别",whLevelInfo:"信息",whLevelWarn:"警告",whLevelCrit:"严重",whTitle:"标题",whDescription:"描述",whDedupKey:"去重键",whEndpointNum:"端点 #",whTriggerNum:"触发器 #"
 },
 en:{
 pageTitle:"UPS Control Center",connecting:"Connecting",connected:"Connected",disconnected:"Disconnected",
@@ -181,7 +183,9 @@ jsConfirmShip:"Entering ship mode requires a hardware button press to re-enable 
 jsConfirmReset:"Reset battery data?\n\nThis will reset:\n- SOH → 100%\n- Cycle count → 0\n- Balancing stats → 0\n- Coulomb counter\n- SOH learning data\n\nSOC will be re-initialized from OCV.",
 jsLoading:"Loading...",jsNoData:"No data files",jsLoadFailed:"Load failed",jsCalSaved:"Saved!",jsCalFailed:"Failed: ",jsCalRange:"Range 50-255",
 jsRebooting:"Restarting...",jsProcessing:"Processing...",jsResetSuccess:"Reset successful!",jsResetFailed:"Failed: ",
-jsIrCount:" times"
+jsIrCount:" times",
+navWebhook:"🔔 Webhook",whGlobalEnable:"Global Enable",whDesc:"Configure custom Webhook alert push with value threshold and state change triggers. Token / Key can be embedded in URL, Header, and message template",whEnabled:"Enable",whSaveOk:"✅ Config saved",whSaveFail:"Save failed: ",whTesting:"Sending...",whTestOk:"✅ Send success",whTestFail:"❌ Send failed",whTestQueued:"Queued; stats will refresh shortly: ",whMaxEndpoints:"Max 5 endpoints",whMaxTriggers:"Max 3 triggers per endpoint",whConfirmDelete:"Delete this endpoint?",whConfirmDeleteTrig:"Delete this trigger?",whVerifyTls:"Verify HTTPS certificate",whTokenClear:"Clear saved token",whKeyClear:"Clear saved key",whName:"Custom Name",whToken:"Auth Token",whKey:"Device Key",whUrl:"URL",whMethod:"Method",whCooldown:"Cooldown (seconds)",whMsgTemplate:"Message Template",whAuthHeader:"Auth Header (supports {token}/{key})",whSent:"Sent",whFailed:"Failed",whResolved:"Resolved",whVarsTitle:"📖 Template Variables",whSavedHint:"Saved (leave empty to clear)",whCopied:"Copied",whCopyVarHint:"Click to copy",
+whPanelTitle:"🔔 Webhook Alerts",whAddEndpoint:"Add Rule",whSave:"Save",whDelete:"Delete",whBasicConfig:"Basic Config",whTrigger:"Trigger",whAddTrigger:"＋ Add Trigger",whMsgTemplateOverride:"Message Template (optional override)",whTestSend:"🧪 Send Test",whType:"Type",whTrigValue:"Value threshold",whTrigState:"State change",whMonitorValue:"Monitor value",whValTemp:"Battery temp (°C)",whValCurrent:"Battery current (mA)",whValVoltage:"Battery voltage (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"Input voltage (mV)",whValBoardTemp:"Board temp (°C)",whMonitorState:"Monitor state",whStateAc:"AC power",whStateCharger:"Charger",whStateBmsFault:"BMS fault",whStatePowerFault:"Power fault",whStateSystem:"System state",whStatePowerMode:"Power mode",whStateEmergency:"Emergency shutdown",whStateBalancing:"Battery balancing",whCondition:"Condition",whGt:"Greater than",whLt:"Less than",whEq:"Equal to",whChange:"Changed",whThreshold:"Threshold",whAlertLevel:"Alert level",whLevelInfo:"Info",whLevelWarn:"Warning",whLevelCrit:"Critical",whTitle:"Title",whDescription:"Description",whDedupKey:"Dedup key",whEndpointNum:"Endpoint #",whTriggerNum:"Trigger #"
 }
 };
 var L=LANG_DATA[window.CURLANG||'zh'];
@@ -203,6 +207,8 @@ var ws=$('wsSt');if(ws){ws.textContent=ws.className.indexOf('ok')>=0?L.connected
 weekdayNames=lang==='en'?['Sun','Mon','Tue','Wed','Thu','Fri','Sat']:['周日','周一','周二','周三','周四','周五','周六'];
 calDescs=lang==='en'?['Input current sense','Discharge current sense','Power monitor','Input voltage','Battery voltage','Board temp (NTC)','Env temp (NTC)']:['输入电流检测','放电电流检测','系统功率监测','输入电压','电池电压','主板温度 (NTC)','环境温度 (NTC)'];
 var ls=$('langSel');if(ls)ls.value=lang;var wl=$('wz-lang');if(wl)wl.value=lang;
+whRenderVars();
+whRefreshI18n();
 renW();
 }
 function switchLang(lang){
@@ -278,7 +284,7 @@ sessionStorage.setItem('cfgTab',n);
 function conn(){
 var proto=location.protocol==='https:'?'wss:':'ws:';
 ws=new WebSocket(proto+'//'+location.host+'/ws');
-ws.onopen=function(){document.getElementById('wsSt').className='ws-st ok';document.getElementById('wsSt').textContent=L.connected;rc=0;var ct=document.querySelector('.ct');if(ct)ct.classList.remove('ws-expired')};
+ws.onopen=function(){document.getElementById('wsSt').className='ws-st ok';document.getElementById('wsSt').textContent=L.connected;rc=0;var ct=document.querySelector('.ct');if(ct)ct.classList.remove('ws-expired');if(window._wsGetTimer)clearInterval(window._wsGetTimer);window._wsGetTimer=setInterval(function(){if(ws&&ws.readyState===1)ws.send('get')},3e3)};
 ws.onclose=function(){document.getElementById('wsSt').className='ws-st fail';document.getElementById('wsSt').textContent=L.disconnected;var ct=document.querySelector('.ct');if(ct)ct.classList.add('ws-expired');setTimeout(conn,Math.min(1e3*Math.pow(2,rc++),3e4))};
 ws.onmessage=function(e){upd(JSON.parse(e.data))};
 }
@@ -592,6 +598,284 @@ h+='</div>';
 $('logFileList').innerHTML=h;
 }).catch(function(){$('logFileList').innerHTML='<span style="color:#f5222d">'+L.jsLoadFailed+'</span>'});
 }
+
+// =============================================================================
+// Webhook 管理
+// =============================================================================
+var WH_DATA=null;
+
+// 模板变量说明（代码 → 含义），渲染到 webhook 头部
+var WH_VARS=[
+{k:'{title}',zh:'告警标题',en:'Alert title'},
+{k:'{description}',zh:'告警描述 / 消息内容',en:'Alert description / message body'},
+{k:'{level}',zh:'告警级别 (info/warning/critical)',en:'Alert level (info/warning/critical)'},
+{k:'{device}',zh:'设备名（主机名）',en:'Device name (hostname)'},
+{k:'{dedup_key}',zh:'去重键',en:'Dedup key'},
+{k:'{action}',zh:'动作 (trigger=触发 / resolve=解除)',en:'Action (trigger / resolve)'},
+{k:'{timestamp}',zh:'时间戳（毫秒）',en:'Timestamp (ms)'},
+{k:'{token}',zh:'认证 Token',en:'Auth token'},
+{k:'{key}',zh:'设备密钥',en:'Device key'},
+{k:'{soc}',zh:'电池 SOC (%)',en:'Battery SOC (%)'},
+{k:'{voltage}',zh:'电池总电压 (mV)',en:'Battery voltage (mV)'},
+{k:'{current}',zh:'电池电流 (mA)',en:'Battery current (mA)'},
+{k:'{temperature}',zh:'电池温度 (°C)',en:'Battery temperature (°C)'},
+{k:'{ac}',zh:'AC 电源状态（连接/断开）',en:'AC power (connected/disconnected)'},
+{k:'{soh}',zh:'电池健康度 SOH (%)',en:'Battery health SOH (%)'}
+];
+function whRenderVars(){
+var el=document.getElementById('whVars');if(!el)return;
+var lang=(window.CURLANG||'zh')==='en'?'en':'zh';
+var h='';
+for(var i=0;i<WH_VARS.length;i++){var v=WH_VARS[i];h+='<div class="wh-var" data-code="'+v.k+'" title="'+L.whCopyVarHint+'" onclick="whCopyVar(this)"><code>'+v.k+'</code><span>'+v[lang]+'</span></div>';}
+el.innerHTML=h;
+}
+
+function whCopyVar(el){
+var code=el.getAttribute('data-code');if(!code)return;
+function done(){toast(L.whCopied+': '+code,'success');}
+if(navigator.clipboard&&navigator.clipboard.writeText){
+navigator.clipboard.writeText(code).then(done,function(){whCopyFallback(code,done);});
+}else{
+whCopyFallback(code,done);
+}
+}
+function whCopyFallback(text,cb){
+var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+document.body.appendChild(ta);ta.focus();ta.select();
+try{document.execCommand('copy');cb();}catch(e){toast(L.whCopyVarHint+' failed','error');}
+document.body.removeChild(ta);
+}
+
+function whI18n(scope){
+if(!scope)return;
+scope.querySelectorAll('[data-i18n]').forEach(function(el){
+var key=el.getAttribute('data-i18n');
+if(L[key]!==undefined){
+if(el.tagName==='INPUT'&&(el.type==='text'||el.type==='password'||el.type==='number'))el.placeholder=L[key];
+else el.textContent=L[key];
+}
+});
+}
+
+// 语言切换时刷新已渲染的 webhook 动态标题与比较运算符选项（不重置输入值）
+function whRefreshI18n(){
+var opMap={0:'whGt',1:'whLt',2:'whEq',3:'whChange'};
+document.querySelectorAll('#wh_endpoints .wh-endpoint').forEach(function(card,i){
+var nm=card.querySelector('.wh-ep-name');
+whSetEpTitle(card,i,nm?nm.value.trim():'');
+card.querySelectorAll('.wh-trigger').forEach(function(t,j){
+var ti=t.querySelector('.wh-trig-title-input');
+whSetTrigTitle(t,j,ti?ti.value.trim():'');
+var opSel=t.querySelector('.wh-trig-op');
+if(opSel){for(var k=0;k<opSel.options.length;k++){var o=opSel.options[k];var key=opMap[o.value];if(key&&L[key]!==undefined)o.textContent=L[key];}}
+});
+});
+}
+
+function whLoad(){
+fetch('/api/webhook').then(function(r){return r.json()}).then(function(d){
+WH_DATA=d;
+$('wh_global_en').checked=d.global_enabled||false;
+whRenderEndpoints();
+}).catch(function(e){console.error('Webhook load error:',e)});
+}
+
+function whRenderEndpoints(){
+var c=$('wh_endpoints');c.innerHTML='';
+if(!WH_DATA||!WH_DATA.endpoints)return;
+WH_DATA.endpoints.forEach(function(ep,i){
+var tpl=$('wh_endpoint_tpl');
+var clone=tpl.content.cloneNode(true);
+var card=clone.querySelector('.wh-endpoint');
+card.dataset.index=i;
+whSetEpTitle(card,i,ep.name);
+card.querySelector('.wh-ep-en').checked=ep.enabled;
+card.querySelector('.wh-ep-name').value=ep.name||'';
+card.querySelector('.wh-ep-url').value=ep.url;
+var hadToken=ep.auth_token?true:false;
+card.dataset.hadToken=hadToken?'1':'0';
+var tokInput=card.querySelector('.wh-ep-token');
+tokInput.value=hadToken?'***':'';
+var tokHint=tokInput.parentElement.querySelector('.wh-saved-hint');
+if(tokHint)tokHint.style.display=hadToken?'':'none';
+var hadKey=ep.device_key?true:false;
+card.dataset.hadKey=hadKey?'1':'0';
+var keyInput=card.querySelector('.wh-ep-key');
+keyInput.value=hadKey?'***':'';
+var keyHint=keyInput.parentElement.querySelector('.wh-saved-hint');
+if(keyHint)keyHint.style.display=hadKey?'':'none';
+var vf=card.querySelector('.wh-ep-verify');
+if(vf)vf.checked=!!ep.verify_tls;
+var msel=card.querySelector('.wh-ep-method');
+if(msel)msel.value=ep.method||0;
+card.querySelector('.wh-ep-cooldown').value=(ep.cooldown_ms||60000)/1000;
+card.querySelector('.wh-ep-tpl').value=ep.message_template||'';
+card.querySelector('.wh-ep-auth-header').value=ep.auth_header||'';
+var trigContainer=card.querySelector('.wh-triggers');
+(ep.triggers||[]).forEach(function(trig,j){
+whRenderTrigger(trigContainer,trig,j);
+});
+if(ep.total_sent!==undefined){
+var stats=card.querySelector('.wh-ep-stats');
+stats.textContent=L.whSent+':'+ep.total_sent+' '+L.whFailed+':'+ep.total_failed+' '+L.whResolved+':'+(ep.total_resolved||0);
+}
+c.appendChild(clone);
+whI18n(card);
+});
+$('wh_add_btn').disabled=WH_DATA.endpoints.length>=5;
+}
+
+function whSetEpTitle(card,i,name){
+var t=card.querySelector('.wh-ep-title');
+t.textContent=L.whEndpointNum+(i+1)+(name?' · '+name:'');
+}
+
+function whNameChanged(input){
+var card=input.closest('.wh-endpoint');
+var idx=parseInt(card.dataset.index);
+whSetEpTitle(card,idx,input.value.trim());
+}
+
+function whRenderTrigger(container,trig,idx){
+var tpl=$('wh_trigger_tpl');
+var clone=tpl.content.cloneNode(true);
+var div=clone.querySelector('.wh-trigger')||clone.firstElementChild;
+div.dataset.trigIdx=idx;
+whSetTrigTitle(div,idx,trig.title);
+div.querySelector('.wh-trig-en').checked=trig.enabled;
+div.querySelector('.wh-trig-type').value=trig.trigger_type;
+div.querySelector('.wh-trig-level').value=trig.alert_level;
+div.querySelector('.wh-trig-threshold').value=trig.threshold;
+div.querySelector('.wh-trig-title-input').value=trig.title||'';
+div.querySelector('.wh-trig-desc').value=trig.description||'';
+div.querySelector('.wh-trig-dedup').value=trig.dedup_key||'';
+if(trig.trigger_type===0){
+div.querySelector('.wh-trig-value-src').value=trig.source;
+}else{
+div.querySelector('.wh-trig-state-src').value=trig.source;
+}
+whTriggerTypeChanged(div.querySelector('.wh-trig-type'));
+div.querySelector('.wh-trig-op').value=trig.compare_op;
+container.appendChild(clone);
+whI18n(div);
+}
+
+function whSetTrigTitle(div,idx,title){
+var t=div.querySelector('.wh-trig-title');
+t.textContent=L.whTriggerNum+(idx+1)+(title?' · '+title:'');
+}
+
+function whTrigTitleChanged(input){
+var trig=input.closest('.wh-trigger')||input.closest('[class*="wh-trig"]');
+if(!trig)return;
+var idx=parseInt(trig.dataset.trigIdx);
+whSetTrigTitle(trig,idx,input.value.trim());
+}
+
+function whToggleSection(head){
+var body=head.nextElementSibling;
+var chev=head.querySelector('.wh-chevron');
+if(!body)return;
+var open=body.style.display!=='none';
+body.style.display=open?'none':'';
+if(chev)chev.textContent=open?'▸':'▾';
+}
+
+function whTriggerTypeChanged(sel){
+var trig=sel.closest('.wh-trigger')||sel.closest('[class*="wh-trig"]');
+if(!trig)return;
+var vf=trig.querySelector('.wh-value-fields');
+var sf=trig.querySelector('.wh-state-fields');
+var ofield=trig.querySelector('.wh-op-field');
+if(sel.value==='0'){vf.style.display='';sf.style.display='none';ofield.querySelector('select').innerHTML='<option value="0">'+L.whGt+'</option><option value="1">'+L.whLt+'</option>';}
+else{vf.style.display='none';sf.style.display='';ofield.querySelector('select').innerHTML='<option value="2">'+L.whEq+'</option><option value="3">'+L.whChange+'</option>';}
+}
+
+function whAddEndpoint(){
+if(!WH_DATA)return;
+if(WH_DATA.endpoints.length>=5){toast(L.whMaxEndpoints,'error');return;}
+WH_DATA.endpoints.push({enabled:true,name:'',url:'',method:0,auth_token:'',device_key:'',auth_header:'',cooldown_ms:60000,message_template:'',verify_tls:true,trigger_count:0,triggers:[]});
+whRenderEndpoints();
+var c=$('wh_endpoints');c.lastElementChild.scrollIntoView({behavior:'smooth'});
+var nc=c.lastElementChild;
+if(nc){var head=nc.querySelector('.wh-ep-head');if(head)whToggleSection(head);}
+}
+
+function whDeleteEndpoint(btn){
+if(!confirm(L.whConfirmDelete))return;
+var card=btn.closest('.wh-endpoint');
+var idx=parseInt(card.dataset.index);
+WH_DATA.endpoints.splice(idx,1);
+whRenderEndpoints();
+}
+
+function whAddTrigger(btn){
+var card=btn.closest('.wh-endpoint');
+var idx=parseInt(card.dataset.index);
+if(WH_DATA.endpoints[idx].triggers.length>=3){toast(L.whMaxTriggers,'error');return;}
+WH_DATA.endpoints[idx].triggers.push({enabled:true,alert_level:1,trigger_type:0,source:0,compare_op:0,threshold:0,dedup_key:'',title:'',description:''});
+WH_DATA.endpoints[idx].trigger_count=WH_DATA.endpoints[idx].triggers.length;
+var container=card.querySelector('.wh-triggers');
+whRenderTrigger(container,WH_DATA.endpoints[idx].triggers[WH_DATA.endpoints[idx].triggers.length-1],WH_DATA.endpoints[idx].triggers.length-1);
+var last=container.lastElementChild;
+if(last){var head=last.querySelector('.wh-trig-head');if(head)whToggleSection(head);}
+}
+
+function whDeleteTrigger(btn){
+if(!confirm(L.whConfirmDeleteTrig))return;
+var trigDiv=btn.closest('.wh-trigger')||btn.closest('[class*="wh-trig"]');
+var container=trigDiv.parentElement;
+var trigIdx=Array.from(container.children).indexOf(trigDiv);
+var card=btn.closest('.wh-endpoint');
+var epIdx=parseInt(card.dataset.index);
+WH_DATA.endpoints[epIdx].triggers.splice(trigIdx,1);
+WH_DATA.endpoints[epIdx].trigger_count=WH_DATA.endpoints[epIdx].triggers.length;
+container.innerHTML='';
+WH_DATA.endpoints[epIdx].triggers.forEach(function(t,j){whRenderTrigger(container,t,j);});
+}
+
+function whCollectEndpoint(card){
+// Token/Key：已保存时输入框显示 ***，留空即清除；输入新值则更新
+var tok=card.querySelector('.wh-ep-token').value.trim();
+var clearToken=(tok===''&&card.dataset.hadToken==='1');
+var authToken=clearToken?'':tok;
+var ky=card.querySelector('.wh-ep-key').value.trim();
+var clearKey=(ky===''&&card.dataset.hadKey==='1');
+var deviceKey=clearKey?'':ky;
+var vf=card.querySelector('.wh-ep-verify');
+var ep={enabled:card.querySelector('.wh-ep-en').checked,name:card.querySelector('.wh-ep-name').value.trim(),url:card.querySelector('.wh-ep-url').value.trim(),method:parseInt(card.querySelector('.wh-ep-method').value),auth_token:authToken,clear_token:clearToken,device_key:deviceKey,clear_key:clearKey,auth_header:card.querySelector('.wh-ep-auth-header').value.trim(),verify_tls:vf?vf.checked:true,cooldown_ms:parseInt(card.querySelector('.wh-ep-cooldown').value)*1000,message_template:card.querySelector('.wh-ep-tpl').value,triggers:[],trigger_count:0};
+card.querySelectorAll('.wh-trigger').forEach(function(tDiv){
+var trig={enabled:tDiv.querySelector('.wh-trig-en').checked,alert_level:parseInt(tDiv.querySelector('.wh-trig-level').value),trigger_type:parseInt(tDiv.querySelector('.wh-trig-type').value),source:parseInt(tDiv.querySelector('.wh-trig-type').value)===0?parseInt(tDiv.querySelector('.wh-trig-value-src').value):parseInt(tDiv.querySelector('.wh-trig-state-src').value),compare_op:parseInt(tDiv.querySelector('.wh-trig-op').value),threshold:parseFloat(tDiv.querySelector('.wh-trig-threshold').value)||0,dedup_key:tDiv.querySelector('.wh-trig-dedup').value,title:tDiv.querySelector('.wh-trig-title-input').value,description:tDiv.querySelector('.wh-trig-desc').value,fired:false};
+ep.triggers.push(trig);
+});
+ep.trigger_count=ep.triggers.length;
+return ep;
+}
+
+function whSave(){
+var data={global_enabled:$('wh_global_en').checked,endpoints:[]};
+$('wh_endpoints').querySelectorAll('.wh-endpoint').forEach(function(card){data.endpoints.push(whCollectEndpoint(card));});
+fetch('/api/webhook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(d){
+if(d.success){whLoad();toast(L.whSaveOk,'success');}else{toast(L.whSaveFail+(d.message||''),'error');}
+}).catch(function(e){toast(L.whSaveFail+e.message,'error');});
+}
+
+function whTestEndpoint(btn){
+var card=btn.closest('.wh-endpoint');
+var idx=parseInt(card.dataset.index);
+var status=card.querySelector('.wh-ep-status');
+status.textContent=L.whTesting;status.style.color='#FF9500';
+fetch('/api/webhook/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint_index:idx})}).then(function(r){return r.json()}).then(function(d){
+if(d.success){status.textContent=L.whTestOk+' HTTP '+(d.http_code||'');status.style.color='#34C759';}
+else{status.textContent=L.whTestFail+(d.message||('HTTP '+(d.http_code||'?')));status.style.color='#FF3B30';}
+}).catch(function(e){status.textContent=L.whTestFail+e.message;status.style.color='#FF3B30';});
+}
+
+function whToggleGlobal(){}
+
+// 拦截 show 函数，webhook 面板切换时自动加载
+var _origShow=window.show;
+window.show=function(n,el){_origShow(n,el);if(n==='webhook')whLoad();};
 
 conn();
 )rawliteral";

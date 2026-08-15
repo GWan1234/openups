@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include "data_structures.h"
+#include "webhook_types.h"
 #include "config_manager.h"
 
 // Forward declaration
@@ -76,6 +77,7 @@ public:
     ~WebServer();
     bool begin();
     void notifyClients();
+    void cleanupWsClients();  // 定期清理断开的 WebSocket 客户端，防止内存泄漏
     
     // 页面处理函数
     void handleRoot(AsyncWebServerRequest *request);
@@ -120,6 +122,11 @@ public:
     // ADC Calibration API handlers
     void handleCalibrationGet(AsyncWebServerRequest* request);
     void handleCalibrationPost(AsyncWebServerRequest* request);
+
+    // Webhook API handlers
+    void handleWebhookGet(AsyncWebServerRequest* request);
+    void handleWebhookPost(AsyncWebServerRequest* request);
+    void handleWebhookTest(AsyncWebServerRequest* request);
 
     // WebSocket 事件处理
     void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t * data, size_t len);

@@ -3,6 +3,7 @@
 
 #include <Preferences.h>
 #include "data_structures.h"
+#include "webhook_types.h"
 #include "bms.h"
 #include "power_management.h"
 
@@ -36,6 +37,12 @@ public:
     
     // Utility methods - 返回加载时确定的配置模式状态
     bool isConfigMode() const { return m_isConfigModeRequired; }
+
+    // Webhook 配置 - SPIFFS 文件 /webhook_cfg.json (JSON 持久化)
+    bool loadWebhookConfig(WebhookConfig_t& config);
+    bool saveWebhookConfig(const WebhookConfig_t& config);
+    void loadWebhookDefaults(WebhookConfig_t& config);
+    bool validateWebhookConfig(const WebhookConfig_t& config, char* reason = nullptr);
 
     // Web 访问凭证 - 独立于 Configuration 结构体持久化（单独 NVS key），
     // 避免结构体尺寸变化导致旧固件升级后整体配置校验失败

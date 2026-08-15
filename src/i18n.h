@@ -103,6 +103,68 @@ enum StrId : uint16_t {
     STR_MQTT_CELL_IR,               // "UPS Cell %d Internal Resistance"
     STR_MQTT_IR_SAMPLE_COUNT,       // "UPS IR Sample Count"
 
+    // === Webhook：API 响应 ===
+    STR_WH_NOT_INIT,                // "Webhook 模块未初始化"
+    STR_WH_MISSING_BODY,            // "缺少请求体"
+    STR_WH_BAD_JSON,                // "JSON 解析失败"
+    STR_WH_INVALID_INDEX,           // "无效端点索引"
+    STR_WH_VALIDATE_FAIL,           // "配置验证失败"
+    STR_WH_SAVE_FAIL,               // "配置保存失败"
+    STR_WH_SAVED,                   // "Webhook 配置已保存"
+
+    // === Webhook：测试发送 ===
+    STR_WH_WIFI_DOWN,               // "WiFi 未连接"
+    STR_WH_ENDPOINT_DISABLED,       // "端点未启用"
+    STR_WH_TEST_TITLE,              // "Webhook 测试"
+    STR_WH_TEST_MSG,                // "这是一条 Webhook 测试消息，来自 ESP32-S3 UPS"
+
+    // === Webhook：触发器消息模板 ===
+    STR_WH_VAL_GT,                  // "%s 当前 %.1f 超过阈值 %.1f"
+    STR_WH_VAL_LT,                  // "%s 当前 %.1f 低于阈值 %.1f"
+    STR_WH_VAL_RECOVER,             // "%s 已恢复，当前 %.1f"
+    STR_WH_STATE_RECOVER,           // "%s 已恢复: %s"
+
+    // === Webhook：状态字符串 (getStateString) ===
+    STR_WH_ST_AC_ON,                // "AC 已连接"
+    STR_WH_ST_AC_OFF,               // "AC 已断开"
+    STR_WH_ST_CHG_ON,               // "充电已开启"
+    STR_WH_ST_CHG_OFF,              // "充电已关闭"
+    STR_WH_ST_BMS_FAULT,            // "BMS 故障"
+    STR_WH_ST_BMS_NORMAL,           // "BMS 正常"
+    STR_WH_ST_PWR_FAULT,            // "电源故障"
+    STR_WH_ST_PWR_NORMAL,           // "电源正常"
+    STR_WH_ST_FSM_INIT,             // "初始化"
+    STR_WH_ST_FSM_NORMAL,           // "正常"
+    STR_WH_ST_FSM_WARNING,          // "警告"
+    STR_WH_ST_FSM_CRITICAL,         // "严重"
+    STR_WH_ST_PM_AC,                // "AC 供电"
+    STR_WH_ST_PM_BATTERY,           // "电池供电"
+    STR_WH_ST_PM_HYBRID,            // "混合供电"
+    STR_WH_ST_PM_CHARGING,          // "充电中"
+    STR_WH_ST_EMERGENCY,            // "紧急关机"
+    STR_WH_ST_BALANCING,            // "均衡中"
+    STR_WH_ST_BAL_STOP,             // "均衡停止"
+    STR_WH_ST_UNKNOWN,              // "未知"
+
+    // === Webhook：模板变量 ===
+    STR_WH_AC_ON,                   // "连接"
+    STR_WH_AC_OFF,                  // "断开"
+
+    // === Webhook：配置验证失败原因 ===
+    STR_WH_V_VERSION,               // "配置版本不匹配"
+    STR_WH_V_ENDPOINT_COUNT,        // "端点数量超限"
+    STR_WH_V_URL_EMPTY,             // "端点 %u URL 不能为空"
+    STR_WH_V_METHOD,                // "端点 %u 请求方式无效"
+    STR_WH_V_COOLDOWN,              // "端点 %u 冷却时间不能小于 10 秒"
+    STR_WH_V_TRIGGER_COUNT,         // "端点 %u 触发器数量超限"
+    STR_WH_V_TRIGGER_TYPE,          // "端点 %u 触发器类型无效"
+    STR_WH_V_CMP_OP,                // "端点 %u 比较运算符无效"
+    STR_WH_V_VALUE_OP,              // "端点 %u 值触发只能用大于/小于"
+    STR_WH_V_STATE_OP,              // "端点 %u 状态触发只能用等于/变化"
+    STR_WH_V_SOURCE_VALUE,          // "端点 %u 监测值无效"
+    STR_WH_V_SOURCE_STATE,          // "端点 %u 监测状态无效"
+    STR_WH_V_LEVEL,                 // "端点 %u 告警级别无效"
+
     STR_COUNT                       // 字符串总数
 };
 

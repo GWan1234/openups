@@ -10,10 +10,12 @@
 #include <ArduinoJson.h>
 #include <Update.h>
 #include "debug.h"
+#include "webhook_manager.h"
 #include <esp_ota_ops.h>
 #include <Ticker.h>
 #include <SPIFFS.h>
 
+extern WebhookManager* webhookManager;
 
 // OTA 配置 —— 修改项目名或最低版本时只需改这里
 #define EXPECTED_SIG_PREFIX   "SIG:OPENUPS-ESP32S3:VER:"
@@ -147,6 +149,13 @@ void WebServer::setupHttpRoutes() {
   onAuthBody("/api/calibration", [this](AsyncWebServerRequest* r) { handleCalibrationPost(r); });
   onAuthBody("/api/set-lang", [this](AsyncWebServerRequest* r) { handleSetLang(r); });
 
+  // ---- Webhook API (认证) ----
+  onAuth("/api/webhook", HTTP_GET, [this](AsyncWebServerRequest* r) { handleWebhookGet(r); });
+  // 注意：/api/webhook/test 必须先于 /api/webhook 注册，
+  // 否则 POST /api/webhook/test 会被 /api/webhook 的保存路由抢先匹配，导致测试发送失效
+  onAuthBody("/api/webhook/test", [this](AsyncWebServerRequest* r) { handleWebhookTest(r); });
+  onAuthBody("/api/webhook", [this](AsyncWebServerRequest* r) { handleWebhookPost(r); });
+
   // ---- 状态查询接口（认证）----
   static const char* const apiRoutes[] = {"/api/status", "/api/bms", "/api/power"};
   for (const char* route : apiRoutes) {
@@ -264,7 +273,13 @@ void WebServer::onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 // Client Notification
 // =============================================================================
 
+void WebServer::cleanupWsClients() {
+  ws.cleanupClients();
+}
+
 void WebServer::notifyClients() {
+  ws.cleanupClients();  // 回收断开的 WebSocket 客户端，防止内存泄漏
+
   if (systemManager == nullptr) {
     StaticJsonDocument<256> doc;
     doc["status"] = "config_mode";
@@ -512,237 +527,258 @@ void WebServer::handleMetricsRequest(AsyncWebServerRequest* request) {
 
   const System_Global_State& state = systemManager->getGlobalState();
   
-  // Build Prometheus text format response
-  String metrics = "";
+  // 预分配缓冲区，避免反复 String 临时对象 + 拼接导致堆碎片化
+  String metrics;
+  metrics.reserve(4096);
+  char numBuf[32];  // 数字→字符串转换复用缓冲区
+
+  #define MET(s) metrics += s
+  #define MET_NUM(label, val) do { snprintf(numBuf, sizeof(numBuf), "%.2f", (double)(val)); metrics += label; metrics += numBuf; metrics += "\n\n"; } while(0)
+  #define MET_INT(label, val) do { snprintf(numBuf, sizeof(numBuf), "%d", (int)(val)); metrics += label; metrics += numBuf; metrics += "\n\n"; } while(0)
+  #define MET_ULONG(label, val) do { snprintf(numBuf, sizeof(numBuf), "%lu", (unsigned long)(val)); metrics += label; metrics += numBuf; metrics += "\n\n"; } while(0)
+  #define MET_BOOL(label, val) do { metrics += label; metrics += (val ? "1" : "0"); metrics += "\n\n"; } while(0)
   
   // System metrics
-  metrics += "# HELP ups_system_uptime System uptime in seconds\n";
-  metrics += "# TYPE ups_system_uptime gauge\n";
-  metrics += "ups_system_uptime " + String(state.system.uptime) + "\n\n";
+  MET("# HELP ups_system_uptime System uptime in seconds\n"
+      "# TYPE ups_system_uptime gauge\nups_system_uptime ");
+  MET_ULONG("", state.system.uptime);
   
-  metrics += "# HELP ups_system_overall_status Overall system status (0=normal, 1=warning, 2=fault)\n";
-  metrics += "# TYPE ups_system_overall_status gauge\n";
-  metrics += "ups_system_overall_status " + String(state.overall_status) + "\n\n";
+  MET("# HELP ups_system_overall_status Overall system status (0=normal, 1=warning, 2=fault)\n"
+      "# TYPE ups_system_overall_status gauge\nups_system_overall_status ");
+  MET_INT("", state.overall_status);
   
-  metrics += "# HELP ups_system_power_mode Power mode (0=AC, 1=BATTERY, 2=HYBRID, 3=CHARGING)\n";
-  metrics += "# TYPE ups_system_power_mode gauge\n";
-  metrics += "ups_system_power_mode " + String(state.power_mode) + "\n\n";
+  MET("# HELP ups_system_power_mode Power mode (0=AC, 1=BATTERY, 2=HYBRID, 3=CHARGING)\n"
+      "# TYPE ups_system_power_mode gauge\nups_system_power_mode ");
+  MET_INT("", state.power_mode);
   
-  metrics += "# HELP ups_system_emergency_shutdown Emergency shutdown status (0=normal, 1=shutdown)\n";
-  metrics += "# TYPE ups_system_emergency_shutdown gauge\n";
-  metrics += "ups_system_emergency_shutdown " + String(state.emergency_shutdown ? 1 : 0) + "\n\n";
+  MET("# HELP ups_system_emergency_shutdown Emergency shutdown status (0=normal, 1=shutdown)\n"
+      "# TYPE ups_system_emergency_shutdown gauge\nups_system_emergency_shutdown ");
+  MET_BOOL("", state.emergency_shutdown);
   
-  metrics += "# HELP ups_system_board_temperature Board temperature in Celsius\n";
-  metrics += "# TYPE ups_system_board_temperature gauge\n";
-  metrics += "ups_system_board_temperature " + String(state.system.board_temperature, 2) + "\n\n";
+  MET("# HELP ups_system_board_temperature Board temperature in Celsius\n"
+      "# TYPE ups_system_board_temperature gauge\nups_system_board_temperature ");
+  MET_NUM("", state.system.board_temperature);
   
-  metrics += "# HELP ups_system_environment_temperature Environment temperature in Celsius\n";
-  metrics += "# TYPE ups_system_environment_temperature gauge\n";
-  metrics += "ups_system_environment_temperature " + String(state.system.environment_temperature, 2) + "\n\n";
+  MET("# HELP ups_system_environment_temperature Environment temperature in Celsius\n"
+      "# TYPE ups_system_environment_temperature gauge\nups_system_environment_temperature ");
+  MET_NUM("", state.system.environment_temperature);
 
-  metrics += "# HELP ups_system_board_temperature_sht SHTC3 board temperature in Celsius\n";
-  metrics += "# TYPE ups_system_board_temperature_sht gauge\n";
-  metrics += "ups_system_board_temperature_sht " + String(state.system.board_temperature_sht, 2) + "\n\n";
+  MET("# HELP ups_system_board_temperature_sht SHTC3 board temperature in Celsius\n"
+      "# TYPE ups_system_board_temperature_sht gauge\nups_system_board_temperature_sht ");
+  MET_NUM("", state.system.board_temperature_sht);
 
-  metrics += "# HELP ups_system_board_humidity SHTC3 board humidity in percent\n";
-  metrics += "# TYPE ups_system_board_humidity gauge\n";
-  metrics += "ups_system_board_humidity " + String(state.system.board_humidity, 2) + "\n\n";
+  MET("# HELP ups_system_board_humidity SHTC3 board humidity in percent\n"
+      "# TYPE ups_system_board_humidity gauge\nups_system_board_humidity ");
+  MET_NUM("", state.system.board_humidity);
   
-  metrics += "# HELP ups_system_wifi_connected WiFi connection status (0=disconnected, 1=connected)\n";
-  metrics += "# TYPE ups_system_wifi_connected gauge\n";
-  metrics += "ups_system_wifi_connected " + String(state.system.wifi_connected ? 1 : 0) + "\n\n";
+  MET("# HELP ups_system_wifi_connected WiFi connection status (0=disconnected, 1=connected)\n"
+      "# TYPE ups_system_wifi_connected gauge\nups_system_wifi_connected ");
+  MET_BOOL("", state.system.wifi_connected);
   
-  metrics += "# HELP ups_system_wifi_rssi WiFi signal strength in dBm\n";
-  metrics += "# TYPE ups_system_wifi_rssi gauge\n";
-  metrics += "ups_system_wifi_rssi " + String(state.system.wifi_rssi) + "\n\n";
+  MET("# HELP ups_system_wifi_rssi WiFi signal strength in dBm\n"
+      "# TYPE ups_system_wifi_rssi gauge\nups_system_wifi_rssi ");
+  MET_INT("", state.system.wifi_rssi);
   
-  metrics += "# HELP ups_system_wifi_status WiFi status code\n";
-  metrics += "# TYPE ups_system_wifi_status gauge\n";
-  metrics += "ups_system_wifi_status " + String(state.system.wifi_status) + "\n\n";
+  MET("# HELP ups_system_wifi_status WiFi status code\n"
+      "# TYPE ups_system_wifi_status gauge\nups_system_wifi_status ");
+  MET_INT("", state.system.wifi_status);
   
-  metrics += "# HELP ups_system_led_brightness LED brightness (0-255)\n";
-  metrics += "# TYPE ups_system_led_brightness gauge\n";
-  metrics += "ups_system_led_brightness " + String(state.system.led_brightness) + "\n\n";
+  MET("# HELP ups_system_led_brightness LED brightness (0-255)\n"
+      "# TYPE ups_system_led_brightness gauge\nups_system_led_brightness ");
+  MET_INT("", state.system.led_brightness);
   
-  metrics += "# HELP ups_system_buzzer_enabled Buzzer enabled status (0=disabled, 1=enabled)\n";
-  metrics += "# TYPE ups_system_buzzer_enabled gauge\n";
-  metrics += "ups_system_buzzer_enabled " + String(state.system.buzzer_enabled ? 1 : 0) + "\n\n";
+  MET("# HELP ups_system_buzzer_enabled Buzzer enabled status (0=disabled, 1=enabled)\n"
+      "# TYPE ups_system_buzzer_enabled gauge\nups_system_buzzer_enabled ");
+  MET_BOOL("", state.system.buzzer_enabled);
   
-  metrics += "# HELP ups_system_buzzer_volume Buzzer volume (0-255)\n";
-  metrics += "# TYPE ups_system_buzzer_volume gauge\n";
-  metrics += "ups_system_buzzer_volume " + String(state.system.buzzer_volume) + "\n\n";
+  MET("# HELP ups_system_buzzer_volume Buzzer volume (0-255)\n"
+      "# TYPE ups_system_buzzer_volume gauge\nups_system_buzzer_volume ");
+  MET_INT("", state.system.buzzer_volume);
   
-  metrics += "# HELP ups_system_hardware_version Hardware version\n";
-  metrics += "# TYPE ups_system_hardware_version gauge\n";
-  metrics += "ups_system_hardware_version{version=\"" + String(state.system.hardware_version) + "\"} 1\n\n";
+  MET("# HELP ups_system_hardware_version Hardware version\n"
+      "# TYPE ups_system_hardware_version gauge\nups_system_hardware_version{version=\"");
+  MET(state.system.hardware_version);
+  MET("\"} 1\n\n");
   
   // BMS metrics
-  metrics += "# HELP ups_bms_soc Battery state of charge percentage\n";
-  metrics += "# TYPE ups_bms_soc gauge\n";
-  metrics += "ups_bms_soc " + String(state.bms.soc, 2) + "\n\n";
+  MET("# HELP ups_bms_soc Battery state of charge percentage\n"
+      "# TYPE ups_bms_soc gauge\nups_bms_soc ");
+  MET_NUM("", state.bms.soc);
   
-  metrics += "# HELP ups_bms_soh Battery state of health percentage\n";
-  metrics += "# TYPE ups_bms_soh gauge\n";
-  metrics += "ups_bms_soh " + String(state.bms.soh, 2) + "\n\n";
+  MET("# HELP ups_bms_soh Battery state of health percentage\n"
+      "# TYPE ups_bms_soh gauge\nups_bms_soh ");
+  MET_NUM("", state.bms.soh);
   
-  metrics += "# HELP ups_bms_voltage Battery voltage in millivolts\n";
-  metrics += "# TYPE ups_bms_voltage gauge\n";
-  metrics += "ups_bms_voltage " + String(state.bms.voltage) + "\n\n";
+  MET("# HELP ups_bms_voltage Battery voltage in millivolts\n"
+      "# TYPE ups_bms_voltage gauge\nups_bms_voltage ");
+  MET_INT("", state.bms.voltage);
   
-  metrics += "# HELP ups_bms_current Battery current in milliamperes (positive=charging, negative=discharging)\n";
-  metrics += "# TYPE ups_bms_current gauge\n";
-  metrics += "ups_bms_current " + String(state.bms.current) + "\n\n";
+  MET("# HELP ups_bms_current Battery current in milliamperes (positive=charging, negative=discharging)\n"
+      "# TYPE ups_bms_current gauge\nups_bms_current ");
+  MET_INT("", state.bms.current);
   
-  metrics += "# HELP ups_bms_temperature Battery temperature in Celsius\n";
-  metrics += "# TYPE ups_bms_temperature gauge\n";
-  metrics += "ups_bms_temperature " + String(state.bms.temperature, 2) + "\n\n";
+  MET("# HELP ups_bms_temperature Battery temperature in Celsius\n"
+      "# TYPE ups_bms_temperature gauge\nups_bms_temperature ");
+  MET_NUM("", state.bms.temperature);
   
-  metrics += "# HELP ups_bms_cycle_count Battery cycle count\n";
-  metrics += "# TYPE ups_bms_cycle_count gauge\n";
-  metrics += "ups_bms_cycle_count " + String(state.bms.cycle_count) + "\n\n";
+  MET("# HELP ups_bms_cycle_count Battery cycle count\n"
+      "# TYPE ups_bms_cycle_count gauge\nups_bms_cycle_count ");
+  MET_INT("", state.bms.cycle_count);
 
-  metrics += "# HELP ups_bms_chemistry Battery chemistry (0=NCM, 1=LiFePO4)\n";
-  metrics += "# TYPE ups_bms_chemistry gauge\n";
-  metrics += "ups_bms_chemistry " + String(state.bms.chemistry) + "\n\n";
+  MET("# HELP ups_bms_chemistry Battery chemistry (0=NCM, 1=LiFePO4)\n"
+      "# TYPE ups_bms_chemistry gauge\nups_bms_chemistry ");
+  MET_INT("", state.bms.chemistry);
 
-  metrics += "# HELP ups_bms_soc_error_est Estimated SOC error budget in percent\n";
-  metrics += "# TYPE ups_bms_soc_error_est gauge\n";
-  metrics += "ups_bms_soc_error_est " + String(state.bms.soc_error_est, 1) + "\n\n";
+  MET("# HELP ups_bms_soc_error_est Estimated SOC error budget in percent\n"
+      "# TYPE ups_bms_soc_error_est gauge\nups_bms_soc_error_est ");
+  snprintf(numBuf, sizeof(numBuf), "%.1f", state.bms.soc_error_est);
+  MET(numBuf); MET("\n\n");
   
-  metrics += "# HELP ups_bms_capacity_full Full battery capacity in mAh\n";
-  metrics += "# TYPE ups_bms_capacity_full gauge\n";
-  metrics += "ups_bms_capacity_full " + String(state.bms.capacity_full) + "\n\n";
+  MET("# HELP ups_bms_capacity_full Full battery capacity in mAh\n"
+      "# TYPE ups_bms_capacity_full gauge\nups_bms_capacity_full ");
+  MET_INT("", state.bms.capacity_full);
   
-  metrics += "# HELP ups_bms_capacity_remaining Remaining battery capacity in mAh\n";
-  metrics += "# TYPE ups_bms_capacity_remaining gauge\n";
-  metrics += "ups_bms_capacity_remaining " + String(state.bms.capacity_remaining) + "\n\n";
+  MET("# HELP ups_bms_capacity_remaining Remaining battery capacity in mAh\n"
+      "# TYPE ups_bms_capacity_remaining gauge\nups_bms_capacity_remaining ");
+  MET_INT("", state.bms.capacity_remaining);
   
-  metrics += "# HELP ups_bms_connected BMS connection status (0=disconnected, 1=connected)\n";
-  metrics += "# TYPE ups_bms_connected gauge\n";
-  metrics += "ups_bms_connected " + String(state.bms.is_connected ? 1 : 0) + "\n\n";
+  MET("# HELP ups_bms_connected BMS connection status (0=disconnected, 1=connected)\n"
+      "# TYPE ups_bms_connected gauge\nups_bms_connected ");
+  MET_BOOL("", state.bms.is_connected);
   
-  metrics += "# HELP ups_bms_balancing_active Cell balancing active status (0=inactive, 1=active)\n";
-  metrics += "# TYPE ups_bms_balancing_active gauge\n";
-  metrics += "ups_bms_balancing_active " + String(state.bms.balancing_active ? 1 : 0) + "\n\n";
+  MET("# HELP ups_bms_balancing_active Cell balancing active status (0=inactive, 1=active)\n"
+      "# TYPE ups_bms_balancing_active gauge\nups_bms_balancing_active ");
+  MET_BOOL("", state.bms.balancing_active);
   
-  metrics += "# HELP ups_bms_fault_type BMS fault type (0=none, see BMS_Fault_t enum)\n";
-  metrics += "# TYPE ups_bms_fault_type gauge\n";
-  metrics += "ups_bms_fault_type " + String(state.bms.fault_type) + "\n\n";
+  MET("# HELP ups_bms_fault_type BMS fault type (0=none, see BMS_Fault_t enum)\n"
+      "# TYPE ups_bms_fault_type gauge\nups_bms_fault_type ");
+  MET_INT("", state.bms.fault_type);
   
   // Cell voltages
-  metrics += "# HELP ups_bms_cell_voltage Individual cell voltage in millivolts\n";
-  metrics += "# TYPE ups_bms_cell_voltage gauge\n";
+  MET("# HELP ups_bms_cell_voltage Individual cell voltage in millivolts\n"
+      "# TYPE ups_bms_cell_voltage gauge\n");
   for (int i = 0; i < 5; i++) {
-    metrics += "ups_bms_cell_voltage{cell=\"" + String(i + 1) + "\"} " + String(state.bms.cell_voltages[i]) + "\n";
+    MET("ups_bms_cell_voltage{cell=\"");
+    snprintf(numBuf, sizeof(numBuf), "%d\"} %d\n", i + 1, state.bms.cell_voltages[i]);
+    MET(numBuf);
   }
-  metrics += "\n";
+  MET("\n");
   
-  metrics += "# HELP ups_bms_cell_voltage_min Minimum cell voltage in millivolts\n";
-  metrics += "# TYPE ups_bms_cell_voltage_min gauge\n";
-  metrics += "ups_bms_cell_voltage_min " + String(state.bms.cell_voltage_min) + "\n\n";
+  MET("# HELP ups_bms_cell_voltage_min Minimum cell voltage in millivolts\n"
+      "# TYPE ups_bms_cell_voltage_min gauge\nups_bms_cell_voltage_min ");
+  MET_INT("", state.bms.cell_voltage_min);
   
-  metrics += "# HELP ups_bms_cell_voltage_max Maximum cell voltage in millivolts\n";
-  metrics += "# TYPE ups_bms_cell_voltage_max gauge\n";
-  metrics += "ups_bms_cell_voltage_max " + String(state.bms.cell_voltage_max) + "\n\n";
+  MET("# HELP ups_bms_cell_voltage_max Maximum cell voltage in millivolts\n"
+      "# TYPE ups_bms_cell_voltage_max gauge\nups_bms_cell_voltage_max ");
+  MET_INT("", state.bms.cell_voltage_max);
   
-  metrics += "# HELP ups_bms_cell_voltage_avg Average cell voltage in millivolts\n";
-  metrics += "# TYPE ups_bms_cell_voltage_avg gauge\n";
-  metrics += "ups_bms_cell_voltage_avg " + String(state.bms.cell_voltage_avg) + "\n\n";
+  MET("# HELP ups_bms_cell_voltage_avg Average cell voltage in millivolts\n"
+      "# TYPE ups_bms_cell_voltage_avg gauge\nups_bms_cell_voltage_avg ");
+  MET_INT("", state.bms.cell_voltage_avg);
 
   // Internal resistance
-  metrics += "# HELP ups_bms_cell_ir Estimated cell internal resistance in mΩ\n";
-  metrics += "# TYPE ups_bms_cell_ir gauge\n";
+  MET("# HELP ups_bms_cell_ir Estimated cell internal resistance in mΩ\n"
+      "# TYPE ups_bms_cell_ir gauge\n");
   for (int i = 0; i < 5; i++) {
-    metrics += "ups_bms_cell_ir{cell=\"" + String(i + 1) + "\"} " + String(state.bms.cell_internal_resistance[i], 1) + "\n";
+    MET("ups_bms_cell_ir{cell=\"");
+    snprintf(numBuf, sizeof(numBuf), "%d\"} %.1f\n", i + 1, state.bms.cell_internal_resistance[i]);
+    MET(numBuf);
   }
-  metrics += "\n";
+  MET("\n");
 
-  metrics += "# HELP ups_bms_ir_sample_count Number of internal resistance measurements\n";
-  metrics += "# TYPE ups_bms_ir_sample_count gauge\n";
-  metrics += "ups_bms_ir_sample_count " + String(state.bms.ir_sample_count) + "\n\n";
+  MET("# HELP ups_bms_ir_sample_count Number of internal resistance measurements\n"
+      "# TYPE ups_bms_ir_sample_count gauge\nups_bms_ir_sample_count ");
+  MET_INT("", state.bms.ir_sample_count);
   
   // Power metrics
-  metrics += "# HELP ups_power_input_voltage Input voltage in millivolts\n";
-  metrics += "# TYPE ups_power_input_voltage gauge\n";
-  metrics += "ups_power_input_voltage " + String(state.power.input_voltage) + "\n\n";
+  MET("# HELP ups_power_input_voltage Input voltage in millivolts\n"
+      "# TYPE ups_power_input_voltage gauge\nups_power_input_voltage ");
+  MET_INT("", state.power.input_voltage);
   
-  metrics += "# HELP ups_power_input_current Input current in milliamperes\n";
-  metrics += "# TYPE ups_power_input_current gauge\n";
-  metrics += "ups_power_input_current " + String(state.power.input_current) + "\n\n";
+  MET("# HELP ups_power_input_current Input current in milliamperes\n"
+      "# TYPE ups_power_input_current gauge\nups_power_input_current ");
+  MET_INT("", state.power.input_current);
   
-  metrics += "# HELP ups_power_output_power Output power in milliwatts\n";
-  metrics += "# TYPE ups_power_output_power gauge\n";
-  metrics += "ups_power_output_power " + String(state.power.output_power) + "\n\n";
+  MET("# HELP ups_power_output_power Output power in milliwatts\n"
+      "# TYPE ups_power_output_power gauge\nups_power_output_power ");
+  MET_INT("", state.power.output_power);
   
-  metrics += "# HELP ups_power_battery_voltage Battery voltage in millivolts\n";
-  metrics += "# TYPE ups_power_battery_voltage gauge\n";
-  metrics += "ups_power_battery_voltage " + String(state.power.battery_voltage) + "\n\n";
+  MET("# HELP ups_power_battery_voltage Battery voltage in millivolts\n"
+      "# TYPE ups_power_battery_voltage gauge\nups_power_battery_voltage ");
+  MET_INT("", state.power.battery_voltage);
   
-  metrics += "# HELP ups_power_battery_current Battery current in milliamperes\n";
-  metrics += "# TYPE ups_power_battery_current gauge\n";
-  metrics += "ups_power_battery_current " + String(state.power.battery_current) + "\n\n";
+  MET("# HELP ups_power_battery_current Battery current in milliamperes\n"
+      "# TYPE ups_power_battery_current gauge\nups_power_battery_current ");
+  MET_INT("", state.power.battery_current);
   
-  metrics += "# HELP ups_power_ac_present AC power present status (0=absent, 1=present)\n";
-  metrics += "# TYPE ups_power_ac_present gauge\n";
-  metrics += "ups_power_ac_present " + String(state.power.ac_present ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_ac_present AC power present status (0=absent, 1=present)\n"
+      "# TYPE ups_power_ac_present gauge\nups_power_ac_present ");
+  MET_BOOL("", state.power.ac_present);
   
-  metrics += "# HELP ups_power_charger_enabled Charger enabled status (0=disabled, 1=enabled)\n";
-  metrics += "# TYPE ups_power_charger_enabled gauge\n";
-  metrics += "ups_power_charger_enabled " + String(state.power.charger_enabled ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_charger_enabled Charger enabled status (0=disabled, 1=enabled)\n"
+      "# TYPE ups_power_charger_enabled gauge\nups_power_charger_enabled ");
+  MET_BOOL("", state.power.charger_enabled);
   
-  metrics += "# HELP ups_power_hybrid_mode Hybrid mode status (0=disabled, 1=enabled)\n";
-  metrics += "# TYPE ups_power_hybrid_mode gauge\n";
-  metrics += "ups_power_hybrid_mode " + String(state.power.hybrid_mode ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_hybrid_mode Hybrid mode status (0=disabled, 1=enabled)\n"
+      "# TYPE ups_power_hybrid_mode gauge\nups_power_hybrid_mode ");
+  MET_BOOL("", state.power.hybrid_mode);
   
-  metrics += "# HELP ups_power_fault_type Power fault type (0=none, see Power_Fault_Type_t enum)\n";
-  metrics += "# TYPE ups_power_fault_type gauge\n";
-  metrics += "ups_power_fault_type " + String(state.power.fault_type) + "\n\n";
+  MET("# HELP ups_power_fault_type Power fault type (0=none, see Power_Fault_Type_t enum)\n"
+      "# TYPE ups_power_fault_type gauge\nups_power_fault_type ");
+  MET_INT("", state.power.fault_type);
   
-  metrics += "# HELP ups_power_bq24780s_connected BQ24780S/BQ24800 chip connection status (0=disconnected, 1=connected)\n";
-  metrics += "# TYPE ups_power_bq24780s_connected gauge\n";
-  metrics += "ups_power_bq24780s_connected " + String(state.power.bq24780s_connected ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_bq24780s_connected BQ24780S/BQ24800 chip connection status (0=disconnected, 1=connected)\n"
+      "# TYPE ups_power_bq24780s_connected gauge\nups_power_bq24780s_connected ");
+  MET_BOOL("", state.power.bq24780s_connected);
 
-  metrics += "# HELP ups_power_chip_variant Charger chip variant (0=BQ24780S, 1=BQ24800)\n";
-  metrics += "# TYPE ups_power_chip_variant gauge\n";
-  metrics += "ups_power_chip_variant " + String(state.power.chip_variant) + "\n\n";
+  MET("# HELP ups_power_chip_variant Charger chip variant (0=BQ24780S, 1=BQ24800)\n"
+      "# TYPE ups_power_chip_variant gauge\nups_power_chip_variant ");
+  MET_INT("", state.power.chip_variant);
   
-  metrics += "# HELP ups_power_prochot_status PROCHOT pin status (0=normal, 1=triggered)\n";
-  metrics += "# TYPE ups_power_prochot_status gauge\n";
-  metrics += "ups_power_prochot_status " + String(state.power.prochot_status ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_prochot_status PROCHOT pin status (0=normal, 1=triggered)\n"
+      "# TYPE ups_power_prochot_status gauge\nups_power_prochot_status ");
+  MET_BOOL("", state.power.prochot_status);
   
-  metrics += "# HELP ups_power_tbstat_status TB_STAT pin status (0=normal, 1=triggered)\n";
-  metrics += "# TYPE ups_power_tbstat_status gauge\n";
-  metrics += "ups_power_tbstat_status " + String(state.power.tbstat_status ? 1 : 0) + "\n\n";
+  MET("# HELP ups_power_tbstat_status TB_STAT pin status (0=normal, 1=triggered)\n"
+      "# TYPE ups_power_tbstat_status gauge\nups_power_tbstat_status ");
+  MET_BOOL("", state.power.tbstat_status);
   
   // Protection status
-  metrics += "# HELP ups_protection_over_current Over-current protection status (0=normal, 1=triggered)\n";
-  metrics += "# TYPE ups_protection_over_current gauge\n";
-  metrics += "ups_protection_over_current " + String(state.over_current_protection ? 1 : 0) + "\n\n";
+  MET("# HELP ups_protection_over_current Over-current protection status (0=normal, 1=triggered)\n"
+      "# TYPE ups_protection_over_current gauge\nups_protection_over_current ");
+  MET_BOOL("", state.over_current_protection);
   
-  metrics += "# HELP ups_protection_over_temp Over-temperature protection status (0=normal, 1=triggered)\n";
-  metrics += "# TYPE ups_protection_over_temp gauge\n";
-  metrics += "ups_protection_over_temp " + String(state.over_temp_protection ? 1 : 0) + "\n\n";
+  MET("# HELP ups_protection_over_temp Over-temperature protection status (0=normal, 1=triggered)\n"
+      "# TYPE ups_protection_over_temp gauge\nups_protection_over_temp ");
+  MET_BOOL("", state.over_temp_protection);
   
-  metrics += "# HELP ups_protection_short_circuit Short-circuit protection status (0=normal, 1=triggered)\n";
-  metrics += "# TYPE ups_protection_short_circuit gauge\n";
-  metrics += "ups_protection_short_circuit " + String(state.short_circuit_protection ? 1 : 0) + "\n\n";
+  MET("# HELP ups_protection_short_circuit Short-circuit protection status (0=normal, 1=triggered)\n"
+      "# TYPE ups_protection_short_circuit gauge\nups_protection_short_circuit ");
+  MET_BOOL("", state.short_circuit_protection);
 
   // Self-consumption metrics
-  metrics += "# HELP ups_self_consumption_mA System self-consumption current in mA (0=not calculated)\n";
-  metrics += "# TYPE ups_self_consumption_mA gauge\n";
-  metrics += "ups_self_consumption_mA " + String(state.self_consumption_mA, 2) + "\n\n";
+  MET("# HELP ups_self_consumption_mA System self-consumption current in mA (0=not calculated)\n"
+      "# TYPE ups_self_consumption_mA gauge\nups_self_consumption_mA ");
+  snprintf(numBuf, sizeof(numBuf), "%.2f", state.self_consumption_mA);
+  MET(numBuf); MET("\n\n");
 
-  metrics += "# HELP ups_sc_segment_count Number of valid quiescent segments used\n";
-  metrics += "# TYPE ups_sc_segment_count gauge\n";
-  metrics += "ups_sc_segment_count " + String(state.sc_segment_count) + "\n\n";
+  MET("# HELP ups_sc_segment_count Number of valid quiescent segments used\n"
+      "# TYPE ups_sc_segment_count gauge\nups_sc_segment_count ");
+  MET_INT("", state.sc_segment_count);
 
-  metrics += "# HELP ups_sc_total_segments Total quiescent segments found (including invalid)\n";
-  metrics += "# TYPE ups_sc_total_segments gauge\n";
-  metrics += "ups_sc_total_segments " + String(state.sc_total_segments) + "\n\n";
+  MET("# HELP ups_sc_total_segments Total quiescent segments found (including invalid)\n"
+      "# TYPE ups_sc_total_segments gauge\nups_sc_total_segments ");
+  MET_INT("", state.sc_total_segments);
 
-  metrics += "# HELP ups_sc_last_check Last self-consumption analysis check time (Unix timestamp)\n";
-  metrics += "# TYPE ups_sc_last_check gauge\n";
-  metrics += "ups_sc_last_check " + String(state.sc_last_check) + "\n\n";
+  MET("# HELP ups_sc_last_check Last self-consumption analysis check time (Unix timestamp)\n"
+      "# TYPE ups_sc_last_check gauge\nups_sc_last_check ");
+  MET_ULONG("", state.sc_last_check);
+
+  #undef MET
+  #undef MET_NUM
+  #undef MET_INT
+  #undef MET_ULONG
+  #undef MET_BOOL
 
   request->send(200, "text/plain; version=0.0.4; charset=utf-8", metrics);
 }
@@ -1220,7 +1256,9 @@ void WebServer::renderSPA(AsyncWebServerRequest* request) {
   #undef AP_F
   #undef AP_L
 
-  request->send(200, "text/html", out);
+  AsyncWebServerResponse* resp = request->beginResponse(200, "text/html", out);
+  resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  request->send(resp);
 
   delete[] cssBuf;
   delete[] jsBuf;
@@ -2240,4 +2278,225 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
       DBG.println(Update.errorString());
     }
   }
+}
+
+// =============================================================================
+// Webhook API 处理函数
+// =============================================================================
+
+void WebServer::handleWebhookGet(AsyncWebServerRequest* request) {
+  if (!webhookManager) {
+    sendErrorResponse(request, I18n::get(STR_WH_NOT_INIT), 503);
+    return;
+  }
+
+  WebhookConfig_t cfg = webhookManager->getConfig();
+  DynamicJsonDocument doc(4096);
+
+  doc["global_enabled"] = cfg.global_enabled;
+  doc["endpoint_count"] = cfg.endpoint_count;
+
+  JsonArray endpoints = doc.createNestedArray("endpoints");
+  for (uint8_t i = 0; i < cfg.endpoint_count && i < WH_MAX_ENDPOINTS; i++) {
+    const WebhookEndpoint_t& ep = cfg.endpoints[i];
+    JsonObject obj = endpoints.createNestedObject();
+    obj["enabled"] = ep.enabled;
+    obj["verify_tls"] = ep.verify_tls;
+    obj["method"] = ep.method;
+    obj["name"] = ep.name;
+    obj["url"] = ep.url;
+    obj["auth_token"] = String(ep.auth_token).length() > 0 ? "***" : "";
+    obj["device_key"] = String(ep.device_key).length() > 0 ? "***" : "";
+    obj["auth_header"] = ep.auth_header;
+    obj["cooldown_ms"] = ep.cooldown_ms;
+    obj["message_template"] = ep.message_template;
+    obj["trigger_count"] = ep.trigger_count;
+
+    JsonArray triggers = obj.createNestedArray("triggers");
+    for (uint8_t j = 0; j < ep.trigger_count && j < WH_MAX_TRIGGERS; j++) {
+      const WebhookTrigger_t& trig = ep.triggers[j];
+      JsonObject tObj = triggers.createNestedObject();
+      tObj["enabled"] = trig.enabled;
+      tObj["alert_level"] = trig.alert_level;
+      tObj["trigger_type"] = trig.condition.trigger_type;
+      tObj["source"] = trig.condition.source;
+      tObj["compare_op"] = trig.condition.compare_op;
+      tObj["threshold"] = trig.condition.threshold;
+      tObj["dedup_key"] = trig.dedup_key;
+      tObj["title"] = trig.title;
+      tObj["description"] = trig.description;
+    }
+
+    // 统计信息
+    WebhookEndpointStats_t stats;
+    if (webhookManager->getEndpointStats(i, stats)) {
+      obj["total_sent"] = stats.total_sent;
+      obj["total_failed"] = stats.total_failed;
+      obj["total_resolved"] = stats.total_resolved;
+      obj["last_success"] = stats.last_success;
+    }
+  }
+
+  String response;
+  serializeJson(doc, response);
+  request->send(200, "application/json", response);
+}
+
+void WebServer::handleWebhookPost(AsyncWebServerRequest* request) {
+  if (!webhookManager) {
+    sendErrorResponse(request, I18n::get(STR_WH_NOT_INIT), 503);
+    return;
+  }
+
+  String body;
+  if (!takeBody(request, body)) {
+    sendErrorResponse(request, I18n::get(STR_WH_MISSING_BODY), 400);
+    return;
+  }
+
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) {
+    sendErrorResponse(request, I18n::get(STR_WH_BAD_JSON), 400);
+    return;
+  }
+
+  // 以当前配置为基础合并，避免漏字段被清空
+  WebhookConfig_t newConfig = webhookManager->getConfig();
+  newConfig.config_version = WH_CONFIG_VERSION;
+
+  // 全局开关
+  if (doc.containsKey("global_enabled")) {
+    newConfig.global_enabled = doc["global_enabled"].as<bool>();
+  }
+
+  // 端点数组
+  if (doc.containsKey("endpoints")) {
+    JsonArray arr = doc["endpoints"].as<JsonArray>();
+    uint8_t count = 0;
+    for (JsonObject ep : arr) {
+      if (count >= WH_MAX_ENDPOINTS) break;
+
+      // 超出旧端点数的位置初始化为默认值
+      if (count >= newConfig.endpoint_count) {
+        memset(&newConfig.endpoints[count], 0, sizeof(WebhookEndpoint_t));
+        newConfig.endpoints[count].cooldown_ms = WH_DEFAULT_COOLDOWN;
+        newConfig.endpoints[count].verify_tls = true;
+      }
+      WebhookEndpoint_t& dest = newConfig.endpoints[count];
+
+      if (ep.containsKey("enabled")) dest.enabled = ep["enabled"].as<bool>();
+      if (ep.containsKey("verify_tls")) dest.verify_tls = ep["verify_tls"].as<bool>();
+      if (ep.containsKey("method")) dest.method = ep["method"].as<uint8_t>();
+      if (ep.containsKey("name")) strlcpy(dest.name, ep["name"] | "", sizeof(dest.name));
+      if (ep.containsKey("url")) strlcpy(dest.url, ep["url"] | "", sizeof(dest.url));
+      if (ep.containsKey("cooldown_ms")) dest.cooldown_ms = ep["cooldown_ms"] | WH_DEFAULT_COOLDOWN;
+      if (ep.containsKey("message_template")) strlcpy(dest.message_template, ep["message_template"] | "", sizeof(dest.message_template));
+      if (ep.containsKey("auth_header")) strlcpy(dest.auth_header, ep["auth_header"] | "", sizeof(dest.auth_header));
+
+      // Token 处理: "***" 保留已有；clear_token=true 清除；其他值更新
+      if (ep.containsKey("auth_token")) {
+        const char* token = ep["auth_token"] | "";
+        bool clearToken = ep["clear_token"] | false;
+        if (clearToken) {
+          dest.auth_token[0] = '\0';
+        } else if (strcmp(token, "***") != 0 && strlen(token) > 0) {
+          strlcpy(dest.auth_token, token, sizeof(dest.auth_token));
+        }
+      }
+
+      // Device Key 处理: "***" 保留已有；clear_key=true 清除；其他值更新
+      if (ep.containsKey("device_key")) {
+        const char* key = ep["device_key"] | "";
+        bool clearKey = ep["clear_key"] | false;
+        if (clearKey) {
+          dest.device_key[0] = '\0';
+        } else if (strcmp(key, "***") != 0 && strlen(key) > 0) {
+          strlcpy(dest.device_key, key, sizeof(dest.device_key));
+        }
+      }
+
+      // 触发器数组 (整体重建，避免残留旧触发器数据)
+      if (ep.containsKey("triggers")) {
+        JsonArray trigs = ep["triggers"].as<JsonArray>();
+        uint8_t trigCount = 0;
+        for (JsonObject t : trigs) {
+          if (trigCount >= WH_MAX_TRIGGERS) break;
+          WebhookTrigger_t& tDest = dest.triggers[trigCount];
+          memset(&tDest, 0, sizeof(tDest));
+
+          tDest.enabled = t["enabled"] | false;
+          tDest.alert_level = t["alert_level"] | 0;
+          tDest.condition.trigger_type = t["trigger_type"] | 0;
+          tDest.condition.source = t["source"] | 0;
+          tDest.condition.compare_op = t["compare_op"] | 0;
+          tDest.condition.threshold = t["threshold"] | 0.0f;
+          strlcpy(tDest.dedup_key, t["dedup_key"] | "", sizeof(tDest.dedup_key));
+          strlcpy(tDest.title, t["title"] | "", sizeof(tDest.title));
+          strlcpy(tDest.description, t["description"] | "", sizeof(tDest.description));
+          tDest.fired = false;
+
+          trigCount++;
+        }
+        dest.trigger_count = trigCount;
+      }
+
+      count++;
+    }
+    newConfig.endpoint_count = count;
+  }
+
+  char reason[64] = {0};
+  if (!webhookManager->updateConfig(newConfig, reason)) {
+    String msg = (reason[0] != '\0') ? String(I18n::get(STR_WH_VALIDATE_FAIL))
+                                     : String(I18n::get(STR_WH_SAVE_FAIL));
+    if (reason[0] != '\0') {
+      msg += ": ";
+      msg += reason;
+    }
+    sendErrorResponse(request, msg, 400);
+    return;
+  }
+
+  String okMsg = String("{\"success\":true,\"message\":\"") + I18n::get(STR_WH_SAVED) + "\"}";
+  request->send(200, "application/json", okMsg);
+}
+
+void WebServer::handleWebhookTest(AsyncWebServerRequest* request) {
+  if (!webhookManager) {
+    sendErrorResponse(request, I18n::get(STR_WH_NOT_INIT), 503);
+    return;
+  }
+
+  String body;
+  if (!takeBody(request, body)) {
+    sendErrorResponse(request, I18n::get(STR_WH_MISSING_BODY), 400);
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+  if (deserializeJson(doc, body)) {
+    sendErrorResponse(request, I18n::get(STR_WH_BAD_JSON), 400);
+    return;
+  }
+
+  uint8_t idx = doc["endpoint_index"] | 0;
+  if (idx >= WH_MAX_ENDPOINTS) {
+    sendErrorResponse(request, I18n::get(STR_WH_INVALID_INDEX), 400);
+    return;
+  }
+
+  // 同步发送测试消息，返回真实 HTTP 结果（最多阻塞 WH_HTTP_TIMEOUT）
+  String responseMsg;
+  int httpCode = 0;
+  bool success = webhookManager->sendTestNow(idx, responseMsg, httpCode);
+
+  DynamicJsonDocument resp(512);
+  resp["success"] = success;
+  resp["queued"] = false;
+  resp["http_code"] = httpCode;
+  resp["message"] = responseMsg;
+  String output;
+  serializeJson(resp, output);
+  request->send(200, "application/json", output);
 }

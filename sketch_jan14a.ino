@@ -28,6 +28,7 @@
 #include "src/mqtt_service.h"
 #include "src/XiaomiSensorBridge.h"
 #include "src/shtc3.h"
+#include "src/webhook_manager.h"
 
 // =============================================================================
 // OTA 固件特征标签
@@ -57,6 +58,7 @@ bool g_is_new_board = false;
 UPS_HID_Service* upsHidService = nullptr;
 MQTTService* mqttService = nullptr;
 SHTC3* shtc3 = nullptr;
+WebhookManager* webhookManager = nullptr;
 
 // =============================================================================
 // Helper Functions
@@ -64,7 +66,7 @@ SHTC3* shtc3 = nullptr;
 
 bool checkFactoryReset() {
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.2.0";
+  char version[] = "SIG:OPENUPS-ESP32S3:VER:1.3.0";
   strcpy(FIRMWARE_ID_TAG, version);
   DBG.println(F("Checking for factory reset button..."));
   
@@ -271,7 +273,11 @@ bool initializeSystemModules() {
   }
   DBG.println(F("SystemManagement initialized successfully"));
   delay(1);
-  
+
+  // Step 6.5: WebhookManager 延迟启动
+  // 与 HID / MQTT / XiaomiBridge 一致，在 SystemManagement::onDelayedStart() 中启动
+  delay(1);
+
   // Step 7: WebServer
   DBG.println(F("Step 7: Initializing WebServer..."));
   webServer = new WebServer(&configManager, systemManager, 80);
@@ -353,11 +359,14 @@ void loop() {
   
   systemManager->update();
   
-  // Web notification (1s interval)
-  static unsigned long lastWebNotify = 0;
-  if (millis() - lastWebNotify > 3000) {
-    webServer->notifyClients();
-    lastWebNotify = millis();
+  // WebSocket 数据推送已移至客户端 "get" 消息驱动（onWsEvent 中处理），
+  // 避免从主循环跨任务调用 ws.textAll() 导致数据竞争
+  
+  // 定期清理断开的 WebSocket 客户端，防止 20+ 天运行后内存泄漏
+  static unsigned long lastWsCleanup = 0;
+  if (millis() - lastWsCleanup > 60000) {
+    webServer->cleanupWsClients();
+    lastWsCleanup = millis();
   }
 
   delay(10);

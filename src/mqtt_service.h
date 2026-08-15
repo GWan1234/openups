@@ -5,6 +5,8 @@
 #include "ArduinoJson.h"
 #include "data_structures.h"
 
+#define MQTT_RECONNECT_COOLDOWN_MS  3000UL   // forceDisconnect 后等待 TCP 资源释放
+
 // 前向声明 - 避免包含 AsyncMQTT_ESP32.h 导致链接错误
 // AsyncMqttClient 的具体实现在 mqtt_service.cpp 中
 class AsyncMqttClient;
@@ -115,6 +117,9 @@ private:
     unsigned long m_connected_since;
     unsigned long m_last_puback;
     uint8_t m_consecutive_failures;
+    bool m_force_disconnect_pending;
+    unsigned long m_force_disconnect_time;
+    DynamicJsonDocument m_state_doc;          // 复用的 JSON 文档，避免反复堆分配
     char m_mqtt_broker[64];
     uint16_t m_mqtt_port;
     char m_mqtt_username[64];

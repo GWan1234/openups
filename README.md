@@ -49,6 +49,8 @@ An intelligent lithium battery UPS control system based on ESP32-S3, using BQ247
 - **Prometheus Monitoring** — `/metrics` endpoint, directly compatible with Grafana
 - **米家集成** — 借助米家温湿度计，绕道接入米家，实现温度，SOC与米家系统联动
 - **Xiaomi Home Integration** — Via Xiaomi temperature/humidity monitor, indirect integration with Xiaomi Home for temperature and SOC linkage
+- **WEBHOOK—**新增webhook用于信息推送（测试中，欢迎反馈）
+- **WEBHOOK—**New webhook added for message pushing (in testing, feedback is welcome)
 
 ### 保护机制
 ### Protection Mechanisms

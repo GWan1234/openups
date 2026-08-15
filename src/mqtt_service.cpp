@@ -27,6 +27,8 @@ MQTTService::MQTTService()
     , m_last_state_publish(0), m_last_heartbeat(0)
     , m_last_reconnect_attempt(0), m_connected_since(0)
     , m_last_puback(0), m_consecutive_failures(0)
+    , m_force_disconnect_pending(false), m_force_disconnect_time(0)
+    , m_state_doc(1536)
 {
     s_instance = this;
     memset(m_device_id, 0, sizeof(m_device_id));
@@ -107,11 +109,18 @@ void MQTTService::loop(System_Global_State& state) {
 
     if (!m_connected) {
         unsigned long now = millis();
+        // forceDisconnect 后等待 TCP 资源释放，避免新旧连接共存导致连接泄漏
+        if (m_force_disconnect_pending) {
+            if (now - m_force_disconnect_time < MQTT_RECONNECT_COOLDOWN_MS) {
+                return;  // 冷却期内，不发起重连
+            }
+            m_force_disconnect_pending = false;
+        }
         if (now - m_last_reconnect_attempt >= 5000) {
             m_last_reconnect_attempt = now;
             if (checkWifiConnected()) {
                 connect();
-            } 
+            }
         }
         return;
     }
@@ -164,6 +173,7 @@ bool MQTTService::connect() {
     m_connected = false;
     m_consecutive_failures = 0;
     m_connected_since = 0;
+    m_force_disconnect_pending = false;  // 连接尝试已开始，清除冷却标记
 
     // 配置 AsyncMqttClient
     m_mqtt_client->setServer(m_mqtt_broker, m_mqtt_port);
@@ -208,7 +218,10 @@ void MQTTService::forceReconnect() {
         m_mqtt_client->clearQueue();
         m_mqtt_client->disconnect(true);  // force=true 强制关闭底层 TCP
     }
-    m_last_reconnect_attempt = millis() - 5000;  // 立即触发重连
+    // 标记强制断开，启动冷却期让 TCP 资源完全释放后再重连
+    m_force_disconnect_pending = true;
+    m_force_disconnect_time = millis();
+    m_last_reconnect_attempt = millis();  // 冷却期结束后立即可尝试重连
 }
 
 // =============================================================================
@@ -596,11 +609,11 @@ bool MQTTService::publishStateData() {
         return false;
     }
 
-    // 构建合并 JSON 文档（~1.2KB）
-    DynamicJsonDocument doc(1536);
+    // 复用成员级 JSON 文档，避免每 10 秒 new/delete 导致堆碎片化
+    m_state_doc.clear();
 
     // BMS
-    JsonObject bms = doc.createNestedObject("bms");
+    JsonObject bms = m_state_doc.createNestedObject("bms");
     bms["soc"] = m_state->bms.soc;
     bms["soh"] = m_state->bms.soh;
     bms["chemistry"] = getChemistryLimits((BatteryChemistry_t)m_state->bms.chemistry).name;
@@ -630,7 +643,7 @@ bool MQTTService::publishStateData() {
     bms["ir_sample_count"] = m_state->bms.ir_sample_count;
 
     // Power
-    JsonObject power = doc.createNestedObject("power");
+    JsonObject power = m_state_doc.createNestedObject("power");
     power["input_voltage"] = m_state->power.input_voltage;
     power["input_current"] = m_state->power.input_current;
     power["output_power"] = m_state->power.output_power;
@@ -641,7 +654,7 @@ bool MQTTService::publishStateData() {
     power["fault_type"] = getPowerFaultString(m_state->power.fault_type);
 
     // System
-    JsonObject system = doc.createNestedObject("system");
+    JsonObject system = m_state_doc.createNestedObject("system");
     system["uptime"] = m_state->system.uptime;
     system["board_temperature"] = m_state->system.board_temperature;
     system["environment_temperature"] = m_state->system.environment_temperature;
@@ -656,14 +669,14 @@ bool MQTTService::publishStateData() {
     system["emergency_shutdown"] = m_state->emergency_shutdown;
 
     // Protection
-    JsonObject prot = doc.createNestedObject("protection");
+    JsonObject prot = m_state_doc.createNestedObject("protection");
     prot["over_current"] = m_state->over_current_protection;
     prot["over_temp"] = m_state->over_temp_protection;
     prot["short_circuit"] = m_state->short_circuit_protection;
 
     // Config
     if (m_config) {
-        JsonObject cfg = doc.createNestedObject("config");
+        JsonObject cfg = m_state_doc.createNestedObject("config");
         cfg["led_brightness"] = m_config->led_brightness;
         cfg["buzzer_enabled"] = m_config->buzzer_enabled;
         cfg["buzzer_volume"] = m_config->buzzer_volume;
@@ -673,7 +686,7 @@ bool MQTTService::publishStateData() {
     char topic[96];
     snprintf(topic, sizeof(topic), "%s/%s", m_topic_base, TOPIC_STATE);
     char buf[1536];
-    size_t len = serializeJson(doc, buf, sizeof(buf));
+    size_t len = serializeJson(m_state_doc, buf, sizeof(buf));
     if (len >= sizeof(buf) - 1) {
         DBG.println("[MQTT] State JSON overflow, skipped");
         return false;

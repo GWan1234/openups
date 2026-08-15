@@ -1376,8 +1376,6 @@ bool BMS::processCoulombCounterData() {
             float block_mean = cc_zero_sum_lsb_ / cc_zero_cnt_;
             if (fabsf(block_mean) < 4.0f) {
                 cc_offset_lsb_ = 0.9f * cc_offset_lsb_ + 0.1f * block_mean;
-                DBG.printf_P(PSTR("BMS: CC offset learned: block=%.3f -> offset=%.3f LSB\n"),
-                    block_mean, cc_offset_lsb_);
             }
             cc_zero_sum_lsb_ = 0.0f;
             cc_zero_cnt_ = 0;
