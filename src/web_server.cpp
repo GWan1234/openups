@@ -11,6 +11,7 @@
 #include <Update.h>
 #include "debug.h"
 #include "webhook_manager.h"
+#include "webhook_presets.h"
 #include <esp_ota_ops.h>
 #include <Ticker.h>
 #include <SPIFFS.h>
@@ -150,6 +151,7 @@ void WebServer::setupHttpRoutes() {
   onAuthBody("/api/set-lang", [this](AsyncWebServerRequest* r) { handleSetLang(r); });
 
   // ---- Webhook API (认证) ----
+  onAuth("/api/webhook/presets", HTTP_GET, [this](AsyncWebServerRequest* r) { handleWebhookPresets(r); });
   onAuth("/api/webhook", HTTP_GET, [this](AsyncWebServerRequest* r) { handleWebhookGet(r); });
   // 注意：/api/webhook/test 必须先于 /api/webhook 注册，
   // 否则 POST /api/webhook/test 会被 /api/webhook 的保存路由抢先匹配，导致测试发送失效
@@ -2283,6 +2285,44 @@ void WebServer::handleFirmwareUpload(AsyncWebServerRequest* request, String file
 // =============================================================================
 // Webhook API 处理函数
 // =============================================================================
+
+void WebServer::handleWebhookPresets(AsyncWebServerRequest* request) {
+  if (!webhookManager) {
+    sendErrorResponse(request, I18n::get(STR_WH_NOT_INIT), 503);
+    return;
+  }
+
+  // 当前电池串数与化学（电压类预置按此解析静态阈值）
+  uint8_t cellCount = 3, chemistry = 0;
+  if (configManager) {
+    BMS_Config_t* bms = configManager->getBMSConfig();
+    if (bms) {
+      cellCount = bms->cell_count;
+      chemistry = bms->chemistry;
+    }
+  }
+
+  DynamicJsonDocument doc(8192);
+  JsonArray arr = doc.createNestedArray("presets");
+  uint8_t count = getWebhookPresetCount();
+  for (uint8_t i = 0; i < count; i++) {
+    const WebhookPreset_t* p = getWebhookPreset(i);
+    if (!p) continue;
+    JsonObject o = arr.createNestedObject();
+    o["id"] = p->id;
+    o["trigger_type"] = p->trigger_type;
+    o["source"] = p->source;
+    o["compare_op"] = p->compare_op;
+    o["threshold"] = resolvePresetThreshold(p, cellCount, chemistry);
+    o["alert_level"] = p->alert_level;
+    o["title"] = I18n::get((StrId)p->title_id);
+    o["dedup_key"] = p->dedup_key;
+  }
+
+  String output;
+  serializeJson(doc, output);
+  request->send(200, "application/json", output);
+}
 
 void WebServer::handleWebhookGet(AsyncWebServerRequest* request) {
   if (!webhookManager) {

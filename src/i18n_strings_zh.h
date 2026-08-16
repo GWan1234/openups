@@ -150,10 +150,63 @@ static const char s_zh_112[] PROGMEM = "端点 %u 触发器数量超限";
 static const char s_zh_113[] PROGMEM = "端点 %u 触发器类型无效";
 static const char s_zh_114[] PROGMEM = "端点 %u 比较运算符无效";
 static const char s_zh_115[] PROGMEM = "端点 %u 值触发只能用大于/小于";
-static const char s_zh_116[] PROGMEM = "端点 %u 状态触发只能用等于/变化";
+static const char s_zh_116[] PROGMEM = "端点 %u 状态触发只能用等于/变化/不等于";
 static const char s_zh_117[] PROGMEM = "端点 %u 监测值无效";
 static const char s_zh_118[] PROGMEM = "端点 %u 监测状态无效";
 static const char s_zh_119[] PROGMEM = "端点 %u 告警级别无效";
+
+// Webhook：预置告警模板标题
+static const char s_zh_120[] PROGMEM = "低电量提醒";
+static const char s_zh_121[] PROGMEM = "电量严重不足";
+static const char s_zh_122[] PROGMEM = "电池老化提醒";
+static const char s_zh_123[] PROGMEM = "电池严重老化";
+static const char s_zh_124[] PROGMEM = "电池高温提醒";
+static const char s_zh_125[] PROGMEM = "电池高温严重";
+static const char s_zh_126[] PROGMEM = "电池低温提醒";
+static const char s_zh_127[] PROGMEM = "电池低温严重";
+static const char s_zh_128[] PROGMEM = "板温提醒";
+static const char s_zh_129[] PROGMEM = "板温严重";
+static const char s_zh_130[] PROGMEM = "放电过流提醒";
+static const char s_zh_131[] PROGMEM = "放电过流严重";
+static const char s_zh_132[] PROGMEM = "充电过流提醒";
+static const char s_zh_133[] PROGMEM = "充电过流严重";
+static const char s_zh_134[] PROGMEM = "输入欠压提醒";
+static const char s_zh_135[] PROGMEM = "输入欠压严重";
+static const char s_zh_136[] PROGMEM = "输入过压提醒";
+static const char s_zh_137[] PROGMEM = "输入过压严重";
+static const char s_zh_138[] PROGMEM = "电池过压提醒";
+static const char s_zh_139[] PROGMEM = "电池过压严重";
+static const char s_zh_140[] PROGMEM = "电池欠压提醒";
+static const char s_zh_141[] PROGMEM = "电池欠压严重";
+static const char s_zh_142[] PROGMEM = "市电中断";
+static const char s_zh_143[] PROGMEM = "市电恢复";
+static const char s_zh_144[] PROGMEM = "任意 BMS 故障";
+static const char s_zh_145[] PROGMEM = "任意电源故障";
+static const char s_zh_146[] PROGMEM = "紧急关机";
+static const char s_zh_147[] PROGMEM = "系统严重状态";
+static const char s_zh_148[] PROGMEM = "系统警告状态";
+static const char s_zh_149[] PROGMEM = "电源模式切换";
+static const char s_zh_150[] PROGMEM = "充电器状态变化";
+static const char s_zh_151[] PROGMEM = "均衡开始";
+
+// Webhook：故障名称
+static const char s_zh_152[] PROGMEM = "过压";
+static const char s_zh_153[] PROGMEM = "欠压";
+static const char s_zh_154[] PROGMEM = "过流";
+static const char s_zh_155[] PROGMEM = "短路";
+static const char s_zh_156[] PROGMEM = "过温";
+static const char s_zh_157[] PROGMEM = "芯片错误";
+static const char s_zh_158[] PROGMEM = "被动关机";
+static const char s_zh_159[] PROGMEM = "芯片错误";
+static const char s_zh_160[] PROGMEM = "过流";
+static const char s_zh_161[] PROGMEM = "过温";
+static const char s_zh_162[] PROGMEM = "输入过压";
+static const char s_zh_163[] PROGMEM = "输入欠压";
+static const char s_zh_164[] PROGMEM = "电池过压";
+static const char s_zh_165[] PROGMEM = "电池欠压";
+static const char s_zh_166[] PROGMEM = "短路";
+static const char s_zh_167[] PROGMEM = "充电超时";
+static const char s_zh_168[] PROGMEM = "I2C通信错误";
 
 // 指针数组（按 StrId 顺序）
 const char* const I18n::strings_zh_[] = {
@@ -172,7 +225,13 @@ const char* const I18n::strings_zh_[] = {
     s_zh_94, s_zh_95, s_zh_96, s_zh_97, s_zh_98, s_zh_99, s_zh_100, s_zh_101,
     s_zh_102, s_zh_103, s_zh_104, s_zh_105, s_zh_106, s_zh_107, s_zh_108, s_zh_109,
     s_zh_110, s_zh_111, s_zh_112, s_zh_113, s_zh_114, s_zh_115, s_zh_116, s_zh_117,
-    s_zh_118, s_zh_119,
+    s_zh_118, s_zh_119, s_zh_120, s_zh_121, s_zh_122, s_zh_123, s_zh_124, s_zh_125,
+    s_zh_126, s_zh_127, s_zh_128, s_zh_129, s_zh_130, s_zh_131, s_zh_132, s_zh_133,
+    s_zh_134, s_zh_135, s_zh_136, s_zh_137, s_zh_138, s_zh_139, s_zh_140, s_zh_141,
+    s_zh_142, s_zh_143, s_zh_144, s_zh_145, s_zh_146, s_zh_147, s_zh_148, s_zh_149,
+    s_zh_150, s_zh_151, s_zh_152, s_zh_153, s_zh_154, s_zh_155, s_zh_156, s_zh_157,
+    s_zh_158, s_zh_159, s_zh_160, s_zh_161, s_zh_162, s_zh_163, s_zh_164, s_zh_165,
+    s_zh_166, s_zh_167, s_zh_168,
 };
 
 #endif

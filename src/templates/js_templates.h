@@ -100,7 +100,7 @@ jsLoading:"加载中...",jsNoData:"暂无数据文件",jsLoadFailed:"加载失�
 jsRebooting:"重启中...",jsProcessing:"处理中...",jsResetSuccess:"重置成功！",jsResetFailed:"失败：",
 jsIrCount:"次",
 navWebhook:"🔔 Webhook",whGlobalEnable:"全局启用",whDesc:"配置自定义 Webhook 告警推送，支持值阈值和状态变化触发。Token / Key 可嵌入 URL、Header 与消息模板",whEnabled:"启用",whSaveOk:"✅ 配置已保存",whSaveFail:"保存失败：",whTesting:"发送中...",whTestOk:"✅ 发送成功",whTestFail:"❌ 发送失败",whTestQueued:"已加入发送队列，稍后刷新统计：",whMaxEndpoints:"最多支持 5 个端点",whMaxTriggers:"每端点最多 3 个触发器",whConfirmDelete:"确定删除此端点？",whConfirmDeleteTrig:"确定删除此触发器？",whVerifyTls:"校验 HTTPS 证书",whTokenClear:"清除已保存的 Token",whKeyClear:"清除已保存的 Key",whName:"自定义名",whToken:"认证 Token",whKey:"设备密钥 (Key)",whUrl:"URL",whMethod:"请求方式",whCooldown:"冷却时间 (秒)",whMsgTemplate:"消息模板",whAuthHeader:"认证 Header（支持 {token}/{key}）",whSent:"已发送",whFailed:"失败",whResolved:"已解除",whVarsTitle:"📖 可用模板变量",whSavedHint:"已保存（留空则清除）",whCopied:"已复制",whCopyVarHint:"点击复制",
-whPanelTitle:"🔔 Webhook 告警配置",whAddEndpoint:"添加推送规则",whSave:"保存配置",whDelete:"删除",whBasicConfig:"基础配置",whTrigger:"触发器",whAddTrigger:"＋ 添加触发器",whMsgTemplateOverride:"消息模板 (可选覆盖)",whTestSend:"🧪 测试发送",whType:"类型",whTrigValue:"值阈值触发",whTrigState:"状态变化触发",whMonitorValue:"监测值",whValTemp:"电池温度 (°C)",whValCurrent:"电池电流 (mA)",whValVoltage:"电池电压 (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"输入电压 (mV)",whValBoardTemp:"板温 (°C)",whMonitorState:"监测状态",whStateAc:"AC 电源",whStateCharger:"充电器",whStateBmsFault:"BMS 故障",whStatePowerFault:"电源故障",whStateSystem:"系统状态",whStatePowerMode:"电源模式",whStateEmergency:"紧急关机",whStateBalancing:"电池均衡",whCondition:"条件",whGt:"大于",whLt:"小于",whEq:"等于",whChange:"变化",whThreshold:"阈值",whAlertLevel:"告警级别",whLevelInfo:"信息",whLevelWarn:"警告",whLevelCrit:"严重",whTitle:"标题",whDescription:"描述",whDedupKey:"去重键",whEndpointNum:"端点 #",whTriggerNum:"触发器 #"
+whPanelTitle:"🔔 Webhook 告警配置",whAddEndpoint:"添加推送规则",whSave:"保存配置",whDelete:"删除",whBasicConfig:"基础配置",whTrigger:"触发器",whAddTrigger:"＋ 添加触发器",whMsgTemplateOverride:"消息模板 (可选覆盖)",whTestSend:"🧪 测试发送",whType:"类型",whTrigValue:"值阈值触发",whTrigState:"状态变化触发",whMonitorValue:"监测值",whValTemp:"电池温度 (°C)",whValCurrent:"电池电流 (mA)",whValVoltage:"电池电压 (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"输入电压 (mV)",whValBoardTemp:"板温 (°C)",whMonitorState:"监测状态",whStateAc:"AC 电源",whStateCharger:"充电器",whStateBmsFault:"BMS 故障",whStatePowerFault:"电源故障",whStateSystem:"系统状态",whStatePowerMode:"电源模式",whStateEmergency:"紧急关机",whStateBalancing:"电池均衡",whCondition:"条件",whGt:"大于",whLt:"小于",whEq:"等于",whChange:"变化",whNe:"不等于",whThreshold:"阈值",whAlertLevel:"告警级别",whLevelInfo:"信息",whLevelWarn:"警告",whLevelCrit:"严重",whTitle:"标题",whDescription:"描述",whDedupKey:"去重键",whEndpointNum:"端点 #",whTriggerNum:"触发器 #",whPreset:"预置模板",whApplyPreset:"应用",whPresetPlaceholder:"选择预置模板…",whPresetApplied:"✅ 已应用预置",whPresetSelect:"请先选择预置模板"
 },
 en:{
 pageTitle:"UPS Control Center",connecting:"Connecting",connected:"Connected",disconnected:"Disconnected",
@@ -185,7 +185,7 @@ jsLoading:"Loading...",jsNoData:"No data files",jsLoadFailed:"Load failed",jsCal
 jsRebooting:"Restarting...",jsProcessing:"Processing...",jsResetSuccess:"Reset successful!",jsResetFailed:"Failed: ",
 jsIrCount:" times",
 navWebhook:"🔔 Webhook",whGlobalEnable:"Global Enable",whDesc:"Configure custom Webhook alert push with value threshold and state change triggers. Token / Key can be embedded in URL, Header, and message template",whEnabled:"Enable",whSaveOk:"✅ Config saved",whSaveFail:"Save failed: ",whTesting:"Sending...",whTestOk:"✅ Send success",whTestFail:"❌ Send failed",whTestQueued:"Queued; stats will refresh shortly: ",whMaxEndpoints:"Max 5 endpoints",whMaxTriggers:"Max 3 triggers per endpoint",whConfirmDelete:"Delete this endpoint?",whConfirmDeleteTrig:"Delete this trigger?",whVerifyTls:"Verify HTTPS certificate",whTokenClear:"Clear saved token",whKeyClear:"Clear saved key",whName:"Custom Name",whToken:"Auth Token",whKey:"Device Key",whUrl:"URL",whMethod:"Method",whCooldown:"Cooldown (seconds)",whMsgTemplate:"Message Template",whAuthHeader:"Auth Header (supports {token}/{key})",whSent:"Sent",whFailed:"Failed",whResolved:"Resolved",whVarsTitle:"📖 Template Variables",whSavedHint:"Saved (leave empty to clear)",whCopied:"Copied",whCopyVarHint:"Click to copy",
-whPanelTitle:"🔔 Webhook Alerts",whAddEndpoint:"Add Rule",whSave:"Save",whDelete:"Delete",whBasicConfig:"Basic Config",whTrigger:"Trigger",whAddTrigger:"＋ Add Trigger",whMsgTemplateOverride:"Message Template (optional override)",whTestSend:"🧪 Send Test",whType:"Type",whTrigValue:"Value threshold",whTrigState:"State change",whMonitorValue:"Monitor value",whValTemp:"Battery temp (°C)",whValCurrent:"Battery current (mA)",whValVoltage:"Battery voltage (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"Input voltage (mV)",whValBoardTemp:"Board temp (°C)",whMonitorState:"Monitor state",whStateAc:"AC power",whStateCharger:"Charger",whStateBmsFault:"BMS fault",whStatePowerFault:"Power fault",whStateSystem:"System state",whStatePowerMode:"Power mode",whStateEmergency:"Emergency shutdown",whStateBalancing:"Battery balancing",whCondition:"Condition",whGt:"Greater than",whLt:"Less than",whEq:"Equal to",whChange:"Changed",whThreshold:"Threshold",whAlertLevel:"Alert level",whLevelInfo:"Info",whLevelWarn:"Warning",whLevelCrit:"Critical",whTitle:"Title",whDescription:"Description",whDedupKey:"Dedup key",whEndpointNum:"Endpoint #",whTriggerNum:"Trigger #"
+whPanelTitle:"🔔 Webhook Alerts",whAddEndpoint:"Add Rule",whSave:"Save",whDelete:"Delete",whBasicConfig:"Basic Config",whTrigger:"Trigger",whAddTrigger:"＋ Add Trigger",whMsgTemplateOverride:"Message Template (optional override)",whTestSend:"🧪 Send Test",whType:"Type",whTrigValue:"Value threshold",whTrigState:"State change",whMonitorValue:"Monitor value",whValTemp:"Battery temp (°C)",whValCurrent:"Battery current (mA)",whValVoltage:"Battery voltage (mV)",whValSoc:"SOC (%)",whValSoh:"SOH (%)",whValInputVoltage:"Input voltage (mV)",whValBoardTemp:"Board temp (°C)",whMonitorState:"Monitor state",whStateAc:"AC power",whStateCharger:"Charger",whStateBmsFault:"BMS fault",whStatePowerFault:"Power fault",whStateSystem:"System state",whStatePowerMode:"Power mode",whStateEmergency:"Emergency shutdown",whStateBalancing:"Battery balancing",whCondition:"Condition",whGt:"Greater than",whLt:"Less than",whEq:"Equal to",whChange:"Changed",whNe:"Not equal",whThreshold:"Threshold",whAlertLevel:"Alert level",whLevelInfo:"Info",whLevelWarn:"Warning",whLevelCrit:"Critical",whTitle:"Title",whDescription:"Description",whDedupKey:"Dedup key",whEndpointNum:"Endpoint #",whTriggerNum:"Trigger #",whPreset:"Preset",whApplyPreset:"Apply",whPresetPlaceholder:"Select a preset…",whPresetApplied:"✅ Preset applied",whPresetSelect:"Select a preset first"
 }
 };
 var L=LANG_DATA[window.CURLANG||'zh'];
@@ -603,6 +603,7 @@ $('logFileList').innerHTML=h;
 // Webhook 管理
 // =============================================================================
 var WH_DATA=null;
+var WH_PRESETS=null;
 
 // 模板变量说明（代码 → 含义），渲染到 webhook 头部
 var WH_VARS=[
@@ -659,7 +660,7 @@ else el.textContent=L[key];
 
 // 语言切换时刷新已渲染的 webhook 动态标题与比较运算符选项（不重置输入值）
 function whRefreshI18n(){
-var opMap={0:'whGt',1:'whLt',2:'whEq',3:'whChange'};
+var opMap={0:'whGt',1:'whLt',2:'whEq',3:'whChange',4:'whNe'};
 document.querySelectorAll('#wh_endpoints .wh-endpoint').forEach(function(card,i){
 var nm=card.querySelector('.wh-ep-name');
 whSetEpTitle(card,i,nm?nm.value.trim():'');
@@ -673,9 +674,12 @@ if(opSel){for(var k=0;k<opSel.options.length;k++){var o=opSel.options[k];var key
 }
 
 function whLoad(){
-fetch('/api/webhook').then(function(r){return r.json()}).then(function(d){
-WH_DATA=d;
-$('wh_global_en').checked=d.global_enabled||false;
+var cfg=fetch('/api/webhook').then(function(r){return r.json()});
+var pr =fetch('/api/webhook/presets').then(function(r){return r.json()}).catch(function(){return {presets:[]};});
+Promise.all([cfg,pr]).then(function(rs){
+WH_DATA=rs[0];
+WH_PRESETS=rs[1].presets||[];
+$('wh_global_en').checked=WH_DATA.global_enabled||false;
 whRenderEndpoints();
 }).catch(function(e){console.error('Webhook load error:',e)});
 }
@@ -756,8 +760,41 @@ div.querySelector('.wh-trig-state-src').value=trig.source;
 }
 whTriggerTypeChanged(div.querySelector('.wh-trig-type'));
 div.querySelector('.wh-trig-op').value=trig.compare_op;
+whPopulatePresetSelect(div);
 container.appendChild(clone);
 whI18n(div);
+}
+
+function whPopulatePresetSelect(div){
+var sel=div.querySelector('.wh-trig-preset');
+if(!sel)return;
+var opts='<option value="">'+L.whPresetPlaceholder+'</option>';
+(WH_PRESETS||[]).forEach(function(p){
+opts+='<option value="'+p.id+'">'+p.title+'</option>';
+});
+sel.innerHTML=opts;
+}
+
+function whApplyPreset(btn){
+var trig=btn.closest('.wh-trigger')||btn.closest('[class*="wh-trig"]');
+if(!trig)return;
+var sel=trig.querySelector('.wh-trig-preset');
+var id=parseInt(sel.value);
+if(isNaN(id)){toast(L.whPresetSelect,'error');return;}
+var p=null;(WH_PRESETS||[]).forEach(function(x){if(x.id===id)p=x;});
+if(!p)return;
+trig.querySelector('.wh-trig-type').value=p.trigger_type;
+trig.querySelector('.wh-trig-level').value=p.alert_level;
+trig.querySelector('.wh-trig-threshold').value=p.threshold;
+trig.querySelector('.wh-trig-title-input').value=p.title||'';
+trig.querySelector('.wh-trig-desc').value='';
+trig.querySelector('.wh-trig-dedup').value=p.dedup_key||'';
+if(p.trigger_type===0){trig.querySelector('.wh-trig-value-src').value=p.source;}
+else{trig.querySelector('.wh-trig-state-src').value=p.source;}
+whTriggerTypeChanged(trig.querySelector('.wh-trig-type'));
+trig.querySelector('.wh-trig-op').value=p.compare_op;
+whTrigTitleChanged(trig.querySelector('.wh-trig-title-input'));
+toast(L.whPresetApplied,'success');
 }
 
 function whSetTrigTitle(div,idx,title){
@@ -788,7 +825,7 @@ var vf=trig.querySelector('.wh-value-fields');
 var sf=trig.querySelector('.wh-state-fields');
 var ofield=trig.querySelector('.wh-op-field');
 if(sel.value==='0'){vf.style.display='';sf.style.display='none';ofield.querySelector('select').innerHTML='<option value="0">'+L.whGt+'</option><option value="1">'+L.whLt+'</option>';}
-else{vf.style.display='none';sf.style.display='';ofield.querySelector('select').innerHTML='<option value="2">'+L.whEq+'</option><option value="3">'+L.whChange+'</option>';}
+else{vf.style.display='none';sf.style.display='';ofield.querySelector('select').innerHTML='<option value="2">'+L.whEq+'</option><option value="3">'+L.whChange+'</option><option value="4">'+L.whNe+'</option>';}
 }
 
 function whAddEndpoint(){

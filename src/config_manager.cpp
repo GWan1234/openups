@@ -5,6 +5,7 @@
 #include "event_types.h"
 #include "debug.h"
 #include "i18n.h"
+#include "webhook_presets.h"
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
 
@@ -856,7 +857,6 @@ void ConfigManager::loadWebhookDefaults(WebhookConfig_t& config) {
     memset(&config, 0, sizeof(WebhookConfig_t));
     config.config_version = WH_CONFIG_VERSION;
     config.global_enabled = false;
-    config.endpoint_count = 0;
 
     // 初始化每个端点的默认值
     for (int i = 0; i < WH_MAX_ENDPOINTS; i++) {
@@ -865,6 +865,16 @@ void ConfigManager::loadWebhookDefaults(WebhookConfig_t& config) {
         config.endpoints[i].method = WH_METHOD_POST; // 默认 POST
         config.endpoints[i].trigger_count = 0;
     }
+
+    // 预置端点 0 "标准告警"（默认禁用、URL 空，用户填 URL + 启用即可；不主动外发数据）
+    // 注：3 个推荐预置均非电压类，cell_count/chemistry 仅透传（applyPreset 内仅电压类才会解析）
+    WebhookEndpoint_t& ep = config.endpoints[0];
+    strlcpy(ep.name, "standard", sizeof(ep.name));
+    ep.trigger_count = 3;
+    applyPreset(ep.triggers[0], WH_P_AC_OFF,    bmsConfig.cell_count, bmsConfig.chemistry);
+    applyPreset(ep.triggers[1], WH_P_BMS_FAULT, bmsConfig.cell_count, bmsConfig.chemistry);
+    applyPreset(ep.triggers[2], WH_P_SOC_LOW,   bmsConfig.cell_count, bmsConfig.chemistry);
+    config.endpoint_count = 1;
 }
 
 bool ConfigManager::validateWebhookConfig(const WebhookConfig_t& config, char* reason) {
@@ -895,15 +905,16 @@ bool ConfigManager::validateWebhookConfig(const WebhookConfig_t& config, char* r
             if (trig.condition.trigger_type > WH_TRIGGER_STATE) { WH_FAIL(STR_WH_V_TRIGGER_TYPE, i + 1); return false; }
 
             // 比较运算符检查
-            if (trig.condition.compare_op > WH_CMP_CHANGE) { WH_FAIL(STR_WH_V_CMP_OP, i + 1); return false; }
+            if (trig.condition.compare_op > WH_CMP_NE) { WH_FAIL(STR_WH_V_CMP_OP, i + 1); return false; }
 
-            // 交叉校验: 值触发只能用 GT/LT，状态触发只能用 EQ/CHANGE
+            // 交叉校验: 值触发只能用 GT/LT，状态触发只能用 EQ/CHANGE/NE
             if (trig.condition.trigger_type == WH_TRIGGER_VALUE) {
                 if (trig.condition.compare_op != WH_CMP_GT &&
                     trig.condition.compare_op != WH_CMP_LT) { WH_FAIL(STR_WH_V_VALUE_OP, i + 1); return false; }
             } else {
                 if (trig.condition.compare_op != WH_CMP_EQ &&
-                    trig.condition.compare_op != WH_CMP_CHANGE) { WH_FAIL(STR_WH_V_STATE_OP, i + 1); return false; }
+                    trig.condition.compare_op != WH_CMP_CHANGE &&
+                    trig.condition.compare_op != WH_CMP_NE) { WH_FAIL(STR_WH_V_STATE_OP, i + 1); return false; }
             }
 
             // 值源/状态源范围检查

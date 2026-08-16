@@ -283,6 +283,12 @@ const char SPA_PAGE_TEMPLATE[] PROGMEM = R"rawliteral(
 </select></div>
 </div>
 
+<div class="wh-preset-row" style="margin-top:6px;display:flex;gap:8px;align-items:center">
+<label style="font-size:12px;white-space:nowrap" data-i18n="whPreset">预置模板</label>
+<select class="wh-trig-preset" style="flex:1;font-size:12px"><option value="">选择预置模板…</option></select>
+<button class="btn btn-sm" onclick="whApplyPreset(this)" data-i18n="whApplyPreset" style="padding:3px 12px;font-size:12px">应用</button>
+</div>
+
 <div style="margin-top:6px">
 <div><label data-i18n="whTitle">标题</label><input type="text" class="wh-trig-title-input" placeholder="UPS 温度告警" oninput="whTrigTitleChanged(this)"></div>
 <div style="margin-top:4px"><label data-i18n="whDescription">描述</label><input type="text" class="wh-trig-desc" placeholder="电池温度超过安全范围"></div>

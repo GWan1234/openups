@@ -150,10 +150,63 @@ static const char s_en_112[] PROGMEM = "Endpoint %u too many triggers";
 static const char s_en_113[] PROGMEM = "Endpoint %u invalid trigger type";
 static const char s_en_114[] PROGMEM = "Endpoint %u invalid compare op";
 static const char s_en_115[] PROGMEM = "Endpoint %u value trigger only supports GT/LT";
-static const char s_en_116[] PROGMEM = "Endpoint %u state trigger only supports EQ/CHANGE";
+static const char s_en_116[] PROGMEM = "Endpoint %u state trigger only supports EQ/CHANGE/NE";
 static const char s_en_117[] PROGMEM = "Endpoint %u invalid value source";
 static const char s_en_118[] PROGMEM = "Endpoint %u invalid state source";
 static const char s_en_119[] PROGMEM = "Endpoint %u invalid alert level";
+
+// Webhook: preset template titles
+static const char s_en_120[] PROGMEM = "Low battery";
+static const char s_en_121[] PROGMEM = "Battery critically low";
+static const char s_en_122[] PROGMEM = "Battery aging";
+static const char s_en_123[] PROGMEM = "Battery severely degraded";
+static const char s_en_124[] PROGMEM = "Battery high temperature";
+static const char s_en_125[] PROGMEM = "Battery over-temperature";
+static const char s_en_126[] PROGMEM = "Battery low temperature";
+static const char s_en_127[] PROGMEM = "Battery critically cold";
+static const char s_en_128[] PROGMEM = "Board high temperature";
+static const char s_en_129[] PROGMEM = "Board over-temperature";
+static const char s_en_130[] PROGMEM = "Discharge over-current";
+static const char s_en_131[] PROGMEM = "Discharge over-current critical";
+static const char s_en_132[] PROGMEM = "Charge over-current";
+static const char s_en_133[] PROGMEM = "Charge over-current critical";
+static const char s_en_134[] PROGMEM = "Input under-voltage";
+static const char s_en_135[] PROGMEM = "Input under-voltage critical";
+static const char s_en_136[] PROGMEM = "Input over-voltage";
+static const char s_en_137[] PROGMEM = "Input over-voltage critical";
+static const char s_en_138[] PROGMEM = "Battery over-voltage";
+static const char s_en_139[] PROGMEM = "Battery over-voltage critical";
+static const char s_en_140[] PROGMEM = "Battery under-voltage";
+static const char s_en_141[] PROGMEM = "Battery under-voltage critical";
+static const char s_en_142[] PROGMEM = "AC power lost";
+static const char s_en_143[] PROGMEM = "AC power restored";
+static const char s_en_144[] PROGMEM = "Any BMS fault";
+static const char s_en_145[] PROGMEM = "Any power fault";
+static const char s_en_146[] PROGMEM = "Emergency shutdown";
+static const char s_en_147[] PROGMEM = "System critical state";
+static const char s_en_148[] PROGMEM = "System warning state";
+static const char s_en_149[] PROGMEM = "Power mode changed";
+static const char s_en_150[] PROGMEM = "Charger state changed";
+static const char s_en_151[] PROGMEM = "Balancing started";
+
+// Webhook: fault names
+static const char s_en_152[] PROGMEM = "Over-voltage";
+static const char s_en_153[] PROGMEM = "Under-voltage";
+static const char s_en_154[] PROGMEM = "Over-current";
+static const char s_en_155[] PROGMEM = "Short-circuit";
+static const char s_en_156[] PROGMEM = "Over-temperature";
+static const char s_en_157[] PROGMEM = "Chip error";
+static const char s_en_158[] PROGMEM = "Passive shutdown";
+static const char s_en_159[] PROGMEM = "Chip error";
+static const char s_en_160[] PROGMEM = "Over-current";
+static const char s_en_161[] PROGMEM = "Over-temperature";
+static const char s_en_162[] PROGMEM = "Input over-voltage";
+static const char s_en_163[] PROGMEM = "Input under-voltage";
+static const char s_en_164[] PROGMEM = "Battery over-voltage";
+static const char s_en_165[] PROGMEM = "Battery under-voltage";
+static const char s_en_166[] PROGMEM = "Short-circuit";
+static const char s_en_167[] PROGMEM = "Charge timeout";
+static const char s_en_168[] PROGMEM = "I2C communication error";
 
 // Pointer array (ordered by StrId)
 const char* const I18n::strings_en_[] = {
@@ -172,7 +225,13 @@ const char* const I18n::strings_en_[] = {
     s_en_94, s_en_95, s_en_96, s_en_97, s_en_98, s_en_99, s_en_100, s_en_101,
     s_en_102, s_en_103, s_en_104, s_en_105, s_en_106, s_en_107, s_en_108, s_en_109,
     s_en_110, s_en_111, s_en_112, s_en_113, s_en_114, s_en_115, s_en_116, s_en_117,
-    s_en_118, s_en_119,
+    s_en_118, s_en_119, s_en_120, s_en_121, s_en_122, s_en_123, s_en_124, s_en_125,
+    s_en_126, s_en_127, s_en_128, s_en_129, s_en_130, s_en_131, s_en_132, s_en_133,
+    s_en_134, s_en_135, s_en_136, s_en_137, s_en_138, s_en_139, s_en_140, s_en_141,
+    s_en_142, s_en_143, s_en_144, s_en_145, s_en_146, s_en_147, s_en_148, s_en_149,
+    s_en_150, s_en_151, s_en_152, s_en_153, s_en_154, s_en_155, s_en_156, s_en_157,
+    s_en_158, s_en_159, s_en_160, s_en_161, s_en_162, s_en_163, s_en_164, s_en_165,
+    s_en_166, s_en_167, s_en_168,
 };
 
 #endif

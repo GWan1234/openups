@@ -127,6 +127,7 @@ public:
     void handleWebhookGet(AsyncWebServerRequest* request);
     void handleWebhookPost(AsyncWebServerRequest* request);
     void handleWebhookTest(AsyncWebServerRequest* request);
+    void handleWebhookPresets(AsyncWebServerRequest* request);
 
     // WebSocket 事件处理
     void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t * data, size_t len);
